@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package dropz;
+option go_package = "github.com/dropz/dropz/pkg/protocol";
+
+import "google/protobuf/timestamp.proto";
+
+// Configuration settings aligned with OpenAPI spec
+message Config {
+  // Core system settings
+  bool pair_mode_enabled = 1;  // When true, system actively looks for and attempts to pair with new cameras
+  bool sync_enabled = 2;       // When true, system automatically syncs content from cameras
+  int32 scan_interval_seconds = 3;
+  int32 connect_timeout_seconds = 4;
+  
+  // Sync behavior settings
+  int32 days_threshold = 5;    // Only sync content newer than this many days
+  string destination_folder = 6;
+  int32 inactivity_timeout_seconds = 7;
+  
+  // Camera behavior settings
+  bool set_time_enabled = 8;   // Set camera time when connecting
+  
+  // Debug settings
+  string log_level = 9;
+  bool debug_mode = 10;
+  
+  // Additional settings
+  google.protobuf.Timestamp last_updated = 11;
+}
+
+// Request to get configuration
+message GetConfigRequest {}
+
+// Response with configuration
+message GetConfigResponse {
+  Config config = 1;
+}
+
+// Request to update configuration
+message UpdateConfigRequest {
+  Config config = 1;
+}
+
+// Response for update configuration request
+message UpdateConfigResponse {
+  bool success = 1;
+  string message = 2;
+  Config config = 3;
+}
+
+// Request to get a specific setting
+message GetSettingRequest {
+  string setting_name = 1;
+}
+
+// Response with a specific setting value
+message GetSettingResponse {
+  oneof value {
+    bool bool_value = 1;
+    int32 int_value = 2;
+    string string_value = 3;
+  }
+}
+
+// Request to update a specific setting
+message UpdateSettingRequest {
+  string setting_name = 1;
+  oneof value {
+    bool bool_value = 2;
+    int32 int_value = 3;
+    string string_value = 4;
+  }
+}
+
+// Request to reset a specific setting to default
+message ResetSettingRequest {
+  string setting_name = 1;
+} 

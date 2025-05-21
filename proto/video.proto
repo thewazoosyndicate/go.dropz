@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package dropz;
+option go_package = "github.com/dropz/dropz/pkg/protocol";
+
+import "google/protobuf/timestamp.proto";
+
+// Video file metadata
+message VideoFile {
+  string id = 1;
+  string name = 2;
+  string path = 3;
+  int64 size_bytes = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp synced_at = 6;
+  string camera_id = 7;  // References the camera that recorded this video
+  string mime_type = 8;
+  int32 duration_seconds = 9;
+  string thumbnail_path = 10;
+  bool has_processed = 11;
+}
+
+// Request to get all downloaded videos
+message GetVideosRequest {
+  string camera_id = 1;  // Optional: filter by camera
+  google.protobuf.Timestamp start_date = 2;  // Optional: filter by date range
+  google.protobuf.Timestamp end_date = 3;    // Optional: filter by date range
+  int32 limit = 4;  // Optional: limit number of results
+  int32 offset = 5; // Optional: pagination offset
+}
+
+// Response with all downloaded videos
+message GetVideosResponse {
+  repeated VideoFile videos = 1;
+  int32 total_count = 2;  // Total count for pagination
+} 

@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package dropz;
+option go_package = "github.com/dropz/dropz/pkg/protocol";
+
+import "gopro.proto";
+import "video.proto";
+import "logs.proto";
+import "config.proto";
+import "common.proto";
+
+// Service definition for communication between frontend and backend
+service DropzService {
+  // Camera discovery and management
+  rpc GetDiscoveredCameras(GetDiscoveredCamerasRequest) returns (GetDiscoveredCamerasResponse);
+  rpc WatchDiscoveredCameras(GetDiscoveredCamerasRequest) returns (stream GetDiscoveredCamerasResponse);
+  
+  // Camera Pool management (managed cameras)
+  rpc GetManagedCameras(GetManagedCamerasRequest) returns (GetManagedCamerasResponse);
+  rpc WatchManagedCameras(GetManagedCamerasRequest) returns (stream GetManagedCamerasResponse);
+  rpc ManageCamera(ManageCameraRequest) returns (ManageCameraResponse);
+  rpc UnmanageCamera(UnmanageCameraRequest) returns (UnmanageCameraResponse);
+  
+  // Pairing operations
+  rpc PairCamera(PairCameraRequest) returns (PairCameraResponse);
+  
+  // Sync Queue operations
+  rpc GetSyncQueue(GetSyncQueueRequest) returns (GetSyncQueueResponse);
+  rpc WatchSyncQueue(GetSyncQueueRequest) returns (stream GetSyncQueueResponse);
+  rpc ForceSync(ForceSyncRequest) returns (ForceSyncResponse);
+  
+  // Group management
+  rpc GetGroups(GetGroupsRequest) returns (GetGroupsResponse);
+  rpc CreateGroup(CreateGroupRequest) returns (Group);
+  rpc UpdateGroup(UpdateGroupRequest) returns (Group);
+  rpc DeleteGroup(DeleteGroupRequest) returns (OperationResponse);
+  
+  // Video management
+  rpc GetVideos(GetVideosRequest) returns (GetVideosResponse);
+  
+  // Configuration & Settings
+  rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+  rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse);
+  rpc GetSetting(GetSettingRequest) returns (GetSettingResponse);
+  rpc UpdateSetting(UpdateSettingRequest) returns (Config);
+  rpc ResetSetting(ResetSettingRequest) returns (Config);
+  
+  // Logs
+  rpc GetLogs(GetLogsRequest) returns (GetLogsResponse);
+} 

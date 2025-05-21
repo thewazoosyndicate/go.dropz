@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package dropz;
+option go_package = "github.com/dropz/dropz/pkg/protocol";
+
+import "google/protobuf/timestamp.proto";
+
+// Common response for operations
+message OperationResponse {
+  bool success = 1;
+  string message = 2;
+} 

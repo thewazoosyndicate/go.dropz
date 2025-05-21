@@ -1,0 +1,183 @@
+syntax = "proto3";
+
+package dropz;
+option go_package = "github.com/dropz/dropz/pkg/protocol";
+
+import "common.proto";
+import "google/protobuf/timestamp.proto";
+
+// Base Camera type with common properties
+message Camera {
+  string id = 1;
+  string name = 2;
+  string alias = 3;
+  string mac_address = 4;
+  string wifi_ssid = 5;
+  string wifi_password = 6;
+  int32 rssi = 7;  // Signal strength in dBm
+}
+
+// Camera status information
+message CameraStatus {
+  google.protobuf.Timestamp last_seen = 1;
+  google.protobuf.Timestamp last_synced = 2;
+  bool is_pairing = 3;
+  bool is_paired = 4;
+  bool is_managed = 5;
+  bool is_reachable = 6;
+  bool is_synced = 7;
+  bool is_syncing = 8;
+}
+
+// Additional technical metadata about a camera
+message CameraMetadata {
+  string id = 1;  // References the camera ID
+  string firmware_version = 2;
+  string model = 3;
+  string serial_number = 4;
+  int32 battery_level = 5;  // percentage
+  string hardware_version = 7;
+}
+
+// Complete camera with all its information
+message CameraWithState {
+  Camera camera = 1;
+  CameraStatus status = 2;
+  string group_id = 3;
+  CameraMetadata metadata = 4;
+}
+
+// Discovered cameras - cameras that are not managed or paired
+message DiscoveredCamera {
+  CameraWithState camera_state = 1;
+}
+
+// Managed Camera (Camera Pool) - managed and paired cameras
+message ManagedCamera {
+  CameraWithState camera_state = 1;
+}
+
+// Sync Queue Entry
+message SyncQueueEntry {
+  string camera_id = 1;  // References the camera ID
+  google.protobuf.Timestamp queued_at = 2;
+  int32 progress_percent = 4;
+  string current_operation = 5;  // Text description of current operation
+}
+
+// Group of cameras
+message Group {
+  string id = 1;
+  string name = 2;
+  repeated string camera_ids = 3;  // References to managed cameras
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+// Request to get all discovered cameras
+message GetDiscoveredCamerasRequest {
+  int64 change_counter = 1; // Client's current change counter, used for change tracking
+}
+
+// Response with all discovered cameras
+message GetDiscoveredCamerasResponse {
+  repeated DiscoveredCamera cameras = 1;
+  int64 change_counter = 2; // Server's current change counter
+  bool no_changes = 3;     // True if no changes since the client's counter
+  bool heartbeat = 4;      // True if this is just a keepalive ping
+}
+
+// Request to get cameras in the pool (managed and paired)
+message GetManagedCamerasRequest {
+  int64 change_counter = 1; // Client's current change counter, used for change tracking
+}
+
+// Response with all managed cameras
+message GetManagedCamerasResponse {
+  repeated ManagedCamera cameras = 1;
+  int64 change_counter = 2; // Server's current change counter
+  bool no_changes = 3;     // True if no changes since the client's counter
+  bool heartbeat = 4;      // True if this is just a keepalive ping
+}
+
+// Request to get the sync queue
+message GetSyncQueueRequest {
+  int64 change_counter = 1; // Client's current change counter, used for change tracking
+}
+
+// Response with the sync queue
+message GetSyncQueueResponse {
+  repeated SyncQueueEntry queue = 1;
+  int64 change_counter = 2; // Server's current change counter
+  bool no_changes = 3;     // True if no changes since the client's counter
+  bool heartbeat = 4;      // True if this is just a keepalive ping
+}
+
+// Request to manage a specific camera (add to camera pool)
+message ManageCameraRequest {
+  string camera_id = 1;
+}
+
+// Response for manage request
+message ManageCameraResponse {
+  bool success = 1;
+  string message = 2;
+  ManagedCamera camera = 3;
+}
+
+// Request to stop managing a specific camera
+message UnmanageCameraRequest {
+  string camera_id = 1;
+}
+
+// Response for unmanage request
+message UnmanageCameraResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Request to pair a specific camera
+message PairCameraRequest {
+  string camera_id = 1;
+}
+
+// Response for pair request
+message PairCameraResponse {
+  bool success = 1;
+  string message = 2;
+  ManagedCamera camera = 3;
+}
+
+// Request to sync a specific camera
+message ForceSyncRequest {
+  string camera_id = 1;
+}
+
+// Response for force sync request
+message ForceSyncResponse {
+  bool success = 1;
+  string message = 2;
+  SyncQueueEntry queue_entry = 3;
+}
+
+// Group related requests and responses
+message GetGroupsRequest {}
+
+message GetGroupsResponse {
+  repeated Group groups = 1;
+}
+
+message CreateGroupRequest {
+  string name = 1;
+  repeated string camera_ids = 2;
+}
+
+message UpdateGroupRequest {
+  string group_id = 1;
+  string name = 2;
+  repeated string camera_ids = 3;
+}
+
+message DeleteGroupRequest {
+  string group_id = 1;
+} 

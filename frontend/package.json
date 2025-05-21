@@ -1,0 +1,87 @@
+{
+  "name": "dropz-electron",
+  "version": "1.0.0",
+  "description": "Electron frontend for Dropz",
+  "main": "src/main.js",
+  "homepage": "https://dropz.cloud",
+  "author": {
+    "name": "Dropz",
+    "email": "thibaut@dropz.cloud"
+  },
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "test-build": "./test-build.sh",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "cd .. && bin/build.sh && cd frontend && npm start",
+    "dev-with-deps": "cd .. && bin/build.sh --install-deps && cd frontend && npm start"
+  },
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^25.0.0",
+    "electron-builder": "^24.4.0",
+    "grpc-tools": "^1.13.0"
+  },
+  "localDependencies": {
+    "font-awesome": "6.4.0"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.13.3",
+    "@grpc/proto-loader": "^0.7.15",
+    "electron-log": "^4.4.8",
+    "google-protobuf": "^3.21.4"
+  },
+  "build": {
+    "appId": "com.dropz.app",
+    "productName": "Dropz",
+    "files": [
+      "src/**/*",
+      "node_modules/**/*"
+    ],
+    "directories": {
+      "buildResources": "resources",
+      "output": "dist"
+    },
+    "extraResources": [
+      {
+        "from": "../bin",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "icon": "resources/icon.icns"
+    },
+    "linux": {
+      "category": "Utility",
+      "target": [
+        "AppImage"
+      ],
+      "maintainer": "thibaut@dropz.cloud",
+      "icon": "resources/icon-square.png",
+      "desktop": {
+        "Icon": "dropz-electron",
+        "Name": "Dropz",
+        "Comment": "Electron frontend for Dropz",
+        "Categories": "Utility;"
+      },
+      "artifactName": "${productName}-${version}.${ext}",
+      "executableName": "dropz-electron",
+      "synopsis": "Electron frontend for Dropz",
+      "mimeTypes": [
+        "x-scheme-handler/dropz"
+      ],
+      "packageCategory": "Utility",
+      "vendor": "Dropz"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "resources/icon.ico"
+    }
+  }
+}

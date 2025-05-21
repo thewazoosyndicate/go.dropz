@@ -23,3 +23,32 @@ go.work.sum
 
 # env file
 .env
+
+# other files
+bin/dropz
+bin/dropz.exe
+bin/dropz.dmg
+bin/dropz.app
+bin/dropz.app.zip
+bin/dropz.app.tar.gz
+bin/dropz.app.tar.xz
+
+data/dropz.json
+
+logs/dropz.log
+
+frontend/node_modules
+frontend/dist
+frontend/build
+frontend/coverage
+
+frontend/videos
+frontend/data/
+frontend/logs/
+
+videos/
+
+proof_of_concept
+
+.vscode/
+

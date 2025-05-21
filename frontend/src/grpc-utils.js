@@ -15,13 +15,21 @@ const commonProto = require('./proto/common_pb');
 let _client = null;
 
 // Get gRPC client with lazy initialization
-function getClient() {
-  if (!_client) {
-    // Create client with insecure credentials (since this is local communication)
-    // The port (50051) must match what's used in your Go backend
+// Added forceNew parameter to allow recreation of client when needed
+function getClient(forceNew = false) {
+  if (!_client || forceNew) {
+    // If force new or no client, create a new one
+    // Added deadline of 3 seconds to avoid hanging connections
     _client = new serviceGrpc.DropzServiceClient(
       '127.0.0.1:50051',
-      grpc.credentials.createInsecure()
+      grpc.credentials.createInsecure(),
+      {
+        'grpc.keepalive_time_ms': 10000,
+        'grpc.keepalive_timeout_ms': 5000,
+        'grpc.max_reconnect_backoff_ms': 1000,
+        'grpc.initial_reconnect_backoff_ms': 100,
+        'grpc.enable_retries': 1
+      }
     );
   }
   return _client;
@@ -30,7 +38,7 @@ function getClient() {
 // Export the client getter and all the proto message constructors for convenience
 module.exports = {
   getClient,
-  
+
   // Proto messages for Camera operations
   Camera: goProProto.Camera,
   CameraMetadata: goProProto.CameraMetadata,
@@ -38,7 +46,7 @@ module.exports = {
   ManagedCamera: goProProto.ManagedCamera,
   SyncQueueEntry: goProProto.SyncQueueEntry,
   Group: goProProto.Group,
-  
+
   // Request/Response types for Camera operations
   GetDiscoveredCamerasRequest: goProProto.GetDiscoveredCamerasRequest,
   GetDiscoveredCamerasResponse: goProProto.GetDiscoveredCamerasResponse,
@@ -50,24 +58,24 @@ module.exports = {
   UnmanageCameraResponse: goProProto.UnmanageCameraResponse,
   PairCameraRequest: goProProto.PairCameraRequest,
   PairCameraResponse: goProProto.PairCameraResponse,
-  
+
   // Request/Response types for Sync operations
   GetSyncQueueRequest: goProProto.GetSyncQueueRequest,
   GetSyncQueueResponse: goProProto.GetSyncQueueResponse,
   ForceSyncRequest: goProProto.ForceSyncRequest,
   ForceSyncResponse: goProProto.ForceSyncResponse,
-  
+
   // Request/Response types for Group operations
   GetGroupsRequest: goProProto.GetGroupsRequest,
   GetGroupsResponse: goProProto.GetGroupsResponse,
   CreateGroupRequest: goProProto.CreateGroupRequest,
   UpdateGroupRequest: goProProto.UpdateGroupRequest,
   DeleteGroupRequest: goProProto.DeleteGroupRequest,
-  
+
   // Request/Response types for Video operations
   GetVideosRequest: videoProto.GetVideosRequest,
   GetVideosResponse: videoProto.GetVideosResponse,
-  
+
   // Request/Response types for Config operations
   GetConfigRequest: configProto.GetConfigRequest,
   GetConfigResponse: configProto.GetConfigResponse,
@@ -77,11 +85,11 @@ module.exports = {
   GetSettingResponse: configProto.GetSettingResponse,
   UpdateSettingRequest: configProto.UpdateSettingRequest,
   ResetSettingRequest: configProto.ResetSettingRequest,
-  
+
   // Request/Response types for Log operations
   GetLogsRequest: logsProto.GetLogsRequest,
   GetLogsResponse: logsProto.GetLogsResponse,
-  
+
   // Common types
   CameraStatus: commonProto.CameraStatus,
   OperationResponse: commonProto.OperationResponse

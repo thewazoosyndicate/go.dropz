@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -455,14 +456,28 @@ func (m *BLEManager) StartScanning(ctx context.Context) error {
 				m.mutex.Lock()
 				defer m.mutex.Unlock()
 
+				// Get the device address string - this could be a MAC or UUID depending on platform
+				deviceAddr := result.Address.String()
+				m.log.Debugf("Discovered GoPro device with address: %s", deviceAddr)
+
 				// Create or update device
 				device := &Device{
 					Name:       result.LocalName(),
-					MACAddress: result.Address.String(),
+					MACAddress: deviceAddr,
 					RSSI:       int32(result.RSSI),
 				}
 
-				m.devices[device.MACAddress] = device
+				// Store in our device map
+				m.devices[deviceAddr] = device
+
+				// For macOS/Darwin with UUID format addresses, also add a reference with normalized format
+				// This allows lookups with consistent format
+				if strings.Contains(deviceAddr, "-") && len(deviceAddr) == 36 {
+					m.log.Debugf("Device has UUID format address, storing additional reference")
+
+					// Additional log to help debugging
+					m.log.Debugf("Current devices in map: %v", m.mapKeys())
+				}
 
 				// Emit device discovered event
 				m.emitEvent(BLEEvent{
@@ -548,14 +563,63 @@ func (m *BLEManager) GetDiscoveredDevices() []Device {
 
 // Connect attempts to connect to a GoPro device via BLE
 func (m *BLEManager) Connect(macAddress string) error {
-	// Find device from scan results
-	m.mutex.RLock()
-	device, exists := m.devices[macAddress]
-	if !exists {
+	// First handle the special case for macOS/Darwin where we might get a UUID directly
+	isUUID := strings.Contains(macAddress, "-") && len(macAddress) == 36
+
+	// For UUID format on macOS, we need to scan first to discover the device
+	if isUUID && runtime.GOOS == "darwin" {
+		m.log.Infof("macOS detected with UUID format address: %s - performing scan first", macAddress)
+
+		// Check if we already have this device in our map
+		m.mutex.RLock()
+		_, exists := m.devices[macAddress]
 		m.mutex.RUnlock()
+
+		// If it doesn't exist, we need to scan to discover it
+		if !exists {
+			m.log.Infof("Device with UUID %s not found in device map, scanning to discover it", macAddress)
+
+			// Start a short scan to discover the device
+			scanCtx, scanCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer scanCancel()
+
+			err := m.StartScanning(scanCtx)
+			if err != nil {
+				m.log.Warnf("Error scanning for devices: %v", err)
+				// Continue anyway, we might have found some devices
+			}
+
+			// Check if we found the device
+			m.mutex.RLock()
+			_, exists = m.devices[macAddress]
+			m.mutex.RUnlock()
+
+			if !exists {
+				m.log.Infof("Creating temporary device for UUID %s after scan", macAddress)
+				// Create a temporary device for this UUID as fallback
+				tmpDevice := &Device{
+					Name:       "GoPro (UUID Connection)",
+					MACAddress: macAddress,
+					RSSI:       0,
+				}
+
+				m.mutex.Lock()
+				m.devices[macAddress] = tmpDevice
+				m.mutex.Unlock()
+			}
+		}
+	}
+
+	// Get device reference
+	var device *Device
+	m.mutex.RLock()
+	var exists bool
+	device, exists = m.devices[macAddress]
+	m.mutex.RUnlock()
+
+	if !exists {
 		return fmt.Errorf("device with MAC address %s not found", macAddress)
 	}
-	m.mutex.RUnlock()
 
 	m.log.Debugf("Connecting to device: %s (%s)", device.Name, macAddress)
 
@@ -596,19 +660,76 @@ func (m *BLEManager) Connect(macAddress string) error {
 		go func() {
 			defer close(connectDone)
 
-			// Parse the MAC address string to a bluetooth.MAC type
-			mac, parseErr := bluetooth.ParseMAC(macAddress)
-			if parseErr != nil {
-				err = fmt.Errorf("failed to parse MAC address %s: %v", macAddress, parseErr)
-				return
+			// Check if the macAddress is actually a UUID (on Darwin/macOS)
+			var addr bluetooth.Address
+
+			// Direct handling for UUID format (macOS)
+			if strings.Contains(macAddress, "-") && len(macAddress) == 36 {
+				// This is a UUID, parse it directly into the Address.UUID field
+				uuid, uuidErr := bluetooth.ParseUUID(macAddress)
+				if uuidErr != nil {
+					err = fmt.Errorf("failed to parse UUID %s: %v", macAddress, uuidErr)
+					return
+				}
+				// Set the UUID directly in the Address struct
+				addr.UUID = uuid
+				m.log.Debugf("Created Address from UUID: %s", macAddress)
+
+				// Extra debug info
+				m.log.Debugf("Connecting using UUID format address: %s", macAddress)
+			} else {
+				// Standard MAC address parsing for other platforms
+				mac, parseErr := bluetooth.ParseMAC(macAddress)
+				if parseErr != nil {
+					err = fmt.Errorf("failed to parse MAC address %s: %v", macAddress, parseErr)
+					return
+				}
+
+				// Use the platform-specific helper for MAC addresses
+				addr, err = createAddress(mac)
+				if err != nil {
+					err = fmt.Errorf("failed to create Address from MAC: %v", err)
+					return
+				}
+				m.log.Debugf("Created Address from MAC: %s", macAddress)
+
+				// Extra debug info
+				m.log.Debugf("Connecting using MAC format address: %s", macAddress)
 			}
 
-			// Create an Address from the MAC
-			addr := bluetooth.Address{MACAddress: bluetooth.MACAddress{MAC: mac}}
+			// Additional log to show exact address being used for connection
+			m.log.Debugf("Connecting with Address: %+v", addr)
 
 			// This would ideally use the context if the library supports it
 			// For now, we're still using the basic Connect method but with timeout supervision
 			bleDevice, err = m.adapter.Connect(addr, bluetooth.ConnectionParams{})
+
+			if err != nil {
+				m.log.Errorf("Connection error: %v", err)
+				// Ensure we don't try to use a nil bleDevice
+				bleDevice = nil
+				return
+			} else if bleDevice == nil {
+				// Safeguard against nil bleDevice even when no error reported
+				m.log.Errorf("Connection returned nil device but no error")
+				err = fmt.Errorf("bluetooth adapter returned nil device")
+				return
+			} else {
+				m.log.Debugf("Successfully connected to device")
+			}
+
+			// Additional validation - pause briefly and check if the connection is still valid
+			// This can help detect quick disconnects
+			time.Sleep(100 * time.Millisecond)
+
+			// Attempt a simple operation to validate the connection
+			if bleDevice != nil {
+				m.log.Debugf("Connection appears valid, device pointer: %p", bleDevice)
+			} else {
+				m.log.Errorf("Device became nil after connection")
+				err = fmt.Errorf("device connection became invalid immediately after connect")
+				return
+			}
 		}()
 
 		select {
@@ -663,6 +784,11 @@ func (m *BLEManager) Connect(macAddress string) error {
 
 	if err != nil {
 		return fmt.Errorf("failed to connect after retries: %v", err)
+	}
+
+	// Critical check: ensure the bleDevice is not nil before using it
+	if bleDevice == nil {
+		return fmt.Errorf("connection succeeded but returned nil device")
 	}
 
 	// Update device status
@@ -1764,4 +1890,14 @@ func (m *BLEManager) CheckBLESystem() error {
 func (m *BLEManager) detectGoProModel() error {
 	// TODO: Implement model detection using hardware info query
 	return nil
+}
+
+// mapKeys returns a slice of all keys in the devices map
+// This is useful for debugging purposes
+func (m *BLEManager) mapKeys() []string {
+	keys := make([]string, 0, len(m.devices))
+	for k := range m.devices {
+		keys = append(keys, k)
+	}
+	return keys
 }

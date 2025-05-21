@@ -76,17 +76,17 @@ logToFile('Renderer process starting up');
 // Initialize the UI
 function init() {
   debugLog('Initializing frontend application');
-  
+
   // Set initial status
   updateStatus(false);
-  
+
   // Load theme preference from localStorage
   loadThemePreference();
-  
+
   // Initialize toggle switches with default values
   // This ensures the UI is responsive immediately
   initializeToggles();
-  
+
   // Set up event listeners
   restartButton.addEventListener('click', restartService);
   clearLogsButton.addEventListener('click', clearLogs);
@@ -94,56 +94,56 @@ function init() {
   autoSyncToggle.addEventListener('change', toggleAutoSync);
   logLevelSelect.addEventListener('change', changeLogLevel);
   themeToggle.addEventListener('click', toggleTheme);
-  
+
   // Set up view toggle
   setupViewToggle();
-  
+
   // Set up settings panel handlers
   setupSettingsHandlers();
-  
+
   // Set up Go logs toggle if it exists
   if (showGoLogsToggle) {
     showGoLogsToggle.addEventListener('change', toggleGoLogs);
     // Initialize to checked by default
     showGoLogsToggle.checked = true;
   }
-  
+
   // Load current log level from backend
   loadCurrentLogLevel();
-  
+
   // Listen for IPC messages from the main process
   debugLog('Setting up IPC listeners');
   setupIpcListeners();
-  
+
   // Periodically update device lists (to handle devices that may have gone offline)
   setInterval(cleanupDisconnectedDevices, 30000); // Check every 30 seconds
-  
+
   // Start streaming for gRPC-based device updates
   setTimeout(() => {
     debugLog('Starting device streaming');
     startDeviceStreaming();
-    
+
     // Load additional data after connection is established
     setTimeout(() => {
       // Load app configuration
       loadConfig();
-      
+
       // Load camera groups
       loadGroups();
-      
+
       // Load videos
       loadVideos();
-      
+
       debugLog('Initial data loading complete', LOG_LEVELS.INFO);
     }, 2000); // Give time for streams to stabilize
   }, 1000); // Delay initial connection slightly to allow backend to fully start
-  
+
   // Handle app closing - cancel all streams
   window.addEventListener('beforeunload', () => {
     debugLog('App closing, cancelling all streams', LOG_LEVELS.INFO);
     cancelAllStreams();
   });
-  
+
   debugLog('Frontend initialization complete');
 }
 
@@ -152,16 +152,16 @@ function initializeToggles() {
   // Set default values for toggles
   autoPair = false;
   autoSync = false;
-  
+
   // Update UI elements with defaults
   if (pairAllToggle) {
     pairAllToggle.checked = autoPair;
   }
-  
+
   if (autoSyncToggle) {
     autoSyncToggle.checked = autoSync;
   }
-  
+
   debugLog('Toggle switches initialized with default values', LOG_LEVELS.DEBUG);
 }
 
@@ -173,7 +173,7 @@ function setupViewToggle() {
         const viewMode = button.getAttribute('data-view');
         if (viewMode !== currentViewMode) {
           currentViewMode = viewMode;
-          
+
           // Update active state on buttons
           viewToggleButtons.forEach(btn => {
             if (btn.getAttribute('data-view') === viewMode) {
@@ -182,7 +182,7 @@ function setupViewToggle() {
               btn.classList.remove('active');
             }
           });
-          
+
           // Apply view mode to containers
           [camerasPoolContainer, pairQueueContainer, syncQueueContainer].forEach(container => {
             if (container) {
@@ -190,9 +190,9 @@ function setupViewToggle() {
               container.classList.add(`devices-${viewMode}`);
             }
           });
-          
+
           debugLog(`View mode changed to: ${viewMode}`, LOG_LEVELS.INFO);
-          
+
           // Refresh the UI to apply new view
           updateDeviceLists();
         }
@@ -208,31 +208,31 @@ function startDeviceStreaming() {
     debugLog('Connection attempt already in progress, skipping', LOG_LEVELS.INFO);
     return;
   }
-  
+
   connectionState.isConnecting = true;
   debugLog('Starting device streaming with gRPC', LOG_LEVELS.INFO);
-  
+
   try {
     // Get the client and proto definitions
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Start three separate streams for the three types of data
     startDiscoveredCamerasStream(client);
     startManagedCamerasStream(client);
     startSyncQueueStream(client);
-    
+
     // Connection successful, reset retry counter
     connectionState.retryCount = 0;
     connectionState.isConnecting = false;
-    
+
     // Update UI to show successful connection
     updateStatus(true);
-    
+
   } catch (error) {
     debugLog(`Error starting device streams: ${error.message}`, LOG_LEVELS.ERROR);
     connectionState.isConnecting = false;
-    
+
     // Handle connection failure with retry logic
     handleConnectionFailure(error);
   }
@@ -244,11 +244,11 @@ function startDiscoveredCamerasStream(client) {
     const grpcUtils = require('./grpc-utils');
     const request = new grpcUtils.GetDiscoveredCamerasRequest();
     request.setChangeCounter(0);
-    
+
     debugLog('Starting WatchDiscoveredCameras stream for real-time updates', LOG_LEVELS.DEBUG);
-    
+
     const call = client.watchDiscoveredCameras(request);
-    
+
     // Store the stream so we can cancel it if needed
     if (!activeStream) activeStream = {};
     activeStream.discoveredCamerasStream = {
@@ -259,7 +259,7 @@ function startDiscoveredCamerasStream(client) {
       },
       intentionalCancel: false
     };
-    
+
     // Handle incoming data - this is now push-based (reactive)
     call.on('data', (response) => {
       // Skip heartbeats which are just keepalives
@@ -267,16 +267,16 @@ function startDiscoveredCamerasStream(client) {
         debugLog('Received heartbeat from server', LOG_LEVELS.DEBUG);
         return;
       }
-      
+
       // If there are no changes, we can skip processing
       if (response.getNoChanges()) {
         debugLog('Received no-change notification from server', LOG_LEVELS.DEBUG);
         return;
       }
-      
+
       const cameras = response.getCamerasList();
       debugLog(`Received ${cameras.length} discovered cameras update via push notification`, LOG_LEVELS.DEBUG);
-      
+
       // Process each camera immediately
       cameras.forEach(camera => {
         const cameraObj = processDiscoveredCamera(camera);
@@ -286,15 +286,15 @@ function startDiscoveredCamerasStream(client) {
           updateDeviceLists();
         }
       });
-      
+
       // Update counters after all devices are processed
       updateCounters();
     });
-    
+
     call.on('error', (error) => {
       debugLog(`Error in discovered cameras stream: ${error}`, LOG_LEVELS.ERROR);
       addLogEntry(`Error receiving camera updates: ${error}`, 'error');
-      
+
       // Attempt to restart the stream after a short delay
       setTimeout(() => {
         if (!activeStream.discoveredCamerasStream?.intentionalCancel) {
@@ -303,7 +303,7 @@ function startDiscoveredCamerasStream(client) {
         }
       }, 5000);
     });
-    
+
     call.on('end', () => {
       debugLog('Discovered cameras stream ended', LOG_LEVELS.INFO);
       if (!activeStream.discoveredCamerasStream?.intentionalCancel) {
@@ -327,11 +327,11 @@ function startManagedCamerasStream(client) {
     const request = new grpcUtils.GetManagedCamerasRequest();
     // Set change counter to 0 for initial request to get all current managed cameras
     request.setChangeCounter(0);
-    
+
     debugLog('Starting WatchManagedCameras stream for real-time updates', LOG_LEVELS.DEBUG);
-    
+
     const call = client.watchManagedCameras(request);
-    
+
     // Store the stream so we can cancel it if needed
     if (!activeStream) activeStream = {};
     activeStream.managedCamerasStream = {
@@ -342,7 +342,7 @@ function startManagedCamerasStream(client) {
       },
       intentionalCancel: false
     };
-    
+
     // Handle incoming data - now using real-time push
     call.on('data', (response) => {
       // Skip heartbeats which are just keepalives
@@ -350,19 +350,19 @@ function startManagedCamerasStream(client) {
         debugLog('Received heartbeat from managed cameras stream', LOG_LEVELS.DEBUG);
         return;
       }
-      
+
       // Skip if no changes
       if (response.getNoChanges()) {
         debugLog('Received no-change notification from managed cameras stream', LOG_LEVELS.DEBUG);
         return;
       }
-      
+
       const cameras = response.getCamerasList();
       debugLog(`Received ${cameras.length} managed cameras update via push notification`, LOG_LEVELS.DEBUG);
-      
+
       // Flag to track if we got any actual updates
       let hasUpdates = false;
-      
+
       // Process each camera
       cameras.forEach(camera => {
         const cameraObj = processManagedCamera(camera);
@@ -371,7 +371,7 @@ function startManagedCamerasStream(client) {
           hasUpdates = true;
         }
       });
-      
+
       // Only update UI if we actually got updates
       if (hasUpdates) {
         debugLog('Updating UI with new managed camera data', LOG_LEVELS.DEBUG);
@@ -379,16 +379,16 @@ function startManagedCamerasStream(client) {
         updateCounters();
       }
     });
-    
+
     // Handle errors
     call.on('error', (error) => {
       debugLog(`ManagedCameras stream error: ${error.message}`, LOG_LEVELS.ERROR);
-      
+
       // Check if this was an intentional cancellation
       if (activeStream.managedCamerasStream.intentionalCancel) {
         return;
       }
-      
+
       // Attempt to reconnect
       setTimeout(() => {
         if (!isRestarting && serviceRunning) {
@@ -397,18 +397,18 @@ function startManagedCamerasStream(client) {
         }
       }, calculateBackoffDelay());
     });
-    
+
     // Handle end of stream
     call.on('end', () => {
       debugLog('ManagedCameras stream ended', LOG_LEVELS.INFO);
-      
+
       // Attempt to reconnect if the stream ended unexpectedly
       if (!activeStream.managedCamerasStream.intentionalCancel && !isRestarting && serviceRunning) {
         debugLog('Reconnecting to ManagedCameras stream after end', LOG_LEVELS.INFO);
         setTimeout(() => startManagedCamerasStream(client), calculateBackoffDelay());
       }
     });
-    
+
   } catch (error) {
     debugLog(`Error starting ManagedCameras stream: ${error.message}`, LOG_LEVELS.ERROR);
     // Attempt to reconnect after a delay
@@ -428,11 +428,11 @@ function startSyncQueueStream(client) {
     const request = new grpcUtils.GetSyncQueueRequest();
     // Set change counter to 0 for initial request to get all current queue entries
     request.setChangeCounter(0);
-    
+
     debugLog('Starting WatchSyncQueue stream for real-time updates', LOG_LEVELS.DEBUG);
-    
+
     const call = client.watchSyncQueue(request);
-    
+
     // Store the stream so we can cancel it if needed
     if (!activeStream) activeStream = {};
     activeStream.syncQueueStream = {
@@ -443,7 +443,7 @@ function startSyncQueueStream(client) {
       },
       intentionalCancel: false
     };
-    
+
     // Handle incoming data - now using real-time push
     call.on('data', (response) => {
       // Skip heartbeats which are just keepalives
@@ -451,22 +451,22 @@ function startSyncQueueStream(client) {
         debugLog('Received heartbeat from sync queue stream', LOG_LEVELS.DEBUG);
         return;
       }
-      
+
       // Skip if no changes
       if (response.getNoChanges()) {
         debugLog('Received no-change notification from sync queue stream', LOG_LEVELS.DEBUG);
         return;
       }
-      
+
       const queueEntries = response.getQueueList();
       debugLog(`Received sync queue update with ${queueEntries.length} entries via push notification`, LOG_LEVELS.DEBUG);
-      
+
       // Check if there are actual changes in the queue
       const oldQueueLength = syncQueue.length;
-      
+
       // Update sync queue
       syncQueue = queueEntries.map(entry => processSyncQueueEntry(entry));
-      
+
       // Only update UI if the queue changed
       if (oldQueueLength !== syncQueue.length || queueEntries.length > 0) {
         debugLog('Updating UI with new sync queue data', LOG_LEVELS.DEBUG);
@@ -474,16 +474,16 @@ function startSyncQueueStream(client) {
         updateCounters();
       }
     });
-    
+
     // Handle errors
     call.on('error', (error) => {
       debugLog(`SyncQueue stream error: ${error.message}`, LOG_LEVELS.ERROR);
-      
+
       // Check if this was an intentional cancellation
       if (activeStream.syncQueueStream.intentionalCancel) {
         return;
       }
-      
+
       // Attempt to reconnect
       setTimeout(() => {
         if (!isRestarting && serviceRunning) {
@@ -492,17 +492,17 @@ function startSyncQueueStream(client) {
         }
       }, calculateBackoffDelay());
     });
-    
+
     // Handle end of stream
     call.on('end', () => {
       debugLog('SyncQueue stream ended', LOG_LEVELS.INFO);
-      
+
       // Attempt to reconnect if the stream ended unexpectedly
       if (!activeStream.syncQueueStream.intentionalCancel && !isRestarting && serviceRunning) {
         setTimeout(() => startSyncQueueStream(client), calculateBackoffDelay());
       }
     });
-    
+
   } catch (error) {
     debugLog(`Error starting SyncQueue stream: ${error.message}`, LOG_LEVELS.ERROR);
   }
@@ -520,16 +520,16 @@ function processDiscoveredCamera(camera) {
   try {
     const cameraState = camera.getCameraState();
     if (!cameraState) return null;
-    
+
     const cameraData = cameraState.getCamera();
     if (!cameraData) return null;
-    
+
     const macAddress = cameraData.getMacAddress();
     if (!macAddress) return null;
-    
+
     const status = cameraState.getStatus();
     const metadata = cameraState.getMetadata();
-    
+
     return {
       macAddress: macAddress,
       id: cameraData.getId(),
@@ -538,7 +538,7 @@ function processDiscoveredCamera(camera) {
       wifiSsid: cameraData.getWifiSsid(),
       wifiPassword: cameraData.getWifiPassword(),
       rssi: cameraData.getRssi(),
-      
+
       // Status properties - directly use boolean properties instead of a status code
       lastSeen: status ? status.getLastSeen()?.toDate() : null,
       lastSynced: status ? status.getLastSynced()?.toDate() : null,
@@ -548,17 +548,17 @@ function processDiscoveredCamera(camera) {
       isReachable: status ? status.getIsReachable() : false,
       isSynced: status ? status.getIsSynced() : false,
       isSyncing: status ? status.getIsSyncing() : false,
-      
+
       // Group ID
       groupId: cameraState.getGroupId(),
-      
+
       // Metadata if available
       batteryLevel: metadata ? metadata.getBatteryLevel() : null,
       firmwareVersion: metadata ? metadata.getFirmwareVersion() : null,
       model: metadata ? metadata.getModel() : null,
       serialNumber: metadata ? metadata.getSerialNumber() : null,
       hardwareVersion: metadata ? metadata.getHardwareVersion() : null,
-      
+
       // Visual status determined based on flags
       visualStatus: determineVisualStatus(status)
     };
@@ -573,16 +573,16 @@ function processManagedCamera(camera) {
   try {
     const cameraState = camera.getCameraState();
     if (!cameraState) return null;
-    
+
     const cameraData = cameraState.getCamera();
     if (!cameraData) return null;
-    
+
     const macAddress = cameraData.getMacAddress();
     if (!macAddress) return null;
-    
+
     const status = cameraState.getStatus();
     const metadata = cameraState.getMetadata();
-    
+
     return {
       macAddress: macAddress,
       id: cameraData.getId(),
@@ -591,7 +591,7 @@ function processManagedCamera(camera) {
       wifiSsid: cameraData.getWifiSsid(),
       wifiPassword: cameraData.getWifiPassword(),
       rssi: cameraData.getRssi(),
-      
+
       // Status properties - directly use boolean properties instead of a status code
       lastSeen: status ? status.getLastSeen()?.toDate() : null,
       lastSynced: status ? status.getLastSynced()?.toDate() : null,
@@ -601,17 +601,17 @@ function processManagedCamera(camera) {
       isReachable: status ? status.getIsReachable() : false,
       isSynced: status ? status.getIsSynced() : false,
       isSyncing: status ? status.getIsSyncing() : false,
-      
+
       // Group ID
       groupId: cameraState.getGroupId(),
-      
+
       // Metadata if available
       batteryLevel: metadata ? metadata.getBatteryLevel() : null,
       firmwareVersion: metadata ? metadata.getFirmwareVersion() : null,
       model: metadata ? metadata.getModel() : null,
       serialNumber: metadata ? metadata.getSerialNumber() : null,
       hardwareVersion: metadata ? metadata.getHardwareVersion() : null,
-      
+
       // Visual status determined based on flags
       visualStatus: determineVisualStatus(status)
     };
@@ -624,44 +624,44 @@ function processManagedCamera(camera) {
 // Determine visual status for UI display based on camera status flags
 function determineVisualStatus(status) {
   if (!status) return 'Unknown';
-  
+
   // GRPC response object status uses getIsReachable(), etc.
   const isReachable = typeof status.getIsReachable === 'function' ? status.getIsReachable() : status.isReachable;
   const isPairing = typeof status.getIsPairing === 'function' ? status.getIsPairing() : status.isPairing;
   const isSyncing = typeof status.getIsSyncing === 'function' ? status.getIsSyncing() : status.isSyncing;
   const isPaired = typeof status.getIsPaired === 'function' ? status.getIsPaired() : status.isPaired;
   const isManaged = typeof status.getIsManaged === 'function' ? status.getIsManaged() : status.isManaged;
-  
+
   // Follow the exact order of priority as defined in requirements
   if (!isReachable) {
     return 'Unreachable';
   }
-  
+
   if (isPairing) {
     return 'Pairing';
   }
-  
+
   if (isSyncing) {
     return 'Syncing';
   }
-  
+
   // Visual-only statuses deduced from the combination of flags
   if (!isPaired) {
     return 'Discovered';
   }
-  
+
   if (isPaired && !isManaged) {
     return 'Available';
   }
-  
+
   if (!isPaired && isManaged) {
     return 'Unavailable';
   }
-  
+
   if (isPaired && isManaged) {
     return 'Managed';
   }
-  
+
   return 'Unknown';
 }
 
@@ -702,18 +702,28 @@ function processSyncQueueEntry(entry) {
 function handleConnectionFailure(error) {
   debugLog(`Connection failure: ${error.message}`, LOG_LEVELS.ERROR);
   addLogEntry(`Connection failure: ${error.message}`, 'error');
-  
+
+  // Force reset the client for next connection attempt
+  try {
+    // Import here to avoid circular dependencies
+    const grpcUtils = require('./grpc-utils');
+    grpcUtils.getClient(true); // Force new client creation
+    debugLog("Reset gRPC client for next connection attempt", LOG_LEVELS.INFO);
+  } catch (err) {
+    debugLog(`Failed to reset gRPC client: ${err.message}`, LOG_LEVELS.ERROR);
+  }
+
   // Update UI to show connection error
   if (statusText.textContent === 'Running') {
     statusText.textContent = 'Running (gRPC connection error)';
   }
-  
+
   // Implement retry with exponential backoff
   if (connectionState.retryCount < connectionState.maxRetries && serviceRunning) {
     const delay = calculateBackoffDelay();
     debugLog(`Reconnecting in ${delay}ms (attempt ${connectionState.retryCount})`, LOG_LEVELS.INFO);
     addLogEntry(`Connection lost. Retry in ${Math.round(delay/1000)} seconds`, 'warn');
-    
+
     setTimeout(() => {
       if (!isRestarting && serviceRunning) {
         startDeviceStreaming();
@@ -725,23 +735,23 @@ function handleConnectionFailure(error) {
 // Cancel all active streams
 function cancelAllStreams() {
   debugLog('Cancelling all active streams', LOG_LEVELS.INFO);
-  
+
   if (activeStream) {
     if (activeStream.discoveredCamerasStream) {
       activeStream.discoveredCamerasStream.intentionalCancel = true;
       activeStream.discoveredCamerasStream.cancel();
     }
-    
+
     if (activeStream.managedCamerasStream) {
       activeStream.managedCamerasStream.intentionalCancel = true;
       activeStream.managedCamerasStream.cancel();
     }
-    
+
     if (activeStream.syncQueueStream) {
       activeStream.syncQueueStream.intentionalCancel = true;
       activeStream.syncQueueStream.cancel();
     }
-    
+
     activeStream = null;
   }
 }
@@ -750,39 +760,39 @@ function cancelAllStreams() {
 function debugLog(message, level = LOG_LEVELS.INFO) {
   // Import current log level from fileLogger
   const { currentLogLevel } = require('./fileLogger');
-  
+
   // Only proceed if the message's level is lower than or equal to the current log level
   if (level > currentLogLevel()) {
     // Message filtered by log level
     return;
   }
-  
+
   // Get the log level name
   const levelName = getLogLevelName(level);
-  
+
   // Format the message with the level name
   const formattedMessage = `[${levelName}] ${message}`;
-  
+
   // Choose appropriate console method based on level
-  const consoleMethod = 
+  const consoleMethod =
     level === LOG_LEVELS.ERROR ? console.error :
     level === LOG_LEVELS.WARN ? console.warn :
     console.log;
   consoleMethod(formattedMessage);
-  
+
   // Log to file with appropriate level
   logToFile(message, level);
-  
+
   // Send to main process
   try {
     ipcRenderer.send('debug-log', formattedMessage);
   } catch (error) {
     logToFile(`Error sending debug message to main: ${error.message}`, LOG_LEVELS.ERROR);
   }
-  
+
   // Add to the UI logs with appropriate styling
-  const logStyle = 
-    level === LOG_LEVELS.ERROR ? 'error' : 
+  const logStyle =
+    level === LOG_LEVELS.ERROR ? 'error' :
     level === LOG_LEVELS.WARN ? 'warn' : 'info';
   addLogEntry(`${levelName}: ${message}`, logStyle);
 }
@@ -803,30 +813,30 @@ function getLogLevelName(level) {
 function cleanupDisconnectedDevices() {
   const now = new Date();
   const timeout = 60000; // 60 seconds
-  
+
   for (const mac in allDevices) {
     const device = allDevices[mac];
     const lastSeen = new Date(device.lastSeen);
-    
+
     if (now - lastSeen > timeout) {
       addLogEntry(`Device ${device.name} (${mac}) has not been seen for a while and may be offline.`, 'info');
       delete allDevices[mac];
-      
+
       // Remove from other collections as needed
       if (syncQueue.includes(mac)) {
         syncQueue = syncQueue.filter(m => m !== mac);
       }
-      
+
       if (pairingInProgress[mac]) {
         delete pairingInProgress[mac];
       }
-      
+
       if (syncingInProgress[mac]) {
         delete syncingInProgress[mac];
       }
     }
   }
-  
+
   // Update UI
   updateDeviceLists();
 }
@@ -836,7 +846,7 @@ function setupIpcListeners() {
   // Listen for Go binary status updates
   ipcRenderer.on('go-binary-status', (event, data) => {
     debugLog(`Received go-binary-status: ${JSON.stringify(data)}`);
-    
+
     // If we're in a restart process, we expect to receive a 'stopped' status
     // followed by a 'running' status, so handle it appropriately
     if (isRestarting && !data.running) {
@@ -844,12 +854,12 @@ function setupIpcListeners() {
       updateStatus(false, data.exitCode);
       return;
     }
-    
+
     updateStatus(data.running, data.exitCode);
-    
+
     if (data.running) {
       addLogEntry('Service started', 'info');
-      
+
       // If this is part of a restart, don't automatically start streaming
       // as the restart function will handle that after its timeout
       if (!isRestarting) {
@@ -870,7 +880,7 @@ function setupIpcListeners() {
         activeStream.cancel();
         activeStream = null;
       }
-      
+
       if (data.exitCode === 0) {
         addLogEntry('Service stopped gracefully', 'info');
       } else {
@@ -878,34 +888,34 @@ function setupIpcListeners() {
       }
     }
   });
-  
+
   // Listen for go binary errors
   ipcRenderer.on('go-binary-error', (event, errorMessage) => {
     debugLog(`Go binary error: ${errorMessage}`, LOG_LEVELS.ERROR);
     addLogEntry(`Service error: ${errorMessage}`, 'error');
   });
-  
+
   // Listen for Go binary logs
   ipcRenderer.on('go-binary-log', (event, log) => {
     // Parse log level from the log message
     const { level, style, prefix } = parseGoLogLevel(log);
-    
+
     // Log to our debug system
     debugLog(`${prefix} ${log}`, level);
-    
+
     // Add to UI logs with 'go' source
     addLogEntry(`${prefix} ${log}`, style, 'go');
   });
-  
+
   // Listen for pair device responses
   ipcRenderer.on('pair-device-response', (event, result) => {
     debugLog(`Received pair-device-response: ${JSON.stringify(result)}`, LOG_LEVELS.INFO);
-    
+
     // Process the response
     if (result.success) {
       // Find the device that was being paired
       const deviceMac = Object.keys(pairingInProgress).find(mac => pairingInProgress[mac]);
-      
+
       if (deviceMac && allDevices[deviceMac]) {
         // Update the device status to paired
         updateDeviceStatus(deviceMac, 'paired');
@@ -914,12 +924,12 @@ function setupIpcListeners() {
     } else {
       addLogEntry(`Pairing failed: ${result.message}`, 'error');
     }
-    
+
     // Clear pairing in progress flags
     Object.keys(pairingInProgress).forEach(mac => {
       delete pairingInProgress[mac];
     });
-    
+
     // Update the UI
     updateDeviceLists();
   });
@@ -932,41 +942,41 @@ function updateStatus(running, exitCode) {
   if (statusChanged) {
     debugLog(`Service status changed to: ${running ? 'running' : 'stopped'}${exitCode ? ` (exit code: ${exitCode})` : ''}`, LOG_LEVELS.INFO);
   }
-  
+
   serviceRunning = running;
-  
+
   if (isRestarting) {
     statusLight.className = 'status-light restarting';
     statusText.textContent = 'Restarting...';
     restartButton.disabled = true;
-    
+
     // Don't attempt connection checks or streaming while restarting
     return;
   } else if (running) {
     statusLight.className = 'status-light running';
-    
+
     // Keep any existing error state in the status text if we're not explicitly checking connection
-    if (statusText.textContent !== 'Running (Reconnecting...)' && 
+    if (statusText.textContent !== 'Running (Reconnecting...)' &&
         statusText.textContent !== 'Running (gRPC connection error)') {
       statusText.textContent = 'Running';
     }
-    
+
     restartButton.disabled = false;
-    
+
     // If the backend process is running but we can't connect to gRPC, show a warning
     // Only make this gRPC check after a status change to prevent excessive calls
     if (statusChanged) {
       checkGrpcConnection()
         .then(() => {
           // If connection succeeded, update any error status to Running
-          if (statusText.textContent === 'Running (gRPC connection error)' || 
+          if (statusText.textContent === 'Running (gRPC connection error)' ||
               statusText.textContent === 'Running (Reconnecting...)') {
             statusText.textContent = 'Running';
           }
         })
         .catch(error => {
           debugLog('gRPC connection error even though process is running: ' + error.message, LOG_LEVELS.ERROR);
-          
+
           // Don't overwrite a more specific reconnecting status
           if (statusText.textContent !== 'Running (Reconnecting...)') {
             statusText.textContent = 'Running (gRPC connection error)';
@@ -976,15 +986,15 @@ function updateStatus(running, exitCode) {
   } else {
     // Service not running
     statusLight.className = 'status-light';
-    
+
     let statusMessage = 'Stopped';
     if (exitCode !== undefined && exitCode !== 0) {
       statusMessage = `Stopped (Exit code: ${exitCode})`;
-      
+
       // If the service crashed, log it clearly
       debugLog(`Service crashed with exit code ${exitCode}`, LOG_LEVELS.ERROR);
     }
-    
+
     statusText.textContent = statusMessage;
     restartButton.disabled = false;
   }
@@ -994,14 +1004,14 @@ function updateStatus(running, exitCode) {
 function restartService() {
   // Set restart flag to prevent reconnection attempts during restart
   isRestarting = true;
-  
+
   debugLog('Full application refresh requested', LOG_LEVELS.INFO);
   addLogEntry('Refreshing application...', 'info');
-  
+
   // Reset connection state
   connectionState.retryCount = 0;
   connectionState.isConnecting = false;
-  
+
   // Small delay to allow log messages to be displayed
   setTimeout(() => {
     debugLog('Performing full page refresh', LOG_LEVELS.INFO);
@@ -1016,30 +1026,30 @@ function addLogEntry(message, type, source = 'app') {
   if (shouldFilterLogMessage(message, type, source)) {
     return; // Skip this log entry
   }
-  
+
   const entry = document.createElement('div');
   entry.className = `log-entry ${type}`;
-  
+
   // Format timestamp
   const timestamp = new Date().toLocaleTimeString();
   const formattedMessage = `[${timestamp}] ${message}`;
-  
+
   // Set the text content
   entry.textContent = formattedMessage;
-  
+
   // Add data attributes for filtering
   entry.dataset.logType = type;
   entry.dataset.source = source;
-  
+
   // Check if Go logs are hidden
   if (source === 'go' && showGoLogsToggle && !showGoLogsToggle.checked) {
     entry.style.display = 'none';
   }
-  
+
   // Add to log container at the top instead of the bottom
   logContent.insertBefore(entry, logContent.firstChild);
   // No need to scroll to bottom anymore as the new entries are at the top
-  
+
   // Limit the number of entries to prevent performance issues
   const maxEntries = 500;
   while (logContent.children.length > maxEntries) {
@@ -1053,7 +1063,7 @@ function shouldFilterLogMessage(message, type, source) {
   if (type !== 'warn' || source !== 'go') {
     return false;
   }
-  
+
   // Filter patterns for MapToStruct warnings
   const filterPatterns = [
     "MapToStruct: invalid field detected *adapter.Adapter1Properties.Connectable",
@@ -1062,7 +1072,7 @@ function shouldFilterLogMessage(message, type, source) {
     "MapToStruct: invalid field detected *adapter.Adapter1Properties.Manufacturer",
     "MapToStruct: invalid field detected *device.Device1Properties.Bonded"
   ];
-  
+
   // Check if message contains any of the filter patterns
   return filterPatterns.some(pattern => message.includes(pattern));
 }
@@ -1076,40 +1086,40 @@ function clearLogs() {
 // Change the log level based on the selected value
 function changeLogLevel() {
   const selectedLevel = logLevelSelect.value;
-  
+
   try {
     // First, update the frontend log level immediately for responsive UI
     const { setLogLevel } = require('./fileLogger');
     const frontendLevelUpdated = setLogLevel(selectedLevel);
-    
+
     // Show the change in the UI
     const logLevelName = getLogLevelName(frontendLevelUpdated);
-    
+
     debugLog(`Frontend log level changing to: ${logLevelName}`, LOG_LEVELS.INFO);
     addLogEntry(`Setting log level to: ${logLevelName.toUpperCase()}`, 'info');
-    
+
     // Test log messages at different levels to demonstrate the change
     debugLog('This is a DEBUG message - should show if level is DEBUG or VERBOSE', LOG_LEVELS.DEBUG);
     debugLog('This is a VERBOSE message - should only show if level is VERBOSE', LOG_LEVELS.VERBOSE);
-    
+
     // Then update backend log level through gRPC
     const client = getClient();
     const { UpdateConfigRequest, Config } = require('./proto/config_pb');
-    
+
     // First, get the current config
     const getConfigRequest = new (require('./proto/config_pb').GetConfigRequest)();
-    
+
     client.getConfig(getConfigRequest, (getError, getResponse) => {
       if (getError) {
         debugLog(`Failed to get current config: ${getError.message}`, LOG_LEVELS.ERROR);
         addLogEntry(`Failed to get current config: ${getError.message}`, 'error');
         return;
       }
-      
+
       // Create a new config with the current settings
       const currentConfig = getResponse.getConfig();
       const newConfig = new Config();
-      
+
       // Copy all existing values from the current config
       if (currentConfig.getScanIntervalSeconds()) {
         newConfig.setScanIntervalSeconds(currentConfig.getScanIntervalSeconds());
@@ -1126,15 +1136,15 @@ function changeLogLevel() {
       if (currentConfig.getInactivityTimeoutSeconds()) {
         newConfig.setInactivityTimeoutSeconds(currentConfig.getInactivityTimeoutSeconds());
       }
-      
+
       // Set the new log level - ensure proper string format (e.g., "debug", "info")
       // Go's logrus uses lowercase log levels
       newConfig.setLogLevel(selectedLevel.toLowerCase());
-      
+
       // Create and send the update request
       const request = new UpdateConfigRequest();
       request.setConfig(newConfig);
-      
+
       client.updateConfig(request, (error, response) => {
         if (error) {
           debugLog(`Failed to change backend log level: ${error.message}`, LOG_LEVELS.ERROR);
@@ -1142,7 +1152,7 @@ function changeLogLevel() {
         } else {
           debugLog(`Backend log level changed to: ${selectedLevel}`, LOG_LEVELS.INFO);
           addLogEntry(`Backend (Go) log level changed to: ${selectedLevel.toUpperCase()}`, 'info');
-          
+
           // Generate some test logs to verify both frontend and backend are working
           debugLog(`Log synchronization complete - both frontend and backend now using ${logLevelName}`, LOG_LEVELS.INFO);
         }
@@ -1158,17 +1168,17 @@ function changeLogLevel() {
 function loadCurrentLogLevel() {
   try {
     debugLog('Initializing log level synchronization...', LOG_LEVELS.INFO);
-    
+
     const client = getClient();
     const { GetConfigRequest } = require('./proto/config_pb');
-    
+
     const request = new GetConfigRequest();
-    
+
     client.getConfig(request, (error, response) => {
       if (error) {
         debugLog(`Failed to load current log level from backend: ${error.message}`, LOG_LEVELS.ERROR);
         addLogEntry(`Failed to load log level from backend: ${error.message}`, 'error');
-        
+
         // If we couldn't get the backend level, default to DEBUG
         debugLog('Using default DEBUG level for frontend', LOG_LEVELS.INFO);
         const { setLogLevel } = require('./fileLogger');
@@ -1178,12 +1188,12 @@ function loadCurrentLogLevel() {
         if (config && config.getLogLevel()) {
           // Get the backend log level (likely lowercase like "debug" or "info")
           let backendLevel = config.getLogLevel();
-          
+
           // Convert to uppercase for frontend use and consistent display
           const logLevelUppercase = backendLevel.toUpperCase();
-          
+
           debugLog(`Backend log level: ${backendLevel}`, LOG_LEVELS.INFO);
-          
+
           // Update the select element with the current value - make sure it matches case sensitivity of options
           // Check if the select has the option, otherwise default to a valid option
           const selectOptions = Array.from(logLevelSelect.options).map(opt => opt.value);
@@ -1196,14 +1206,14 @@ function loadCurrentLogLevel() {
             // Default to info if the level isn't available
             logLevelSelect.value = 'info';
           }
-          
+
           // Also update the frontend log level
           const { setLogLevel } = require('./fileLogger');
           setLogLevel(logLevelUppercase);
-          
+
           debugLog(`Log level synchronized between frontend and backend: ${logLevelUppercase}`, LOG_LEVELS.INFO);
           addLogEntry(`Log system initialized: level set to ${logLevelUppercase}`, 'info');
-          
+
           // Generate test logs at various levels to demonstrate the current setting
           debugLog('This is an INFO log test', LOG_LEVELS.INFO);
           debugLog('This is a DEBUG log test (only visible at DEBUG or VERBOSE level)', LOG_LEVELS.DEBUG);
@@ -1211,7 +1221,7 @@ function loadCurrentLogLevel() {
         } else {
           debugLog('Backend config received but no log level found', LOG_LEVELS.WARN);
           addLogEntry('No log level configured in backend, using default', 'warn');
-          
+
           // Set a default level
           const { setLogLevel } = require('./fileLogger');
           setLogLevel('DEBUG');
@@ -1229,16 +1239,16 @@ function addOrUpdateDevice(device) {
     debugLog('Attempted to add device with no MAC address', LOG_LEVELS.ERROR);
     return null;
   }
-  
+
   // Validate required data
   if (!device.name) {
     device.name = device.model || 'Unnamed Camera';
   }
-  
+
   // First call or moving from one list to another
   const existingDevice = allDevices[device.macAddress];
   const isNewDevice = !existingDevice;
-  
+
   if (isNewDevice) {
     // Log new device
     debugLog(`New device discovered: ${device.name} (${device.macAddress})`, LOG_LEVELS.INFO);
@@ -1248,44 +1258,44 @@ function addOrUpdateDevice(device) {
     if (existingDevice.isReachable !== device.isReachable) {
       debugLog(`Device reachability changed: ${device.name} (${device.macAddress}) - now ${device.isReachable ? 'reachable' : 'unreachable'}`, LOG_LEVELS.INFO);
     }
-    
+
     if (existingDevice.isPaired !== device.isPaired) {
       debugLog(`Device paired status changed: ${device.name} (${device.macAddress}) - now ${device.isPaired ? 'paired' : 'unpaired'}`, LOG_LEVELS.INFO);
       if (device.isPaired) {
         addLogEntry(`Device paired: ${device.name}`, 'success');
       }
     }
-    
+
     if (existingDevice.isManaged !== device.isManaged) {
       debugLog(`Device management changed: ${device.name} (${device.macAddress}) - now ${device.isManaged ? 'managed' : 'unmanaged'}`, LOG_LEVELS.INFO);
     }
-    
+
     if (existingDevice.isSyncing !== device.isSyncing) {
       debugLog(`Device syncing status changed: ${device.name} (${device.macAddress}) - now ${device.isSyncing ? 'syncing' : 'not syncing'}`, LOG_LEVELS.INFO);
     }
   }
-  
+
   // Preserve timestamps if they're newer in the existing device
   if (existingDevice && existingDevice.lastSeen && device.lastSeen) {
     if (existingDevice.lastSeen > device.lastSeen) {
       device.lastSeen = existingDevice.lastSeen;
     }
   }
-  
+
   // Update or add the device
   allDevices[device.macAddress] = device;
-  
+
   // Log which pools the device will show in
   const inDiscovered = shouldShowInDiscoveredPool(device);
   const inManaged = shouldShowInManagedPool(device);
   const inSyncQueue = shouldShowInSyncQueue(device);
-  
+
   debugLog(`Device ${device.name} pool memberships: Discovered=${inDiscovered}, Managed=${inManaged}, SyncQueue=${inSyncQueue}`, LOG_LEVELS.DEBUG);
   debugLog(`Device ${device.name} flags: isReachable=${device.isReachable}, isPaired=${device.isPaired}, isManaged=${device.isManaged}, isSynced=${device.isSynced}`, LOG_LEVELS.DEBUG);
-  
+
   // Update UI immediately for this device
   updateDeviceLists();
-  
+
   return device;
 }
 
@@ -1295,16 +1305,16 @@ function updateDeviceStatus(macAddress, status) {
     debugLog(`Cannot update status for unknown device: ${macAddress}`, LOG_LEVELS.ERROR);
     return;
   }
-  
+
   // Store previous status for comparison
   const previousStatus = allDevices[macAddress].visualStatus;
-  
+
   // Set the new visualStatus for UI purposes
   allDevices[macAddress].visualStatus = status;
-  
+
   // Update UI
   updateDeviceLists();
-  
+
   // Apply status change animation if status actually changed
   if (previousStatus !== status) {
     highlightStatusChange(macAddress);
@@ -1314,24 +1324,24 @@ function updateDeviceStatus(macAddress, status) {
 // Update all device lists in the UI
 function updateDeviceLists() {
   debugLog("Updating device lists. Total devices: " + Object.keys(allDevices).length, LOG_LEVELS.DEBUG);
-  
+
   // Log detailed device information for debugging
   Object.values(allDevices).forEach(device => {
     debugLog(`Device: ${device.name}, MAC: ${device.macAddress}, isPaired: ${device.isPaired}, isManaged: ${device.isManaged}, isReachable: ${device.isReachable}, isSynced: ${device.isSynced}`, LOG_LEVELS.DEBUG);
   });
-  
+
   // Log how many devices should appear in each pool
   const discoveredCount = Object.values(allDevices).filter(device => shouldShowInDiscoveredPool(device)).length;
   const managedCount = Object.values(allDevices).filter(device => shouldShowInManagedPool(device)).length;
   const syncCount = Object.values(allDevices).filter(device => shouldShowInSyncQueue(device)).length;
-  
+
   debugLog(`Pool counts - Discovered: ${discoveredCount}, Managed: ${managedCount}, Sync: ${syncCount}`, LOG_LEVELS.DEBUG);
-  
+
   // Update UI for each list
   updatePairQueueUI();
   updateCamerasPoolUI();
   updateSyncQueueUI();
-  
+
   // Update counters
   updateCounters();
 }
@@ -1343,7 +1353,7 @@ function highlightStatusChange(macAddress) {
     if (deviceCard) {
       // Add highlight class to the device card for status-specific styling
       deviceCard.classList.add(`status-changed`);
-      
+
       // Remove highlight class after animation completes
       setTimeout(() => {
         deviceCard.classList.remove(`status-changed`);
@@ -1358,7 +1368,7 @@ function updateCounters() {
   let managedCount = Object.values(allDevices).filter(device => shouldShowInManagedPool(device)).length;
   let unpairedCount = Object.values(allDevices).filter(device => device.isReachable && device.isManaged && !device.isPaired).length;
   let syncCount = Object.values(allDevices).filter(device => shouldShowInSyncQueue(device)).length;
-  
+
   // Update displays
   managedCountDisplay.textContent = managedCount;
   unpairedCountDisplay.textContent = unpairedCount;
@@ -1369,42 +1379,42 @@ function updateCounters() {
 function updatePairQueueUI() {
   // Clear existing content
   pairQueueContainer.innerHTML = '';
-  
+
   // Add wrapper for grid layout
   const gridContainer = document.createElement('div');
   gridContainer.className = 'gopro-grid-container';
   pairQueueContainer.appendChild(gridContainer);
-  
+
   // Use exact boolean-based filtering from database criteria
-  let discoveredDevices = Object.values(allDevices).filter(device => 
-    device.isReachable && 
+  let discoveredDevices = Object.values(allDevices).filter(device =>
+    device.isReachable &&
     (!device.isPaired || !device.isManaged)
   );
-  
+
   // Add debugging to see which devices are being considered and why
   debugLog(`Discovered pool filtering - Total devices: ${Object.values(allDevices).length}, Shown: ${discoveredDevices.length}`, LOG_LEVELS.DEBUG);
   Object.values(allDevices).forEach(device => {
     const shouldShow = device.isReachable && (!device.isPaired || !device.isManaged);
     debugLog(`Device ${device.name} (${device.macAddress}): isReachable=${device.isReachable}, isPaired=${device.isPaired}, isManaged=${device.isManaged}, shouldShow=${shouldShow}`, LOG_LEVELS.DEBUG);
   });
-  
+
   // Sort by signal strength
   discoveredDevices.sort((a, b) => (b.rssi || -100) - (a.rssi || -100));
-  
+
   if (discoveredDevices.length === 0) {
     // No discovered devices - create an empty state similar to the initial HTML
     const emptyState = document.createElement('div');
     emptyState.className = 'empty-state';
-    
+
     // Use the Dropz logo instead of Font Awesome icon
     const logo = document.createElement('img');
     logo.src = 'imgs/3_dropz.svg';
     logo.alt = 'Dropz Logo';
     logo.className = 'empty-state-logo';
-    
+
     const message = document.createElement('p');
     message.textContent = 'No GoPro devices detected';
-    
+
     emptyState.appendChild(logo);
     emptyState.appendChild(message);
     gridContainer.appendChild(emptyState);
@@ -1421,36 +1431,36 @@ function updatePairQueueUI() {
 function updateCamerasPoolUI() {
   // Clear existing content
   camerasPoolContainer.innerHTML = '';
-  
+
   // Add wrapper for grid layout
   const gridContainer = document.createElement('div');
   gridContainer.className = 'gopro-grid-container';
   camerasPoolContainer.appendChild(gridContainer);
-  
+
   // Use exact boolean-based filtering from database criteria
-  let managedDevices = Object.values(allDevices).filter(device => 
-    device.isReachable && 
-    device.isPaired && 
+  let managedDevices = Object.values(allDevices).filter(device =>
+    device.isReachable &&
+    device.isPaired &&
     device.isManaged
   );
-  
+
   // Sort by name
   managedDevices.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  
+
   if (managedDevices.length === 0) {
     // No managed devices - create an empty state similar to the initial HTML
     const emptyState = document.createElement('div');
     emptyState.className = 'empty-state';
-    
+
     // Use the Dropz logo instead of Font Awesome icon
     const logo = document.createElement('img');
     logo.src = 'imgs/3_dropz.svg';
     logo.alt = 'Dropz Logo';
     logo.className = 'empty-state-logo';
-    
+
     const message = document.createElement('p');
     message.textContent = 'No managed GoPro devices';
-    
+
     emptyState.appendChild(logo);
     emptyState.appendChild(message);
     gridContainer.appendChild(emptyState);
@@ -1467,17 +1477,17 @@ function updateCamerasPoolUI() {
 function updateSyncQueueUI() {
   // Clear existing content
   syncQueueContainer.innerHTML = '';
-  
+
   // Add wrapper for grid layout
   const gridContainer = document.createElement('div');
   gridContainer.className = 'gopro-grid-container';
   syncQueueContainer.appendChild(gridContainer);
-  
+
   // Use new boolean-based filtering from database criteria
-  let syncDevices = Object.values(allDevices).filter(device => 
-    device.isReachable && 
-    device.isPaired && 
-    device.isManaged && 
+  let syncDevices = Object.values(allDevices).filter(device =>
+    device.isReachable &&
+    device.isPaired &&
+    device.isManaged &&
     !device.isSynced
   );
 
@@ -1485,16 +1495,16 @@ function updateSyncQueueUI() {
     // No devices in sync queue - create an empty state similar to the initial HTML
     const emptyState = document.createElement('div');
     emptyState.className = 'empty-state';
-    
+
     // Use the Dropz logo instead of Font Awesome icon
     const logo = document.createElement('img');
     logo.src = 'imgs/3_dropz.svg';
     logo.alt = 'Dropz Logo';
     logo.className = 'empty-state-logo';
-    
+
     const message = document.createElement('p');
     message.textContent = 'No GoPro devices in sync queue';
-    
+
     emptyState.appendChild(logo);
     emptyState.appendChild(message);
     gridContainer.appendChild(emptyState);
@@ -1513,23 +1523,23 @@ function createGoProElement(device, inSyncQueue = false) {
   // Clone the template
   const template = goProItemTemplate.content.cloneNode(true);
   const element = template.querySelector('.device-card');
-  
+
   // Get device status
   const statusCode = getStatusShortcode(device);
   const formattedStatus = formatStatus(statusCode);
   debugLog(`Device ${device.name}: visualStatus=${device.visualStatus}, formatted=${formattedStatus}`, LOG_LEVELS.DEBUG);
-  
+
   // Add status class to the device card for status-specific styling
   element.classList.add(`status-${statusCode.toLowerCase()}`);
-  
+
   // Set data attribute for the device MAC
   element.setAttribute('data-mac', device.macAddress);
-  
+
   // Set device name
   const nameElement = element.querySelector('.device-name');
   if (nameElement) {
     nameElement.textContent = device.name || 'Unknown GoPro';
-    
+
     // Add status badge next to the device name
     const statusText = formatStatus(getStatusShortcode(device));
     const statusBadge = document.createElement('span');
@@ -1538,25 +1548,25 @@ function createGoProElement(device, inSyncQueue = false) {
     nameElement.appendChild(document.createTextNode(' '));
     nameElement.appendChild(statusBadge);
   }
-  
+
   // Set device MAC address
   const macElement = element.querySelector('.device-mac');
   if (macElement) {
     macElement.textContent = formatMacAddress(device.macAddress);
   }
-  
+
   // Set model info if available
   const modelElement = element.querySelector('.device-model');
   if (modelElement) {
     modelElement.textContent = device.model || 'Unknown Model';
   }
-  
+
   // Set firmware if available
   const firmwareElement = element.querySelector('.device-firmware');
   if (firmwareElement) {
     firmwareElement.textContent = device.firmwareVersion || 'Unknown FW';
   }
-  
+
   // Create and append signal strength indicator
   const signalElement = element.querySelector('.device-signal');
   if (signalElement) {
@@ -1568,14 +1578,14 @@ function createGoProElement(device, inSyncQueue = false) {
     signalElement.appendChild(signalBars);
     signalElement.appendChild(rssiValue);
   }
-  
+
   // Create and append battery indicator if available
   const batteryElement = element.querySelector('.device-battery');
   if (batteryElement && device.batteryLevel !== undefined) {
     const batteryIndicator = createBatteryIndicator(device.batteryLevel, device.isCharging);
     batteryElement.appendChild(batteryIndicator);
   }
-  
+
   // Set status details (last seen)
   const statusElement = element.querySelector('.device-status');
   if (statusElement) {
@@ -1585,12 +1595,12 @@ function createGoProElement(device, inSyncQueue = false) {
     statusElement.textContent = lastSeen;
     statusElement.classList.add(`status-${status.toLowerCase()}`);
   }
-  
+
   // Configure buttons and toggles based on device state
   const pairButton = element.querySelector('.pair-button');
   const syncButton = element.querySelector('.sync-button');
   const manageToggle = element.querySelector('.manage-toggle');
-  
+
   // Configure pair button
   if (pairButton) {
     // Check if we're already pairing this device
@@ -1617,7 +1627,7 @@ function createGoProElement(device, inSyncQueue = false) {
       pairButton.disabled = true;
     }
   }
-  
+
   // Configure sync button
   if (syncButton) {
     if (inSyncQueue) {
@@ -1636,7 +1646,7 @@ function createGoProElement(device, inSyncQueue = false) {
       syncButton.disabled = true;
     }
   }
-  
+
   // Configure manage toggle
   if (manageToggle) {
     manageToggle.checked = !!device.isManaged;
@@ -1644,7 +1654,7 @@ function createGoProElement(device, inSyncQueue = false) {
       toggleDeviceManaged(device.macAddress, event.target.checked);
     });
   }
-  
+
   return element;
 }
 
@@ -1652,23 +1662,23 @@ function createGoProElement(device, inSyncQueue = false) {
 function createSignalStrengthIndicator(rssi) {
   const signalContainer = document.createElement('div');
   signalContainer.classList.add('signal-bars');
-  
+
   // Create 4 bars
   for (let i = 0; i < 4; i++) {
     const bar = document.createElement('div');
     bar.classList.add('signal-bar');
     signalContainer.appendChild(bar);
   }
-  
+
   // Fill bars based on signal strength
   const bars = signalContainer.querySelectorAll('.signal-bar');
   const normalizedRssi = Math.min(Math.max(rssi, -100), -30);
   const signalStrength = Math.floor(((normalizedRssi + 100) / 70) * 4);
-  
+
   for (let i = 0; i < signalStrength; i++) {
     bars[i].classList.add('filled');
   }
-  
+
   return signalContainer;
 }
 
@@ -1676,20 +1686,20 @@ function createSignalStrengthIndicator(rssi) {
 function createBatteryIndicator(level, isCharging = false) {
   const batteryContainer = document.createElement('div');
   batteryContainer.classList.add('battery-indicator');
-  
+
   const batteryIcon = document.createElement('div');
   batteryIcon.classList.add('battery-icon');
   if (isCharging) {
     batteryIcon.classList.add('charging');
   }
-  
+
   const batteryFill = document.createElement('div');
   batteryFill.classList.add('battery-fill');
-  
+
   // Set battery fill level and color class
   const fillLevel = Math.max(0, Math.min(100, level));
   batteryFill.style.width = `${fillLevel}%`;
-  
+
   if (fillLevel < 20) {
     batteryFill.classList.add('battery-low');
   } else if (fillLevel < 50) {
@@ -1697,14 +1707,14 @@ function createBatteryIndicator(level, isCharging = false) {
   } else {
     batteryFill.classList.add('battery-good');
   }
-  
+
   batteryIcon.appendChild(batteryFill);
   batteryContainer.appendChild(batteryIcon);
-  
+
   const batteryText = document.createElement('span');
   batteryText.textContent = `${fillLevel}%`;
   batteryContainer.appendChild(batteryText);
-  
+
   return batteryContainer;
 }
 
@@ -1722,13 +1732,13 @@ function getStatusShortcode(device) {
   if (!device.isReachable) return 'unreachable';
   if (device.isPairing) return 'pairing';
   if (device.isSyncing) return 'syncing';
-  
+
   // Then determine visual status based on paired/managed states
   if (!device.isPaired && device.isManaged) return 'unavailable';
   if (!device.isPaired) return 'discovered';
   if (device.isPaired && !device.isManaged) return 'available';
   if (device.isPaired && device.isManaged) return 'managed';
-  
+
   // Fallback to standard visuals
   const status = (device.visualStatus || '').toLowerCase();
   switch (status) {
@@ -1749,35 +1759,35 @@ function formatStatus(status) {
   // Accept either a visualStatus string or a shortcode
   if (typeof status === 'string') {
     switch (status.toLowerCase()) {
-      case 'd': 
-      case 'discovered': 
+      case 'd':
+      case 'discovered':
         return 'Discovered';
-        
-      case 'm': 
-      case 'managed': 
+
+      case 'm':
+      case 'managed':
         return 'Managed';
-        
-      case 'pairing': 
+
+      case 'pairing':
         return 'Pairing';
-        
-      case 'paired': 
+
+      case 'paired':
         return 'Paired';
-        
-      case 'unavailable': 
+
+      case 'unavailable':
         return 'Unavailable';
-        
-      case 'available': 
+
+      case 'available':
         return 'Available';
-        
-      case 'syncing': 
+
+      case 'syncing':
         return 'Syncing';
-        
-      case 'unreachable': 
+
+      case 'unreachable':
         return 'Unreachable';
-        
+
       case 'unknown':
         return 'Unknown';
-        
+
       default:
         if (status.includes('_')) {
           return status.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ');
@@ -1791,7 +1801,7 @@ function formatStatus(status) {
 // Pair a device
 function pairDevice(macAddress) {
   console.log("pairDevice function called with macAddress:", macAddress);
-  
+
   const device = allDevices[macAddress];
   if (!device || !device.id) {
     console.log("Device not found or missing ID:", device);
@@ -1799,31 +1809,31 @@ function pairDevice(macAddress) {
     resetPairButtonState(macAddress);
     return;
   }
-  
+
   console.log("Attempting to pair device:", device.name, "ID:", device.id, "Status:", device.status);
   debugLog(`Pairing device: ${device.name} (${device.id})`, LOG_LEVELS.INFO);
   addLogEntry(`Attempting to pair ${device.name}`, 'info');
-  
+
   // Mark device as pairing in progress
   pairingInProgress[macAddress] = true;
-  
+
   // Update device state in UI immediately
   updateDeviceStatus(macAddress, 'pairing');
   updateDeviceLists();
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the pairing request - this should work whether the device is managed or not
     const pairRequest = new grpcUtils.PairCameraRequest();
     pairRequest.setCameraId(device.id);
-    
+
     // Call the pairing service
     client.pairCamera(pairRequest, (pairError, pairResponse) => {
       // No longer pairing
       pairingInProgress[macAddress] = false;
-      
+
       if (pairError) {
         debugLog(`Error pairing device: ${pairError.message}`, LOG_LEVELS.ERROR);
         addLogEntry(`Failed to pair ${device.name}: ${pairError.message}`, 'error');
@@ -1832,7 +1842,7 @@ function pairDevice(macAddress) {
         updateDeviceLists();
         return;
       }
-      
+
       if (!pairResponse.getSuccess()) {
         debugLog(`Pairing failed: ${pairResponse.getMessage()}`, LOG_LEVELS.ERROR);
         addLogEntry(`Failed to pair ${device.name}: ${pairResponse.getMessage()}`, 'error');
@@ -1841,11 +1851,11 @@ function pairDevice(macAddress) {
         updateDeviceLists();
         return;
       }
-      
+
       // Successfully paired
       debugLog(`Successfully paired device: ${device.name}`, LOG_LEVELS.INFO);
       addLogEntry(`Successfully paired ${device.name}`, 'success');
-      
+
       // Process the returned camera object
       const pairResultCamera = pairResponse.getCamera();
       if (pairResultCamera) {
@@ -1869,10 +1879,10 @@ function pairDevice(macAddress) {
         device.isPairing = false;
         addOrUpdateDevice(device);
       }
-      
+
       // Update UI
       updateDeviceLists();
-      
+
       // Check if we should automatically sync
       if (autoSync) {
         debugLog(`Auto-sync enabled, adding ${device.name} to sync queue`, LOG_LEVELS.INFO);
@@ -1912,21 +1922,21 @@ function addToSyncQueue(macAddress) {
     resetSyncButtonState(macAddress);
     return;
   }
-  
+
   debugLog(`Adding device to sync queue: ${device.name} (${device.id})`, LOG_LEVELS.INFO);
   debugLog(`Device details - MAC: ${macAddress}, isPaired: ${device.isPaired}, isManaged: ${device.isManaged}, ID: ${device.id}`, LOG_LEVELS.DEBUG);
   addLogEntry(`Adding ${device.name} to sync queue`, 'info');
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the request
     const request = new grpcUtils.ForceSyncRequest();
     request.setCameraId(device.id);
-    
+
     debugLog(`Sending ForceSync request for camera ID: ${device.id}`, LOG_LEVELS.DEBUG);
-    
+
     // Call the service - this will automatically set isSynced to false in the backend
     client.forceSync(request, (error, response) => {
       if (error) {
@@ -1935,21 +1945,21 @@ function addToSyncQueue(macAddress) {
         resetSyncButtonState(macAddress);
         return;
       }
-      
+
       if (!response.getSuccess()) {
         debugLog(`Adding to sync queue failed: ${response.getMessage()}`, LOG_LEVELS.ERROR);
         addLogEntry(`Failed to add ${device.name} to sync queue: ${response.getMessage()}`, 'error');
         resetSyncButtonState(macAddress);
         return;
       }
-      
+
       // Successfully added to sync queue
       debugLog(`Successfully added device to sync queue: ${device.name}`, LOG_LEVELS.INFO);
       addLogEntry(`Added ${device.name} to sync queue`, 'success');
-      
+
       // Update local device state
       device.isSynced = false;
-      
+
       // Process the returned queue entry
       const queueEntry = response.getQueueEntry();
       if (queueEntry) {
@@ -1957,7 +1967,7 @@ function addToSyncQueue(macAddress) {
         if (processedEntry) {
           // Check if the entry is already in the queue
           const existingIndex = syncQueue.findIndex(entry => entry.cameraId === processedEntry.cameraId);
-          
+
           if (existingIndex >= 0) {
             // Update existing entry
             syncQueue[existingIndex] = processedEntry;
@@ -1965,7 +1975,7 @@ function addToSyncQueue(macAddress) {
             // Add new entry
             syncQueue.push(processedEntry);
           }
-          
+
           // Update UI
           updateSyncQueueUI();
           updateCounters();
@@ -2000,45 +2010,45 @@ function toggleDeviceManaged(macAddress, isManaged) {
     debugLog(`Cannot ${isManaged ? 'manage' : 'unmanage'} device, no device ID found for ${macAddress}`, LOG_LEVELS.ERROR);
     return;
   }
-  
+
   debugLog(`${isManaged ? 'Managing' : 'Unmanaging'} device: ${device.name} (${device.id})`, LOG_LEVELS.INFO);
   addLogEntry(`${isManaged ? 'Adding' : 'Removing'} ${device.name} ${isManaged ? 'to' : 'from'} camera pool`, 'info');
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     if (isManaged) {
       // Managing device
       const request = new grpcUtils.ManageCameraRequest();
       request.setCameraId(device.id);
-      
+
       client.manageCamera(request, handleResponse);
     } else {
       // Unmanaging device
       const request = new grpcUtils.UnmanageCameraRequest();
       request.setCameraId(device.id);
-      
+
       client.unmanageCamera(request, handleResponse);
     }
-    
+
     function handleResponse(error, response) {
       if (error) {
         debugLog(`Error ${isManaged ? 'managing' : 'unmanaging'} device: ${error.message}`, LOG_LEVELS.ERROR);
         addLogEntry(`Failed to ${isManaged ? 'add' : 'remove'} ${device.name} ${isManaged ? 'to' : 'from'} camera pool: ${error.message}`, 'error');
         return;
       }
-      
+
       if (!response.getSuccess()) {
         debugLog(`${isManaged ? 'Managing' : 'Unmanaging'} failed: ${response.getMessage()}`, LOG_LEVELS.ERROR);
         addLogEntry(`Failed to ${isManaged ? 'add' : 'remove'} ${device.name} ${isManaged ? 'to' : 'from'} camera pool: ${response.getMessage()}`, 'error');
         return;
       }
-      
+
       // Success!
       debugLog(`Successfully ${isManaged ? 'managed' : 'unmanaged'} device: ${device.name}`, LOG_LEVELS.INFO);
       addLogEntry(`${isManaged ? 'Added' : 'Removed'} ${device.name} ${isManaged ? 'to' : 'from'} camera pool`, 'success');
-      
+
       // If this was a manage request, process the returned camera
       if (isManaged && response.getCamera) {
         const managedCamera = response.getCamera();
@@ -2049,11 +2059,11 @@ function toggleDeviceManaged(macAddress, isManaged) {
           }
         }
       }
-      
+
       // Update device lists regardless
       updateDeviceLists();
       updateCounters();
-      
+
       // Auto-pair if enabled
       if (isManaged && autoPair && !(device.isPaired)) {
         debugLog(`Auto-pair enabled, pairing ${device.name}`, LOG_LEVELS.INFO);
@@ -2070,40 +2080,40 @@ function toggleDeviceManaged(macAddress, isManaged) {
 function togglePairAll(event) {
   const newValue = event.target.checked;
   const previousValue = autoPair;
-  
+
   debugLog(`Toggle pair-all button clicked. Previous: ${previousValue}, New: ${newValue}`, LOG_LEVELS.INFO);
-  
+
   // Update the local state optimistically
   autoPair = newValue;
-  
+
   // Update the backend config
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the request
     const request = new grpcUtils.UpdateSettingRequest();
     request.setSettingName('pair_mode_enabled');
     request.setBoolValue(newValue);
-    
+
     // Call the service and handle response
     client.updateSetting(request, (error, response) => {
       if (error) {
         debugLog(`Error updating pair_mode_enabled: ${error.message}`, LOG_LEVELS.ERROR);
         addLogEntry(`Failed to update auto-pair setting: ${error.message}`, 'error');
-        
+
         // Revert local state and UI on error
         autoPair = previousValue;
         if (pairAllToggle) {
           pairAllToggle.checked = previousValue;
         }
-        
+
         return;
       }
-      
+
       // Update was successful
       debugLog(`Successfully updated pair_mode_enabled to ${newValue}`, LOG_LEVELS.INFO);
-      
+
       if (newValue) {
         addLogEntry('Auto-pairing enabled', 'info');
         // Start pairing all unpaired devices
@@ -2119,7 +2129,7 @@ function togglePairAll(event) {
   } catch (error) {
     debugLog(`Exception updating pair_mode_enabled: ${error.message}`, LOG_LEVELS.ERROR);
     addLogEntry(`Error updating auto-pair setting: ${error.message}`, 'error');
-    
+
     // Revert local state and UI on exception
     autoPair = previousValue;
     if (pairAllToggle) {
@@ -2132,40 +2142,40 @@ function togglePairAll(event) {
 function toggleAutoSync(event) {
   const newValue = event.target.checked;
   const previousValue = autoSync;
-  
+
   debugLog(`Toggle auto-sync button clicked. Previous: ${previousValue}, New: ${newValue}`, LOG_LEVELS.INFO);
-  
+
   // Update the local state optimistically
   autoSync = newValue;
-  
+
   // Update the backend config
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the request
     const request = new grpcUtils.UpdateSettingRequest();
     request.setSettingName('sync_enabled');
     request.setBoolValue(newValue);
-    
+
     // Call the service and handle response
     client.updateSetting(request, (error, response) => {
       if (error) {
         debugLog(`Error updating sync_enabled: ${error.message}`, LOG_LEVELS.ERROR);
         addLogEntry(`Failed to update auto-sync setting: ${error.message}`, 'error');
-        
+
         // Revert local state and UI on error
         autoSync = previousValue;
         if (autoSyncToggle) {
           autoSyncToggle.checked = previousValue;
         }
-        
+
         return;
       }
-      
+
       // Update was successful
       debugLog(`Successfully updated sync_enabled to ${newValue}`, LOG_LEVELS.INFO);
-      
+
       if (newValue) {
         addLogEntry('Auto-sync enabled', 'info');
         // Start syncing if there are devices in the queue
@@ -2179,7 +2189,7 @@ function toggleAutoSync(event) {
   } catch (error) {
     debugLog(`Exception updating sync_enabled: ${error.message}`, LOG_LEVELS.ERROR);
     addLogEntry(`Error updating auto-sync setting: ${error.message}`, 'error');
-    
+
     // Revert local state and UI on exception
     autoSync = previousValue;
     if (autoSyncToggle) {
@@ -2209,10 +2219,10 @@ function parseGoLogLevel(logMessage) {
     style: 'info',
     prefix: '[Go]'
   };
-  
+
   // Check for time prefix (common in Go logs) - e.g., 2023/05/20 15:04:05
   const timePrefix = logMessage.match(/^\d{4}[/-]\d{2}[/-]\d{2}[ T]\d{2}:\d{2}:\d{2}/);
-  
+
   // Handle standard Go log format with level prefix
   // Our custom formatter adds level prefixes like [INFO], [DEBUG], etc.
   if (logMessage.includes('[TRACE]')) {
@@ -2221,42 +2231,42 @@ function parseGoLogLevel(logMessage) {
     result.prefix = '[Go-TRACE]';
     return result;
   }
-  
+
   if (logMessage.includes('[DEBUG]')) {
     result.level = LOG_LEVELS.DEBUG;
     result.style = 'info';
     result.prefix = '[Go-DEBUG]';
     return result;
   }
-  
+
   if (logMessage.includes('[INFO]')) {
     result.level = LOG_LEVELS.INFO;
     result.style = 'info';
     result.prefix = '[Go-INFO]';
     return result;
   }
-  
+
   if (logMessage.includes('[WARN]')) {
     result.level = LOG_LEVELS.WARN;
     result.style = 'warn';
     result.prefix = '[Go-WARN]';
     return result;
   }
-  
+
   if (logMessage.includes('[ERROR]')) {
     result.level = LOG_LEVELS.ERROR;
     result.style = 'error';
     result.prefix = '[Go-ERROR]';
     return result;
   }
-  
+
   if (logMessage.includes('[FATAL]') || logMessage.includes('[PANIC]')) {
     result.level = LOG_LEVELS.ERROR;
     result.style = 'error';
     result.prefix = '[Go-FATAL]';
     return result;
   }
-  
+
   // Handle JSON formatted logs (if somehow our custom formatter isn't used)
   try {
     if (logMessage.trim().startsWith('{') && logMessage.includes('"level"')) {
@@ -2302,12 +2312,12 @@ function parseGoLogLevel(logMessage) {
   } catch (e) {
     // Not valid JSON, continue with pattern matching
   }
-  
+
   // Fall back to pattern matching for non-standard log formats
   // Common Go logging patterns to detect
   if (logMessage.match(/\bERROR\b/i) ||
       logMessage.match(/\berror:/i) ||
-      logMessage.includes('panic:') || 
+      logMessage.includes('panic:') ||
       logMessage.includes('fatal:')) {
     result.level = LOG_LEVELS.ERROR;
     result.style = 'error';
@@ -2330,7 +2340,7 @@ function parseGoLogLevel(logMessage) {
     // Explicitly mark as INFO
     result.prefix = '[Go-INFO]';
   }
-  
+
   return result;
 }
 
@@ -2338,14 +2348,14 @@ function parseGoLogLevel(logMessage) {
 function testLogLevels() {
   // Add a header log entry
   addLogEntry('--- Testing all log levels ---', 'info');
-  
+
   // Log at each level
   debugLog('This is an ERROR level message', LOG_LEVELS.ERROR);
   debugLog('This is a WARNING level message', LOG_LEVELS.WARN);
   debugLog('This is an INFO level message', LOG_LEVELS.INFO);
   debugLog('This is a DEBUG level message', LOG_LEVELS.DEBUG);
   debugLog('This is a VERBOSE/TRACE level message', LOG_LEVELS.VERBOSE);
-  
+
   // Test special formatted Go log style detection
   // This helps verify our Go log parsing is working
   debugLog('[ERROR] This is a test of Go-style ERROR log message format', LOG_LEVELS.INFO);
@@ -2353,17 +2363,17 @@ function testLogLevels() {
   debugLog('[INFO] This is a test of Go-style INFO log message format', LOG_LEVELS.INFO);
   debugLog('[DEBUG] This is a test of Go-style DEBUG log message format', LOG_LEVELS.INFO);
   debugLog('[TRACE] This is a test of Go-style TRACE log message format', LOG_LEVELS.INFO);
-  
+
   // Add a separator log entry
   addLogEntry('--- End of log level test ---', 'info');
-  
+
   // Return the current log level for confirmation
   const { currentLogLevel, getLogLevelName } = require('./fileLogger');
   const level = currentLogLevel();
   const levelName = getLogLevelName(level);
-  
+
   addLogEntry(`Current log level: ${levelName} (${level})`, 'info');
-  
+
   return levelName;
 }
 
@@ -2376,7 +2386,7 @@ function addDebugControlsToUI() {
   testButton.addEventListener('click', () => {
     testLogLevels();
   });
-  
+
   // Find a good location for it
   const logLevelContainer = logLevelSelect.parentElement;
   if (logLevelContainer) {
@@ -2388,11 +2398,11 @@ function addDebugControlsToUI() {
 function toggleGoLogs(event) {
   const showGoLogs = event.target.checked;
   const goLogEntries = document.querySelectorAll('.log-entry[data-source="go"]');
-  
+
   goLogEntries.forEach(entry => {
     entry.style.display = showGoLogs ? 'block' : 'none';
   });
-  
+
   debugLog(`Go logs ${showGoLogs ? 'shown' : 'hidden'}`, LOG_LEVELS.INFO);
 }
 
@@ -2400,7 +2410,7 @@ function toggleGoLogs(event) {
 document.addEventListener('DOMContentLoaded', () => {
   debugLog('DOM fully loaded, calling init()');
   init();
-  
+
   // Add the debug controls after a short delay to let everything initialize
   setTimeout(() => {
     addDebugControlsToUI();
@@ -2419,14 +2429,14 @@ if (typeof module !== 'undefined' && module.exports) {
 // Get all camera groups
 function loadGroups() {
   debugLog('Loading camera groups', LOG_LEVELS.INFO);
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the request
     const request = new grpcUtils.GetGroupsRequest();
-    
+
     // Call the service
     client.getGroups(request, (error, response) => {
       if (error) {
@@ -2434,7 +2444,7 @@ function loadGroups() {
         addLogEntry(`Failed to load camera groups: ${error.message}`, 'error');
         return;
       }
-      
+
       // Process the groups
       const groupsList = response.getGroupsList();
       groups = groupsList.map(group => ({
@@ -2444,9 +2454,9 @@ function loadGroups() {
         createdAt: group.getCreatedAt()?.toDate(),
         updatedAt: group.getUpdatedAt()?.toDate()
       }));
-      
+
       debugLog(`Loaded ${groups.length} camera groups`, LOG_LEVELS.INFO);
-      
+
       // Update UI
       updateGroupsUI();
     });
@@ -2460,20 +2470,20 @@ function loadGroups() {
 function createGroup(name, cameraIds = []) {
   debugLog(`Creating new group: ${name} with ${cameraIds.length} cameras`, LOG_LEVELS.INFO);
   addLogEntry(`Creating new camera group: ${name}`, 'info');
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the request
     const request = new grpcUtils.CreateGroupRequest();
     request.setName(name);
-    
+
     // Add camera IDs if provided
     if (cameraIds.length > 0) {
       request.setCameraIdsList(cameraIds);
     }
-    
+
     // Call the service
     client.createGroup(request, (error, response) => {
       if (error) {
@@ -2481,7 +2491,7 @@ function createGroup(name, cameraIds = []) {
         addLogEntry(`Failed to create group: ${error.message}`, 'error');
         return;
       }
-      
+
       // Process the created group
       const newGroup = {
         id: response.getId(),
@@ -2490,13 +2500,13 @@ function createGroup(name, cameraIds = []) {
         createdAt: response.getCreatedAt()?.toDate(),
         updatedAt: response.getUpdatedAt()?.toDate()
       };
-      
+
       // Add to groups list
       groups.push(newGroup);
-      
+
       debugLog(`Group created: ${name} (${newGroup.id})`, LOG_LEVELS.INFO);
       addLogEntry(`Created group: ${name}`, 'success');
-      
+
       // Update UI
       updateGroupsUI();
     });
@@ -2510,17 +2520,17 @@ function createGroup(name, cameraIds = []) {
 function updateGroup(groupId, name, cameraIds) {
   debugLog(`Updating group ${groupId}: name=${name}, cameras=${cameraIds.length}`, LOG_LEVELS.INFO);
   addLogEntry(`Updating camera group: ${name}`, 'info');
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the request
     const request = new grpcUtils.UpdateGroupRequest();
     request.setGroupId(groupId);
     request.setName(name);
     request.setCameraIdsList(cameraIds);
-    
+
     // Call the service
     client.updateGroup(request, (error, response) => {
       if (error) {
@@ -2528,7 +2538,7 @@ function updateGroup(groupId, name, cameraIds) {
         addLogEntry(`Failed to update group: ${error.message}`, 'error');
         return;
       }
-      
+
       // Process the updated group
       const updatedGroup = {
         id: response.getId(),
@@ -2537,7 +2547,7 @@ function updateGroup(groupId, name, cameraIds) {
         createdAt: response.getCreatedAt()?.toDate(),
         updatedAt: response.getUpdatedAt()?.toDate()
       };
-      
+
       // Update in groups list
       const index = groups.findIndex(g => g.id === groupId);
       if (index >= 0) {
@@ -2545,10 +2555,10 @@ function updateGroup(groupId, name, cameraIds) {
       } else {
         groups.push(updatedGroup);
       }
-      
+
       debugLog(`Group updated: ${name} (${groupId})`, LOG_LEVELS.INFO);
       addLogEntry(`Updated group: ${name}`, 'success');
-      
+
       // Update UI
       updateGroupsUI();
     });
@@ -2562,18 +2572,18 @@ function updateGroup(groupId, name, cameraIds) {
 function deleteGroup(groupId) {
   const group = groups.find(g => g.id === groupId);
   const groupName = group ? group.name : groupId;
-  
+
   debugLog(`Deleting group: ${groupName} (${groupId})`, LOG_LEVELS.INFO);
   addLogEntry(`Deleting camera group: ${groupName}`, 'info');
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the request
     const request = new grpcUtils.DeleteGroupRequest();
     request.setGroupId(groupId);
-    
+
     // Call the service
     client.deleteGroup(request, (error, response) => {
       if (error) {
@@ -2581,19 +2591,19 @@ function deleteGroup(groupId) {
         addLogEntry(`Failed to delete group: ${error.message}`, 'error');
         return;
       }
-      
+
       if (!response.getSuccess()) {
         debugLog(`Deleting group failed: ${response.getMessage()}`, LOG_LEVELS.ERROR);
         addLogEntry(`Failed to delete group: ${response.getMessage()}`, 'error');
         return;
       }
-      
+
       // Remove from groups list
       groups = groups.filter(g => g.id !== groupId);
-      
+
       debugLog(`Group deleted: ${groupName} (${groupId})`, LOG_LEVELS.INFO);
       addLogEntry(`Deleted group: ${groupName}`, 'success');
-      
+
       // Update UI
       updateGroupsUI();
     });
@@ -2613,18 +2623,18 @@ function updateGroupsUI() {
 // Get all synchronized videos
 function loadVideos() {
   debugLog('Loading synchronized videos', LOG_LEVELS.INFO);
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the request
     const request = new grpcUtils.GetVideosRequest();
     // You can add filter parameters here if needed:
     // request.setCameraId(cameraId);
     // request.setStartTime(startTimestamp);
     // request.setEndTime(endTimestamp);
-    
+
     // Call the service
     client.getVideos(request, (error, response) => {
       if (error) {
@@ -2632,7 +2642,7 @@ function loadVideos() {
         addLogEntry(`Failed to load videos: ${error.message}`, 'error');
         return;
       }
-      
+
       // Process the videos
       const videosList = response.getVideosList();
       videos = videosList.map(video => ({
@@ -2646,9 +2656,9 @@ function loadVideos() {
         syncedAt: video.getSyncedAt()?.toDate(),
         thumbnailPath: video.getThumbnailPath()
       }));
-      
+
       debugLog(`Loaded ${videos.length} videos`, LOG_LEVELS.INFO);
-      
+
       // Update UI
       updateVideosUI();
     });
@@ -2661,15 +2671,15 @@ function loadVideos() {
 // Get videos for a specific camera
 function getVideosForCamera(cameraId) {
   debugLog(`Loading videos for camera: ${cameraId}`, LOG_LEVELS.INFO);
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the request with camera filter
     const request = new grpcUtils.GetVideosRequest();
     request.setCameraId(cameraId);
-    
+
     // Call the service
     client.getVideos(request, (error, response) => {
       if (error) {
@@ -2677,7 +2687,7 @@ function getVideosForCamera(cameraId) {
         addLogEntry(`Failed to load videos for camera: ${error.message}`, 'error');
         return;
       }
-      
+
       // Process the videos
       const videosList = response.getVideosList();
       const cameraVideos = videosList.map(video => ({
@@ -2691,9 +2701,9 @@ function getVideosForCamera(cameraId) {
         syncedAt: video.getSyncedAt()?.toDate(),
         thumbnailPath: video.getThumbnailPath()
       }));
-      
+
       debugLog(`Loaded ${cameraVideos.length} videos for camera ${cameraId}`, LOG_LEVELS.INFO);
-      
+
       // Return the videos for this camera
       return cameraVideos;
     });
@@ -2714,14 +2724,14 @@ function updateVideosUI() {
 // Load full application configuration
 function loadConfig() {
   debugLog('Loading application configuration', LOG_LEVELS.INFO);
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the request
     const request = new grpcUtils.GetConfigRequest();
-    
+
     // Call the service
     client.getConfig(request, (error, response) => {
       if (error) {
@@ -2729,7 +2739,7 @@ function loadConfig() {
         addLogEntry(`Failed to load configuration: ${error.message}`, 'error');
         return;
       }
-      
+
       // Process the config
       const config = response.getConfig();
       try {
@@ -2745,11 +2755,11 @@ function loadConfig() {
           syncEnabled: config.getSyncEnabled(),
           debugMode: config.getDebugMode()
         };
-        
+
         // Update the frontend toggle states based on config values
         autoPair = appConfig.pairModeEnabled;
         autoSync = appConfig.syncEnabled;
-        
+
         // Update the UI toggle elements
         if (pairAllToggle) {
           pairAllToggle.checked = autoPair;
@@ -2757,9 +2767,9 @@ function loadConfig() {
         if (autoSyncToggle) {
           autoSyncToggle.checked = autoSync;
         }
-        
+
         debugLog(`Sync settings synced from backend: autoPair=${autoPair}, autoSync=${autoSync}`, LOG_LEVELS.INFO);
-        
+
       } catch (configError) {
         // If any getter fails, create a partial config
         debugLog(`Error getting some config values: ${configError.message}`, LOG_LEVELS.WARN);
@@ -2767,7 +2777,7 @@ function loadConfig() {
           logLevel: config.getLogLevel ? config.getLogLevel() : 'info',
           scanIntervalSeconds: config.getScanIntervalSeconds ? config.getScanIntervalSeconds() : 30,
           connectTimeoutSeconds: config.getConnectTimeoutSeconds ? config.getConnectTimeoutSeconds() : 30,
-          daysThreshold: config.getDaysThreshold ? config.getDaysThreshold() : 7, 
+          daysThreshold: config.getDaysThreshold ? config.getDaysThreshold() : 7,
           destinationFolder: config.getDestinationFolder ? config.getDestinationFolder() : '',
           setTimeEnabled: config.getSetTimeEnabled ? config.getSetTimeEnabled() : true,
           inactivityTimeoutSeconds: config.getInactivityTimeoutSeconds ? config.getInactivityTimeoutSeconds() : 300,
@@ -2775,11 +2785,11 @@ function loadConfig() {
           syncEnabled: config.getSyncEnabled ? config.getSyncEnabled() : false,
           debugMode: config.getDebugMode ? config.getDebugMode() : false
         };
-        
+
         // Still try to update the toggle states with what we have
         autoPair = appConfig.pairModeEnabled;
         autoSync = appConfig.syncEnabled;
-        
+
         // Update the UI toggle elements
         if (pairAllToggle) {
           pairAllToggle.checked = autoPair;
@@ -2788,9 +2798,9 @@ function loadConfig() {
           autoSyncToggle.checked = autoSync;
         }
       }
-      
+
       debugLog(`Loaded configuration: ${JSON.stringify(appConfig)}`, LOG_LEVELS.INFO);
-      
+
       // Update UI
       updateConfigUI();
     });
@@ -2804,14 +2814,14 @@ function loadConfig() {
 function updateConfig(configChanges) {
   debugLog(`Updating configuration: ${JSON.stringify(configChanges)}`, LOG_LEVELS.INFO);
   addLogEntry('Updating application configuration', 'info');
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create a new config with the current settings + changes
     const newConfig = new grpcUtils.Config();
-    
+
     // Start with current config values if we have them
     if (appConfig) {
       if (appConfig.logLevel) newConfig.setLogLevel(appConfig.logLevel);
@@ -2821,7 +2831,7 @@ function updateConfig(configChanges) {
       if (appConfig.setTimeEnabled !== undefined) newConfig.setSetTimeEnabled(appConfig.setTimeEnabled);
       if (appConfig.inactivityTimeoutSeconds) newConfig.setInactivityTimeoutSeconds(appConfig.inactivityTimeoutSeconds);
     }
-    
+
     // Apply changes
     if (configChanges.logLevel !== undefined) newConfig.setLogLevel(configChanges.logLevel);
     if (configChanges.scanIntervalSeconds !== undefined) newConfig.setScanIntervalSeconds(configChanges.scanIntervalSeconds);
@@ -2829,18 +2839,18 @@ function updateConfig(configChanges) {
     if (configChanges.videoAgeDays !== undefined) newConfig.setVideoAgeDays(configChanges.videoAgeDays);
     if (configChanges.setTimeEnabled !== undefined) newConfig.setSetTimeEnabled(configChanges.setTimeEnabled);
     if (configChanges.inactivityTimeoutSeconds !== undefined) newConfig.setInactivityTimeoutSeconds(configChanges.inactivityTimeoutSeconds);
-    
+
     // Create and send the update request
     const request = new grpcUtils.UpdateConfigRequest();
     request.setConfig(newConfig);
-    
+
     client.updateConfig(request, (error, response) => {
       if (error) {
         debugLog(`Error updating configuration: ${error.message}`, LOG_LEVELS.ERROR);
         addLogEntry(`Failed to update configuration: ${error.message}`, 'error');
         return;
       }
-      
+
       // Update the current config
       const updatedConfig = response.getConfig();
       appConfig = {
@@ -2851,10 +2861,10 @@ function updateConfig(configChanges) {
         setTimeEnabled: updatedConfig.getSetTimeEnabled(),
         inactivityTimeoutSeconds: updatedConfig.getInactivityTimeoutSeconds()
       };
-      
+
       debugLog(`Configuration updated: ${JSON.stringify(appConfig)}`, LOG_LEVELS.INFO);
       addLogEntry('Configuration updated successfully', 'success');
-      
+
       // Update UI
       updateConfigUI();
     });
@@ -2867,15 +2877,15 @@ function updateConfig(configChanges) {
 // Get a specific setting
 function getSetting(key) {
   debugLog(`Getting setting: ${key}`, LOG_LEVELS.INFO);
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the request
     const request = new grpcUtils.GetSettingRequest();
     request.setKey(key);
-    
+
     // Call the service
     client.getSetting(request, (error, response) => {
       if (error) {
@@ -2883,7 +2893,7 @@ function getSetting(key) {
         addLogEntry(`Failed to get setting ${key}: ${error.message}`, 'error');
         return null;
       }
-      
+
       // Process the setting
       const value = response.getValue();
       debugLog(`Got setting ${key}: ${value}`, LOG_LEVELS.INFO);
@@ -2900,15 +2910,15 @@ function getSetting(key) {
 function updateSetting(key, value) {
   debugLog(`Updating setting: ${key} = ${value}`, LOG_LEVELS.INFO);
   addLogEntry(`Updating setting: ${key}`, 'info');
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the request
     const request = new grpcUtils.UpdateSettingRequest();
     request.setSettingName(key);
-    
+
     // Set the appropriate value field based on type
     if (typeof value === 'boolean') {
       request.setBoolValue(value);
@@ -2921,7 +2931,7 @@ function updateSetting(key, value) {
       request.setStringValue(String(value));
       debugLog(`Setting string value: ${value}`, LOG_LEVELS.DEBUG);
     }
-    
+
     // Call the service
     client.updateSetting(request, (error, response) => {
       if (error) {
@@ -2929,10 +2939,10 @@ function updateSetting(key, value) {
         addLogEntry(`Failed to update setting ${key}: ${error.message}`, 'error');
         return;
       }
-      
+
       debugLog(`Setting ${key} updated to ${value}`, LOG_LEVELS.INFO);
       addLogEntry(`Setting ${key} updated successfully`, 'success');
-      
+
       // Update local config if available
       if (appConfig) {
         // Map backend setting key to frontend config property
@@ -2947,7 +2957,7 @@ function updateSetting(key, value) {
           'set_time_enabled': 'setTimeEnabled',
           'log_level': 'logLevel'
         };
-        
+
         // Update the local config if key mapping exists
         const configKey = configMapping[key];
         if (configKey && configKey in appConfig) {
@@ -2958,10 +2968,10 @@ function updateSetting(key, value) {
           } else if (typeof appConfig[configKey] === 'number') {
             typedValue = Number(value);
           }
-          
+
           appConfig[configKey] = typedValue;
           debugLog(`Updated local config: ${configKey}=${typedValue}`, LOG_LEVELS.DEBUG);
-          
+
           // Update local state variables and UI based on the setting
           if (key === 'pair_mode_enabled') {
             autoPair = typedValue;
@@ -2976,12 +2986,12 @@ function updateSetting(key, value) {
             }
             debugLog(`Updated autoSync state to ${autoSync}`, LOG_LEVELS.DEBUG);
           }
-          
+
           // Update any other UI elements as needed
           updateConfigUI();
         }
       }
-      
+
       // Special handling for certain settings
       if (key === 'pair_mode_enabled') {
         autoPair = value;
@@ -2998,7 +3008,7 @@ function updateSetting(key, value) {
         if (logLevelSelect) {
           logLevelSelect.value = value;
         }
-        
+
         // Update the frontend log level
         const { setLogLevel } = require('./fileLogger');
         setLogLevel(value.toUpperCase());
@@ -3014,15 +3024,15 @@ function updateSetting(key, value) {
 function resetSetting(key) {
   debugLog(`Resetting setting: ${key}`, LOG_LEVELS.INFO);
   addLogEntry(`Resetting setting: ${key} to default`, 'info');
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the request
     const request = new grpcUtils.ResetSettingRequest();
     request.setKey(key);
-    
+
     // Call the service
     client.resetSetting(request, (error, response) => {
       if (error) {
@@ -3030,14 +3040,14 @@ function resetSetting(key) {
         addLogEntry(`Failed to reset setting ${key}: ${error.message}`, 'error');
         return;
       }
-      
+
       // Get the default value
       const updatedConfig = response;
       const defaultValue = key in updatedConfig ? updatedConfig[key] : null;
-      
+
       debugLog(`Setting ${key} reset to default: ${defaultValue}`, LOG_LEVELS.INFO);
       addLogEntry(`Setting ${key} reset to default`, 'success');
-      
+
       // Update local config if it exists
       if (appConfig && key in appConfig && defaultValue !== null) {
         appConfig[key] = defaultValue;
@@ -3053,10 +3063,10 @@ function resetSetting(key) {
 // Update the configuration UI
 function updateConfigUI() {
   debugLog('Updating configuration UI', LOG_LEVELS.DEBUG);
-  
+
   // Update the settings panel
   updateSettingsUI();
-  
+
   // Update log level select if it exists
   if (appConfig && appConfig.logLevel && logLevelSelect) {
     const levelValue = appConfig.logLevel.toLowerCase();
@@ -3068,7 +3078,7 @@ function updateConfigUI() {
       }
     }
   }
-  
+
   // Update backend log level select if it exists
   if (appConfig && appConfig.logLevel) {
     const backendLogLevelSelect = document.getElementById('backend-log-level-select');
@@ -3083,19 +3093,26 @@ function checkGrpcConnection() {
   return new Promise((resolve, reject) => {
     try {
       const grpcUtils = require('./grpc-utils');
-      const client = grpcUtils.getClient();
-      
+      // Create a new client instance to avoid reusing a problematic one
+      const client = grpcUtils.getClient(true);
+
       // Use a simple GetConfig call to check connection
       const request = new grpcUtils.GetConfigRequest();
-      
-      client.getConfig(request, (error, response) => {
+
+      // Add timeout to prevent hanging
+      const deadline = new Date(Date.now() + 3000); // 3 second timeout
+
+      client.getConfig(request, { deadline }, (error, response) => {
         if (error) {
+          debugLog(`gRPC connection check error: ${error.message}`, LOG_LEVELS.ERROR);
           reject(error);
         } else {
+          debugLog('gRPC connection check successful', LOG_LEVELS.DEBUG);
           resolve(response);
         }
       });
     } catch (error) {
+      debugLog(`gRPC connection check exception: ${error.message}`, LOG_LEVELS.ERROR);
       reject(error);
     }
   });
@@ -3106,14 +3123,14 @@ function handleDeviceStreamUpdate(cameras, callback) {
   if (!cameras || cameras.length === 0) {
     return;
   }
-  
+
   cameras.forEach(camera => {
     const cameraObj = callback(camera);
     if (cameraObj) {
       addOrUpdateDevice(cameraObj);
     }
   });
-  
+
   // Update UI
   updateDeviceLists();
   updateCounters();
@@ -3130,7 +3147,7 @@ function toggleTheme() {
 function updateTheme() {
   const htmlElement = document.documentElement;
   const themeIcon = themeToggle.querySelector('i');
-  
+
   if (isDarkMode) {
     htmlElement.setAttribute('data-theme', 'dark');
     themeIcon.className = 'fas fa-sun';
@@ -3138,7 +3155,7 @@ function updateTheme() {
     htmlElement.removeAttribute('data-theme');
     themeIcon.className = 'fas fa-moon';
   }
-  
+
   debugLog(`Theme switched to ${isDarkMode ? 'dark' : 'light'} mode`, LOG_LEVELS.INFO);
 }
 
@@ -3162,7 +3179,7 @@ function loadThemePreference() {
       const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
       isDarkMode = prefersDark;
     }
-    
+
     // Apply the theme
     updateTheme();
   } catch (error) {
@@ -3173,38 +3190,38 @@ function loadThemePreference() {
 // Format time since a given date for a user-friendly display
 function formatTimeSince(date) {
   if (!date) return 'unknown';
-  
+
   // Convert to date object if it's a string
   if (typeof date === 'string') {
     date = new Date(date);
   }
-  
+
   // Get seconds difference
   const seconds = Math.floor((new Date() - date) / 1000);
-  
+
   // Less than a minute
   if (seconds < 60) {
     return 'just now';
   }
-  
+
   // Less than an hour
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) {
     return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
   }
-  
+
   // Less than a day
   const hours = Math.floor(minutes / 60);
   if (hours < 24) {
     return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
   }
-  
+
   // Less than a week
   const days = Math.floor(hours / 24);
   if (days < 7) {
     return `${days} ${days === 1 ? 'day' : 'days'} ago`;
   }
-  
+
   // Format as date if more than a week ago
   return date.toLocaleDateString();
 }
@@ -3216,25 +3233,25 @@ function setupSettingsHandlers() {
   toggleSettings.forEach(toggle => {
     toggle.addEventListener('change', handleSettingChange);
   });
-  
+
   // Get all number inputs
   const numberInputs = document.querySelectorAll('.setting-input[type="number"]');
   numberInputs.forEach(input => {
     input.addEventListener('change', handleSettingChange);
   });
-  
+
   // Get all text inputs
   const textInputs = document.querySelectorAll('.setting-input[type="text"]');
   textInputs.forEach(input => {
     input.addEventListener('change', handleSettingChange);
   });
-  
+
   // Get all select elements
   const selectInputs = document.querySelectorAll('.setting-select');
   selectInputs.forEach(select => {
     select.addEventListener('change', handleSettingChange);
   });
-  
+
   // Setup folder browse button
   const browseButton = document.getElementById('browse-folder');
   if (browseButton) {
@@ -3242,7 +3259,7 @@ function setupSettingsHandlers() {
       // Use Electron's dialog to open a folder picker
       ipcRenderer.send('open-folder-dialog');
     });
-    
+
     // Listen for the selected folder
     ipcRenderer.on('selected-folder', (event, path) => {
       // Update the input element
@@ -3254,13 +3271,13 @@ function setupSettingsHandlers() {
       }
     });
   }
-  
+
   // Setup reset settings button
   const resetButton = document.getElementById('reset-settings');
   if (resetButton) {
     resetButton.addEventListener('click', resetAllSettings);
   }
-  
+
   debugLog('Settings handlers initialized', LOG_LEVELS.DEBUG);
 }
 
@@ -3268,14 +3285,14 @@ function setupSettingsHandlers() {
 function handleSettingChange(event) {
   const target = event.target;
   const settingName = target.dataset.setting;
-  
+
   if (!settingName) {
     debugLog('Setting name not found for element', LOG_LEVELS.ERROR);
     return;
   }
-  
+
   let value;
-  
+
   // Get the appropriate value based on input type
   if (target.type === 'checkbox') {
     value = target.checked;
@@ -3284,9 +3301,9 @@ function handleSettingChange(event) {
   } else {
     value = target.value;
   }
-  
+
   debugLog(`Setting ${settingName} changed to ${value}`, LOG_LEVELS.INFO);
-  
+
   // Highlight the changed setting
   const settingItem = target.closest('.setting-item');
   if (settingItem) {
@@ -3295,7 +3312,7 @@ function handleSettingChange(event) {
       settingItem.classList.remove('setting-changed');
     }, 2000);
   }
-  
+
   // Save the setting to the backend
   updateSetting(settingName, value);
 }
@@ -3303,15 +3320,15 @@ function handleSettingChange(event) {
 // Update a setting in the backend
 function updateSetting(key, value) {
   debugLog(`Updating setting: ${key} = ${value}`, LOG_LEVELS.INFO);
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the request
     const request = new grpcUtils.UpdateSettingRequest();
     request.setSettingName(key);
-    
+
     // Set the appropriate value field based on type
     if (typeof value === 'boolean') {
       request.setBoolValue(value);
@@ -3320,7 +3337,7 @@ function updateSetting(key, value) {
     } else {
       request.setStringValue(String(value));
     }
-    
+
     // Call the service
     client.updateSetting(request, (error, response) => {
       if (error) {
@@ -3328,10 +3345,10 @@ function updateSetting(key, value) {
         addLogEntry(`Failed to update setting ${key}: ${error.message}`, 'error');
         return;
       }
-      
+
       debugLog(`Setting ${key} updated to ${value}`, LOG_LEVELS.INFO);
       addLogEntry(`Setting ${key} updated successfully`, 'success');
-      
+
       // Update local config if available
       if (appConfig) {
         // Map backend setting key to frontend config property
@@ -3346,7 +3363,7 @@ function updateSetting(key, value) {
           'set_time_enabled': 'setTimeEnabled',
           'log_level': 'logLevel'
         };
-        
+
         // Update the local config if key mapping exists
         const configKey = configMapping[key];
         if (configKey && configKey in appConfig) {
@@ -3357,10 +3374,10 @@ function updateSetting(key, value) {
           } else if (typeof appConfig[configKey] === 'number') {
             typedValue = Number(value);
           }
-          
+
           appConfig[configKey] = typedValue;
           debugLog(`Updated local config: ${configKey}=${typedValue}`, LOG_LEVELS.DEBUG);
-          
+
           // Update local state variables and UI based on the setting
           if (key === 'pair_mode_enabled') {
             autoPair = typedValue;
@@ -3375,12 +3392,12 @@ function updateSetting(key, value) {
             }
             debugLog(`Updated autoSync state to ${autoSync}`, LOG_LEVELS.DEBUG);
           }
-          
+
           // Update any other UI elements as needed
           updateConfigUI();
         }
       }
-      
+
       // Special handling for certain settings
       if (key === 'pair_mode_enabled') {
         autoPair = value;
@@ -3397,7 +3414,7 @@ function updateSetting(key, value) {
         if (logLevelSelect) {
           logLevelSelect.value = value;
         }
-        
+
         // Update the frontend log level
         const { setLogLevel } = require('./fileLogger');
         setLogLevel(value.toUpperCase());
@@ -3413,15 +3430,15 @@ function updateSetting(key, value) {
 function resetSetting(key) {
   debugLog(`Resetting setting: ${key}`, LOG_LEVELS.INFO);
   addLogEntry(`Resetting setting: ${key} to default`, 'info');
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the request
     const request = new grpcUtils.ResetSettingRequest();
     request.setKey(key);
-    
+
     // Call the service
     client.resetSetting(request, (error, response) => {
       if (error) {
@@ -3429,14 +3446,14 @@ function resetSetting(key) {
         addLogEntry(`Failed to reset setting ${key}: ${error.message}`, 'error');
         return;
       }
-      
+
       // Get the default value
       const updatedConfig = response;
       const defaultValue = key in updatedConfig ? updatedConfig[key] : null;
-      
+
       debugLog(`Setting ${key} reset to default: ${defaultValue}`, LOG_LEVELS.INFO);
       addLogEntry(`Setting ${key} reset to default`, 'success');
-      
+
       // Update local config if it exists
       if (appConfig && key in appConfig && defaultValue !== null) {
         appConfig[key] = defaultValue;
@@ -3452,10 +3469,10 @@ function resetSetting(key) {
 // Update the configuration UI
 function updateConfigUI() {
   debugLog('Updating configuration UI', LOG_LEVELS.DEBUG);
-  
+
   // Update the settings panel
   updateSettingsUI();
-  
+
   // Update log level select if it exists
   if (appConfig && appConfig.logLevel && logLevelSelect) {
     const levelValue = appConfig.logLevel.toLowerCase();
@@ -3467,7 +3484,7 @@ function updateConfigUI() {
       }
     }
   }
-  
+
   // Update backend log level select if it exists
   if (appConfig && appConfig.logLevel) {
     const backendLogLevelSelect = document.getElementById('backend-log-level-select');
@@ -3482,19 +3499,26 @@ function checkGrpcConnection() {
   return new Promise((resolve, reject) => {
     try {
       const grpcUtils = require('./grpc-utils');
-      const client = grpcUtils.getClient();
-      
+      // Create a new client instance to avoid reusing a problematic one
+      const client = grpcUtils.getClient(true);
+
       // Use a simple GetConfig call to check connection
       const request = new grpcUtils.GetConfigRequest();
-      
-      client.getConfig(request, (error, response) => {
+
+      // Add timeout to prevent hanging
+      const deadline = new Date(Date.now() + 3000); // 3 second timeout
+
+      client.getConfig(request, { deadline }, (error, response) => {
         if (error) {
+          debugLog(`gRPC connection check error: ${error.message}`, LOG_LEVELS.ERROR);
           reject(error);
         } else {
+          debugLog('gRPC connection check successful', LOG_LEVELS.DEBUG);
           resolve(response);
         }
       });
     } catch (error) {
+      debugLog(`gRPC connection check exception: ${error.message}`, LOG_LEVELS.ERROR);
       reject(error);
     }
   });
@@ -3505,14 +3529,14 @@ function handleDeviceStreamUpdate(cameras, callback) {
   if (!cameras || cameras.length === 0) {
     return;
   }
-  
+
   cameras.forEach(camera => {
     const cameraObj = callback(camera);
     if (cameraObj) {
       addOrUpdateDevice(cameraObj);
     }
   });
-  
+
   // Update UI
   updateDeviceLists();
   updateCounters();
@@ -3529,7 +3553,7 @@ function toggleTheme() {
 function updateTheme() {
   const htmlElement = document.documentElement;
   const themeIcon = themeToggle.querySelector('i');
-  
+
   if (isDarkMode) {
     htmlElement.setAttribute('data-theme', 'dark');
     themeIcon.className = 'fas fa-sun';
@@ -3537,7 +3561,7 @@ function updateTheme() {
     htmlElement.removeAttribute('data-theme');
     themeIcon.className = 'fas fa-moon';
   }
-  
+
   debugLog(`Theme switched to ${isDarkMode ? 'dark' : 'light'} mode`, LOG_LEVELS.INFO);
 }
 
@@ -3561,7 +3585,7 @@ function loadThemePreference() {
       const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
       isDarkMode = prefersDark;
     }
-    
+
     // Apply the theme
     updateTheme();
   } catch (error) {
@@ -3572,38 +3596,38 @@ function loadThemePreference() {
 // Format time since a given date for a user-friendly display
 function formatTimeSince(date) {
   if (!date) return 'unknown';
-  
+
   // Convert to date object if it's a string
   if (typeof date === 'string') {
     date = new Date(date);
   }
-  
+
   // Get seconds difference
   const seconds = Math.floor((new Date() - date) / 1000);
-  
+
   // Less than a minute
   if (seconds < 60) {
     return 'just now';
   }
-  
+
   // Less than an hour
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) {
     return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
   }
-  
+
   // Less than a day
   const hours = Math.floor(minutes / 60);
   if (hours < 24) {
     return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
   }
-  
+
   // Less than a week
   const days = Math.floor(hours / 24);
   if (days < 7) {
     return `${days} ${days === 1 ? 'day' : 'days'} ago`;
   }
-  
+
   // Format as date if more than a week ago
   return date.toLocaleDateString();
 }
@@ -3615,25 +3639,25 @@ function setupSettingsHandlers() {
   toggleSettings.forEach(toggle => {
     toggle.addEventListener('change', handleSettingChange);
   });
-  
+
   // Get all number inputs
   const numberInputs = document.querySelectorAll('.setting-input[type="number"]');
   numberInputs.forEach(input => {
     input.addEventListener('change', handleSettingChange);
   });
-  
+
   // Get all text inputs
   const textInputs = document.querySelectorAll('.setting-input[type="text"]');
   textInputs.forEach(input => {
     input.addEventListener('change', handleSettingChange);
   });
-  
+
   // Get all select elements
   const selectInputs = document.querySelectorAll('.setting-select');
   selectInputs.forEach(select => {
     select.addEventListener('change', handleSettingChange);
   });
-  
+
   // Setup folder browse button
   const browseButton = document.getElementById('browse-folder');
   if (browseButton) {
@@ -3641,7 +3665,7 @@ function setupSettingsHandlers() {
       // Use Electron's dialog to open a folder picker
       ipcRenderer.send('open-folder-dialog');
     });
-    
+
     // Listen for the selected folder
     ipcRenderer.on('selected-folder', (event, path) => {
       // Update the input element
@@ -3653,13 +3677,13 @@ function setupSettingsHandlers() {
       }
     });
   }
-  
+
   // Setup reset settings button
   const resetButton = document.getElementById('reset-settings');
   if (resetButton) {
     resetButton.addEventListener('click', resetAllSettings);
   }
-  
+
   debugLog('Settings handlers initialized', LOG_LEVELS.DEBUG);
 }
 
@@ -3667,14 +3691,14 @@ function setupSettingsHandlers() {
 function handleSettingChange(event) {
   const target = event.target;
   const settingName = target.dataset.setting;
-  
+
   if (!settingName) {
     debugLog('Setting name not found for element', LOG_LEVELS.ERROR);
     return;
   }
-  
+
   let value;
-  
+
   // Get the appropriate value based on input type
   if (target.type === 'checkbox') {
     value = target.checked;
@@ -3683,9 +3707,9 @@ function handleSettingChange(event) {
   } else {
     value = target.value;
   }
-  
+
   debugLog(`Setting ${settingName} changed to ${value}`, LOG_LEVELS.INFO);
-  
+
   // Highlight the changed setting
   const settingItem = target.closest('.setting-item');
   if (settingItem) {
@@ -3694,7 +3718,7 @@ function handleSettingChange(event) {
       settingItem.classList.remove('setting-changed');
     }, 2000);
   }
-  
+
   // Save the setting to the backend
   updateSetting(settingName, value);
 }
@@ -3702,15 +3726,15 @@ function handleSettingChange(event) {
 // Update a setting in the backend
 function updateSetting(key, value) {
   debugLog(`Updating setting: ${key} = ${value}`, LOG_LEVELS.INFO);
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Create the request
     const request = new grpcUtils.UpdateSettingRequest();
     request.setSettingName(key);
-    
+
     // Set the appropriate value field based on type
     if (typeof value === 'boolean') {
       request.setBoolValue(value);
@@ -3719,7 +3743,7 @@ function updateSetting(key, value) {
     } else {
       request.setStringValue(String(value));
     }
-    
+
     // Call the service
     client.updateSetting(request, (error, response) => {
       if (error) {
@@ -3727,10 +3751,10 @@ function updateSetting(key, value) {
         addLogEntry(`Failed to update setting ${key}: ${error.message}`, 'error');
         return;
       }
-      
+
       debugLog(`Setting ${key} updated to ${value}`, LOG_LEVELS.INFO);
       addLogEntry(`Setting ${key} updated successfully`, 'success');
-      
+
       // Update local config if available
       if (appConfig) {
         // Map backend setting key to frontend config property
@@ -3745,7 +3769,7 @@ function updateSetting(key, value) {
           'set_time_enabled': 'setTimeEnabled',
           'log_level': 'logLevel'
         };
-        
+
         // Update the local config if key mapping exists
         const configKey = configMapping[key];
         if (configKey && configKey in appConfig) {
@@ -3756,10 +3780,10 @@ function updateSetting(key, value) {
           } else if (typeof appConfig[configKey] === 'number') {
             typedValue = Number(value);
           }
-          
+
           appConfig[configKey] = typedValue;
           debugLog(`Updated local config: ${configKey}=${typedValue}`, LOG_LEVELS.DEBUG);
-          
+
           // Update local state variables and UI based on the setting
           if (key === 'pair_mode_enabled') {
             autoPair = typedValue;
@@ -3774,12 +3798,12 @@ function updateSetting(key, value) {
             }
             debugLog(`Updated autoSync state to ${autoSync}`, LOG_LEVELS.DEBUG);
           }
-          
+
           // Update any other UI elements as needed
           updateConfigUI();
         }
       }
-      
+
       // Special handling for certain settings
       if (key === 'pair_mode_enabled') {
         autoPair = value;
@@ -3796,7 +3820,7 @@ function updateSetting(key, value) {
         if (logLevelSelect) {
           logLevelSelect.value = value;
         }
-        
+
         // Update the frontend log level
         const { setLogLevel } = require('./fileLogger');
         setLogLevel(value.toUpperCase());
@@ -3812,12 +3836,12 @@ function updateSetting(key, value) {
 function resetAllSettings() {
   debugLog('Resetting all settings to defaults', LOG_LEVELS.INFO);
   addLogEntry('Resetting all settings to defaults', 'info');
-  
+
   // Confirm with user
   if (!confirm('Reset all settings to default values?')) {
     return;
   }
-  
+
   // Get all settings from the UI
   const settings = [
     'pair_mode_enabled',
@@ -3831,28 +3855,28 @@ function resetAllSettings() {
     'log_level',
     'debug_mode'
   ];
-  
+
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
-    
+
     // Reset each setting one by one
     let resetCount = 0;
-    
+
     settings.forEach(settingName => {
       const request = new grpcUtils.ResetSettingRequest();
       request.setSettingName(settingName);
-      
+
       client.resetSetting(request, (error, response) => {
         resetCount++;
-        
+
         if (error) {
           debugLog(`Error resetting setting ${settingName}: ${error.message}`, LOG_LEVELS.ERROR);
           addLogEntry(`Failed to reset setting ${settingName}: ${error.message}`, 'error');
         } else {
           debugLog(`Reset setting ${settingName} to default value`, LOG_LEVELS.INFO);
         }
-        
+
         // When all settings have been reset, reload the config
         if (resetCount === settings.length) {
           addLogEntry('All settings reset to defaults', 'success');
@@ -3870,12 +3894,12 @@ function resetAllSettings() {
 // Update the settings UI based on current config
 function updateSettingsUI() {
   debugLog('Updating settings UI', LOG_LEVELS.DEBUG);
-  
+
   if (!appConfig) {
     debugLog('No config available, skipping settings UI update', LOG_LEVELS.WARN);
     return;
   }
-  
+
   // Map the config properties to setting names
   const configMapping = {
     'pairModeEnabled': 'pair_mode_enabled',
@@ -3889,7 +3913,7 @@ function updateSettingsUI() {
     'logLevel': 'log_level',
     'debugMode': 'debug_mode'
   };
-  
+
   // Update each setting in the UI
   for (const [configKey, settingName] of Object.entries(configMapping)) {
     const value = appConfig[configKey];
@@ -3897,7 +3921,7 @@ function updateSettingsUI() {
       updateSettingUI(settingName, value);
     }
   }
-  
+
   debugLog('Settings UI updated', LOG_LEVELS.DEBUG);
 }
 
@@ -3909,7 +3933,7 @@ function updateSettingUI(settingName, value) {
     debugLog(`Element for setting ${settingName} not found`, LOG_LEVELS.WARN);
     return;
   }
-  
+
   // Update based on element type
   if (element.type === 'checkbox') {
     element.checked = Boolean(value);
@@ -3920,6 +3944,6 @@ function updateSettingUI(settingName, value) {
   } else {
     element.value = value;
   }
-  
+
   debugLog(`Updated UI for setting ${settingName} = ${value}`, LOG_LEVELS.DEBUG);
 }

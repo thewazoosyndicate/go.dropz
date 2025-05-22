@@ -19,5 +19,6 @@ func parseAddress(addrStr string) (bluetooth.Address, error) {
 	if err != nil {
 		return bluetooth.Address{}, err
 	}
+
 	return createAddress(mac)
 }

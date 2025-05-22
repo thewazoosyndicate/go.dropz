@@ -11,6 +11,7 @@ import (
 func createAddress(mac bluetooth.MAC) (bluetooth.Address, error) {
 	// On Linux, MACAddress is embedded directly in Address
 	addr := bluetooth.Address{MACAddress: bluetooth.MACAddress{MAC: mac}}
+
 	return addr, nil
 }
 

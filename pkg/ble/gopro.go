@@ -660,42 +660,15 @@ func (m *BLEManager) Connect(macAddress string) error {
 		go func() {
 			defer close(connectDone)
 
-			// Check if the macAddress is actually a UUID (on Darwin/macOS)
+			// Resolve the platform specific address representation
 			var addr bluetooth.Address
-
-			// Direct handling for UUID format (macOS)
-			if strings.Contains(macAddress, "-") && len(macAddress) == 36 {
-				// This is a UUID, parse it directly into the Address.UUID field
-				uuid, uuidErr := bluetooth.ParseUUID(macAddress)
-				if uuidErr != nil {
-					err = fmt.Errorf("failed to parse UUID %s: %v", macAddress, uuidErr)
-					return
-				}
-				// Set the UUID directly in the Address struct
-				addr.UUID = uuid
-				m.log.Debugf("Created Address from UUID: %s", macAddress)
-
-				// Extra debug info
-				m.log.Debugf("Connecting using UUID format address: %s", macAddress)
-			} else {
-				// Standard MAC address parsing for other platforms
-				mac, parseErr := bluetooth.ParseMAC(macAddress)
-				if parseErr != nil {
-					err = fmt.Errorf("failed to parse MAC address %s: %v", macAddress, parseErr)
-					return
-				}
-
-				// Use the platform-specific helper for MAC addresses
-				addr, err = createAddress(mac)
-				if err != nil {
-					err = fmt.Errorf("failed to create Address from MAC: %v", err)
-					return
-				}
-				m.log.Debugf("Created Address from MAC: %s", macAddress)
-
-				// Extra debug info
-				m.log.Debugf("Connecting using MAC format address: %s", macAddress)
+			addr, err = createAddress(macAddress)
+			if err != nil {
+				err = fmt.Errorf("failed to create Address from %s: %v", macAddress, err)
+				return
 			}
+
+			m.log.Debugf("Created Address from string: %s", macAddress)
 
 			// Additional log to show exact address being used for connection
 			m.log.Debugf("Connecting with Address: %+v", addr)

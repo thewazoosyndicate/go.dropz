@@ -1,3 +1,5 @@
+//go:build darwin
+
 package ble
 
 import (
@@ -35,4 +37,22 @@ func createAddress(mac bluetooth.MAC) (bluetooth.Address, error) {
 	addr.UUID = uuid
 
 	return addr, nil
+}
+
+// parseAddress parses either a MAC address or a UUID string into a bluetooth.Address.
+func parseAddress(addrStr string) (bluetooth.Address, error) {
+	// If the address looks like a UUID, parse directly
+	if strings.Contains(addrStr, "-") && len(addrStr) == 36 {
+		uuid, err := bluetooth.ParseUUID(addrStr)
+		if err != nil {
+			return bluetooth.Address{}, fmt.Errorf("failed to parse UUID: %w", err)
+		}
+		return bluetooth.Address{UUID: uuid}, nil
+	}
+
+	mac, err := bluetooth.ParseMAC(addrStr)
+	if err != nil {
+		return bluetooth.Address{}, err
+	}
+	return createAddress(mac)
 }

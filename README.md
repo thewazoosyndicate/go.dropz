@@ -11,7 +11,7 @@ Dropz is a robust application for automatically managing and downloading videos 
 - Manage hundreds of GoPro cameras simultaneously
 - Resilient to disconnections, timeouts, and failures
 - Configurable scan intervals, timeouts, and more
-- Built for Linux systems
+- Cross-platform support for Linux, macOS, and Windows
 - Works completely offline with no internet dependency
 
 ## Architecture
@@ -34,12 +34,12 @@ The application has migrated from gRPC-web to standard gRPC for improved perform
 
 ## Requirements
 
-- Linux system (tested on Fedora 41)
+- Linux, macOS, or Windows system (tested on Fedora 41, Windows 11, and macOS 14)
 - Go 1.20 or higher
 - Protocol Buffers compiler (protoc)
 - Node.js and npm (for the Electron frontend)
 - Bluetooth capabilities
-- NetworkManager for WiFi connections
+- NetworkManager for WiFi connections (or the platform equivalent)
 
 ## Building
 
@@ -76,6 +76,16 @@ make proto
 
 ```bash
 make build
+```
+
+To build for a specific platform, set the `GOOS` environment variable:
+
+```bash
+# Windows build
+GOOS=windows go build -o bin/dropz.exe cmd/dropz/main.go
+
+# macOS build
+GOOS=darwin go build -o bin/dropz cmd/dropz/main.go
 ```
 
 ### Frontend

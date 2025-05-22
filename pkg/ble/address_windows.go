@@ -1,4 +1,4 @@
-//go:build linux
+//go:build windows
 
 package ble
 
@@ -7,14 +7,13 @@ import (
 )
 
 // createAddress creates a bluetooth.Address from a MAC address string
-// On Linux, this directly places the MAC into the Address struct
+// Windows uses the same MAC-based address structure as Linux
 func createAddress(mac bluetooth.MAC) (bluetooth.Address, error) {
-	// On Linux, MACAddress is embedded directly in Address
 	addr := bluetooth.Address{MACAddress: bluetooth.MACAddress{MAC: mac}}
 	return addr, nil
 }
 
-// parseAddress parses a MAC address string into a bluetooth.Address on Linux.
+// parseAddress parses a MAC address string into a bluetooth.Address on Windows.
 func parseAddress(addrStr string) (bluetooth.Address, error) {
 	mac, err := bluetooth.ParseMAC(addrStr)
 	if err != nil {

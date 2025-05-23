@@ -5,7 +5,7 @@ import (
 )
 
 // createAddress creates a bluetooth.Address from a MAC address string
-// On Linux, this directly places the MAC into the Address struct
+// Windows uses the same MAC-based address structure as Linux
 func createAddress(mac bluetooth.MAC) (bluetooth.Address, error) {
 	addr := bluetooth.Address{
 		MACAddress: bluetooth.MACAddress{MAC: mac},

@@ -563,11 +563,8 @@ func (m *BLEManager) GetDiscoveredDevices() []Device {
 
 // Connect attempts to connect to a GoPro device via BLE
 func (m *BLEManager) Connect(macAddress string) error {
-	// First handle the special case for macOS/Darwin where we might get a UUID directly
-	isUUID := strings.Contains(macAddress, "-") && len(macAddress) == 36
-
-	// For UUID format on macOS, we need to scan first to discover the device
-	if isUUID && runtime.GOOS == "darwin" {
+	// For UUID format on macOS, we may need to scan first to discover the device
+	if strings.Contains(macAddress, "-") && len(macAddress) == 36 && runtime.GOOS == "darwin" {
 		m.log.Infof("macOS detected with UUID format address: %s - performing scan first", macAddress)
 
 		// Check if we already have this device in our map
@@ -660,44 +657,12 @@ func (m *BLEManager) Connect(macAddress string) error {
 		go func() {
 			defer close(connectDone)
 
-			// Check if the macAddress is actually a UUID (on Darwin/macOS)
-			var addr bluetooth.Address
-
-			// Direct handling for UUID format (macOS)
-			if strings.Contains(macAddress, "-") && len(macAddress) == 36 {
-				// This is a UUID, parse it directly into the Address.UUID field
-				uuid, uuidErr := bluetooth.ParseUUID(macAddress)
-				if uuidErr != nil {
-					err = fmt.Errorf("failed to parse UUID %s: %v", macAddress, uuidErr)
-					return
-				}
-				// Set the UUID directly in the Address struct
-				addr.UUID = uuid
-				m.log.Debugf("Created Address from UUID: %s", macAddress)
-
-				// Extra debug info
-				m.log.Debugf("Connecting using UUID format address: %s", macAddress)
-			} else {
-				// Standard MAC address parsing for other platforms
-				mac, parseErr := bluetooth.ParseMAC(macAddress)
-				if parseErr != nil {
-					err = fmt.Errorf("failed to parse MAC address %s: %v", macAddress, parseErr)
-					return
-				}
-
-				// Use the platform-specific helper for MAC addresses
-				addr, err = createAddress(mac)
-				if err != nil {
-					err = fmt.Errorf("failed to create Address from MAC: %v", err)
-					return
-				}
-				m.log.Debugf("Created Address from MAC: %s", macAddress)
-
-				// Extra debug info
-				m.log.Debugf("Connecting using MAC format address: %s", macAddress)
+			addr, parseErr := parseAddress(macAddress)
+			if parseErr != nil {
+				err = fmt.Errorf("failed to parse address %s: %v", macAddress, parseErr)
+				return
 			}
 
-			// Additional log to show exact address being used for connection
 			m.log.Debugf("Connecting with Address: %+v", addr)
 
 			// This would ideally use the context if the library supports it
@@ -970,64 +935,27 @@ func (m *BLEManager) Sleep(macAddress string) error {
 	return m.withRetry("sleep camera", macAddress, 3, func() error {
 		m.log.Debugf("BLEManager.Sleep: Starting retry attempt for GoPro %s", macAddress)
 
-		// Discover the Control service
-		svcs, err := bleDevice.DiscoverServices(nil)
+		char, err := m.getCharacteristic(GoProControlServiceUUID, CommandCharUUID)
 		if err != nil {
-			m.log.Errorf("BLEManager.Sleep: Failed to discover services: %v", err)
-			return fmt.Errorf("failed to discover services: %v", err)
+			m.log.Errorf("BLEManager.Sleep: %v", err)
+			return err
 		}
 
-		// Find the Control service
-		var controlService bluetooth.DeviceService
-		found := false
-		for _, svc := range svcs {
-			if svc.UUID().String() == GoProControlServiceUUID {
-				controlService = svc
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			m.log.Errorf("BLEManager.Sleep: Control service not found for device %s", macAddress)
-			return fmt.Errorf("Control service not found")
-		}
-
-		m.log.Debugf("BLEManager.Sleep: Found Control service for device %s", macAddress)
-
-		// Discover characteristics
-		chars, err := controlService.DiscoverCharacteristics(nil)
+		n, err := char.WriteWithoutResponse(append([]byte{PacketTypeStart}, cmd...))
 		if err != nil {
-			m.log.Errorf("BLEManager.Sleep: Failed to discover characteristics: %v", err)
-			return fmt.Errorf("failed to discover characteristics: %v", err)
+			m.log.Errorf("BLEManager.Sleep: Failed to send sleep command: %v", err)
+			return fmt.Errorf("failed to send sleep command: %v", err)
+		}
+		if n != len(cmd)+1 {
+			m.log.Errorf("BLEManager.Sleep: Incomplete write for sleep command (%d bytes written, expected %d)", n, len(cmd)+1)
+			return fmt.Errorf("incomplete write for sleep command")
 		}
 
-		// Find the Command characteristic
-		for _, char := range chars {
-			if char.UUID().String() == CommandCharUUID {
-				m.log.Debugf("BLEManager.Sleep: Found Command characteristic, sending sleep command to device %s", macAddress)
+		// Increased wait time to ensure command is fully processed
+		time.Sleep(2 * time.Second)
 
-				// Send the command with proper packet header
-				n, err := char.WriteWithoutResponse(append([]byte{PacketTypeStart}, cmd...))
-				if err != nil {
-					m.log.Errorf("BLEManager.Sleep: Failed to send sleep command: %v", err)
-					return fmt.Errorf("failed to send sleep command: %v", err)
-				}
-				if n != len(cmd)+1 {
-					m.log.Errorf("BLEManager.Sleep: Incomplete write for sleep command (%d bytes written, expected %d)", n, len(cmd)+1)
-					return fmt.Errorf("incomplete write for sleep command")
-				}
-
-				// Increased wait time to ensure command is fully processed
-				time.Sleep(2 * time.Second)
-
-				m.log.Infof("BLEManager.Sleep: Successfully sent sleep command to device %s", macAddress)
-				return nil
-			}
-		}
-
-		m.log.Errorf("BLEManager.Sleep: Command characteristic not found for device %s", macAddress)
-		return fmt.Errorf("command characteristic not found")
+		m.log.Infof("BLEManager.Sleep: Successfully sent sleep command to device %s", macAddress)
+		return nil
 	})
 }
 
@@ -1137,57 +1065,14 @@ func (m *BLEManager) GetWifiCredentials(macAddress string) (string, string, erro
 	// Use our retry mechanism for SSID
 	m.log.Debug("GetWifiCredentials: Starting SSID retrieval")
 	ssidErr = m.withRetry("get WiFi SSID", macAddress, 3, func() error {
-		m.log.Debug("GetWifiCredentials: Attempting to parse WiFi service UUID")
-		// Discover services with timeout
-		wifiServiceUUID, err := bluetooth.ParseUUID(GoProWifiServiceUUID)
+		char, err := m.getCharacteristic(GoProWifiServiceUUID, WifiSSIDCharUUID)
 		if err != nil {
-			m.log.Errorf("GetWifiCredentials: Failed to parse WiFi service UUID: %v", err)
-			return fmt.Errorf("invalid WiFi service UUID: %v", err)
-		}
-		m.log.Debug("GetWifiCredentials: Successfully parsed WiFi service UUID")
-
-		m.log.Debug("GetWifiCredentials: Starting service discovery")
-		svcs, err := bleDevice.DiscoverServices([]bluetooth.UUID{wifiServiceUUID})
-		if err != nil {
-			m.log.Errorf("GetWifiCredentials: Failed to discover services: %v", err)
-			return fmt.Errorf("failed to discover services: %v", err)
-		}
-		m.log.Debugf("GetWifiCredentials: Discovered %d services", len(svcs))
-
-		if len(svcs) == 0 {
-			m.log.Error("GetWifiCredentials: WiFi service not found")
-			return fmt.Errorf("WiFi service not found")
-		}
-
-		wifiService := svcs[0]
-		m.log.Debug("GetWifiCredentials: Found WiFi service")
-
-		m.log.Debug("GetWifiCredentials: Attempting to parse SSID characteristic UUID")
-		// Discover characteristics with timeout
-		ssidCharUUID, err := bluetooth.ParseUUID(WifiSSIDCharUUID)
-		if err != nil {
-			m.log.Errorf("GetWifiCredentials: Failed to parse SSID characteristic UUID: %v", err)
-			return fmt.Errorf("invalid SSID characteristic UUID: %v", err)
-		}
-		m.log.Debug("GetWifiCredentials: Successfully parsed SSID characteristic UUID")
-
-		m.log.Debug("GetWifiCredentials: Starting characteristic discovery")
-		chars, err := wifiService.DiscoverCharacteristics([]bluetooth.UUID{ssidCharUUID})
-		if err != nil {
-			m.log.Errorf("GetWifiCredentials: Failed to discover characteristics: %v", err)
-			return fmt.Errorf("failed to discover characteristics: %v", err)
-		}
-		m.log.Debugf("GetWifiCredentials: Discovered %d characteristics", len(chars))
-
-		if len(chars) == 0 {
-			m.log.Error("GetWifiCredentials: SSID characteristic not found")
-			return fmt.Errorf("SSID characteristic not found")
+			return err
 		}
 
 		m.log.Debug("GetWifiCredentials: Attempting to read SSID value")
-		// Read the value with proper buffer handling
 		data := make([]byte, 32) // GoPro SSIDs are typically shorter
-		n, err := chars[0].Read(data)
+		n, err := char.Read(data)
 		if err != nil {
 			m.log.Errorf("GetWifiCredentials: Failed to read SSID: %v", err)
 			return fmt.Errorf("failed to read SSID: %v", err)
@@ -1208,57 +1093,14 @@ func (m *BLEManager) GetWifiCredentials(macAddress string) (string, string, erro
 	// Use our retry mechanism for password
 	m.log.Debug("GetWifiCredentials: Starting password retrieval")
 	pwdErr = m.withRetry("get WiFi password", macAddress, 3, func() error {
-		m.log.Debug("GetWifiCredentials: Attempting to parse WiFi service UUID for password")
-		// Discover services with timeout
-		wifiServiceUUID, err := bluetooth.ParseUUID(GoProWifiServiceUUID)
+		char, err := m.getCharacteristic(GoProWifiServiceUUID, WifiPasswordCharUUID)
 		if err != nil {
-			m.log.Errorf("GetWifiCredentials: Failed to parse WiFi service UUID for password: %v", err)
-			return fmt.Errorf("invalid WiFi service UUID: %v", err)
-		}
-		m.log.Debug("GetWifiCredentials: Successfully parsed WiFi service UUID for password")
-
-		m.log.Debug("GetWifiCredentials: Starting service discovery for password")
-		svcs, err := bleDevice.DiscoverServices([]bluetooth.UUID{wifiServiceUUID})
-		if err != nil {
-			m.log.Errorf("GetWifiCredentials: Failed to discover services for password: %v", err)
-			return fmt.Errorf("failed to discover services: %v", err)
-		}
-		m.log.Debugf("GetWifiCredentials: Discovered %d services for password", len(svcs))
-
-		if len(svcs) == 0 {
-			m.log.Error("GetWifiCredentials: WiFi service not found for password")
-			return fmt.Errorf("WiFi service not found")
-		}
-
-		wifiService := svcs[0]
-		m.log.Debug("GetWifiCredentials: Found WiFi service for password")
-
-		m.log.Debug("GetWifiCredentials: Attempting to parse password characteristic UUID")
-		// Discover characteristics with timeout
-		pwdCharUUID, err := bluetooth.ParseUUID(WifiPasswordCharUUID)
-		if err != nil {
-			m.log.Errorf("GetWifiCredentials: Failed to parse password characteristic UUID: %v", err)
-			return fmt.Errorf("invalid password characteristic UUID: %v", err)
-		}
-		m.log.Debug("GetWifiCredentials: Successfully parsed password characteristic UUID")
-
-		m.log.Debug("GetWifiCredentials: Starting characteristic discovery for password")
-		chars, err := wifiService.DiscoverCharacteristics([]bluetooth.UUID{pwdCharUUID})
-		if err != nil {
-			m.log.Errorf("GetWifiCredentials: Failed to discover characteristics for password: %v", err)
-			return fmt.Errorf("failed to discover characteristics: %v", err)
-		}
-		m.log.Debugf("GetWifiCredentials: Discovered %d characteristics for password", len(chars))
-
-		if len(chars) == 0 {
-			m.log.Error("GetWifiCredentials: Password characteristic not found")
-			return fmt.Errorf("Password characteristic not found")
+			return err
 		}
 
 		m.log.Debug("GetWifiCredentials: Attempting to read password value")
-		// Read the value with proper buffer handling
 		data := make([]byte, 32) // GoPro passwords are typically shorter
-		n, err := chars[0].Read(data)
+		n, err := char.Read(data)
 		if err != nil {
 			m.log.Errorf("GetWifiCredentials: Failed to read password: %v", err)
 			return fmt.Errorf("failed to read password: %v", err)
@@ -1682,6 +1524,29 @@ func (m *BLEManager) withRetry(operation string, device string, maxRetries int, 
 	return lastErr
 }
 
+// getCharacteristic retrieves a cached characteristic by service and characteristic UUID.
+// It returns an error if the service or characteristic is not present in the cache.
+func (m *BLEManager) getCharacteristic(serviceUUID, charUUID string) (*bluetooth.DeviceCharacteristic, error) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	if m.serviceMap == nil {
+		return nil, fmt.Errorf("service map is empty")
+	}
+
+	svc, ok := m.serviceMap[serviceUUID]
+	if !ok {
+		return nil, fmt.Errorf("service %s not found in cache", serviceUUID)
+	}
+
+	char, ok := svc[charUUID]
+	if !ok {
+		return nil, fmt.Errorf("characteristic %s not found in cache", charUUID)
+	}
+
+	return char, nil
+}
+
 // createPackets splits a large payload into BLE packets
 func (m *BLEManager) createPackets(payload []byte) [][]byte {
 	// BLE <= v4.2 limits packet size to 20 bytes
@@ -1748,58 +1613,25 @@ func (m *BLEManager) SetCameraControl(macAddress string, enabled bool) error {
 	}
 
 	return m.withRetry("set camera control", macAddress, 3, func() error {
-		// Discover the Control service
-		svcs, err := bleDevice.DiscoverServices(nil)
+		char, err := m.getCharacteristic(GoProControlServiceUUID, CommandCharUUID)
 		if err != nil {
-			return fmt.Errorf("failed to discover services: %v", err)
+			return err
 		}
 
-		// Find the Control service
-		var controlService bluetooth.DeviceService
-		found := false
-		for _, svc := range svcs {
-			if svc.UUID().String() == GoProControlServiceUUID {
-				controlService = svc
-				found = true
-				break
+		packets := m.createPackets(cmd)
+		for i, packet := range packets {
+			n, err := char.WriteWithoutResponse(packet)
+			if err != nil {
+				return fmt.Errorf("failed to write packet %d: %v", i, err)
 			}
-		}
-
-		if !found {
-			return fmt.Errorf("Control service not found")
-		}
-
-		// Discover characteristics
-		chars, err := controlService.DiscoverCharacteristics(nil)
-		if err != nil {
-			return fmt.Errorf("failed to discover characteristics: %v", err)
-		}
-
-		// Find the Command characteristic
-		for _, char := range chars {
-			if char.UUID().String() == CommandCharUUID {
-				// Create packets
-				packets := m.createPackets(cmd)
-
-				// Write each packet
-				for i, packet := range packets {
-					n, err := char.WriteWithoutResponse(packet)
-					if err != nil {
-						return fmt.Errorf("failed to write packet %d: %v", i, err)
-					}
-					if n != len(packet) {
-						return fmt.Errorf("incomplete write for packet %d", i)
-					}
-					// Small delay between packets
-					time.Sleep(10 * time.Millisecond)
-				}
-
-				m.log.Debugf("Successfully %s camera control", map[bool]string{true: "enabled", false: "disabled"}[enabled])
-				return nil
+			if n != len(packet) {
+				return fmt.Errorf("incomplete write for packet %d", i)
 			}
+			time.Sleep(10 * time.Millisecond)
 		}
 
-		return fmt.Errorf("Command characteristic not found")
+		m.log.Debugf("Successfully %s camera control", map[bool]string{true: "enabled", false: "disabled"}[enabled])
+		return nil
 	})
 }
 
@@ -1817,51 +1649,21 @@ func (m *BLEManager) KeepAlive(macAddress string) error {
 	cmd := []byte{0x5B, 0x42}
 
 	return m.withRetry("keep alive", macAddress, 3, func() error {
-		// Discover the Control service
-		svcs, err := bleDevice.DiscoverServices(nil)
+		char, err := m.getCharacteristic(GoProControlServiceUUID, SettingsCharUUID)
 		if err != nil {
-			return fmt.Errorf("failed to discover services: %v", err)
+			return err
 		}
 
-		// Find the Control service
-		var controlService bluetooth.DeviceService
-		found := false
-		for _, svc := range svcs {
-			if svc.UUID().String() == GoProControlServiceUUID {
-				controlService = svc
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			return fmt.Errorf("Control service not found")
-		}
-
-		// Discover characteristics
-		chars, err := controlService.DiscoverCharacteristics(nil)
+		n, err := char.WriteWithoutResponse(cmd)
 		if err != nil {
-			return fmt.Errorf("failed to discover characteristics: %v", err)
+			return fmt.Errorf("failed to write keep-alive: %v", err)
+		}
+		if n != len(cmd) {
+			return fmt.Errorf("incomplete write for keep-alive")
 		}
 
-		// Find the Settings characteristic (not Command)
-		for _, char := range chars {
-			if char.UUID().String() == SettingsCharUUID {
-				// Since this is a small command, we don't need to packetize
-				n, err := char.WriteWithoutResponse(cmd)
-				if err != nil {
-					return fmt.Errorf("failed to write keep-alive: %v", err)
-				}
-				if n != len(cmd) {
-					return fmt.Errorf("incomplete write for keep-alive")
-				}
-
-				m.log.Debug("Successfully sent keep-alive signal")
-				return nil
-			}
-		}
-
-		return fmt.Errorf("Settings characteristic not found")
+		m.log.Debug("Successfully sent keep-alive signal")
+		return nil
 	})
 }
 

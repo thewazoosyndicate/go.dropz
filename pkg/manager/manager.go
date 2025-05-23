@@ -873,6 +873,7 @@ func (m *GoProManager) startBackgroundScanner() {
 		select {
 		case <-m.ctx.Done():
 			m.log.Debug("Background scanner stopping due to context cancellation.")
+			cancelContinuousScan()
 			return
 
 		case <-ticker.C:

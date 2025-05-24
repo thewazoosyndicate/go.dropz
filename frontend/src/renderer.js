@@ -155,19 +155,12 @@ function initializeToggles() {
   // Update UI elements with defaults
   if (pairAllToggle) {
     pairAllToggle.checked = autoPair;
+    pairAllToggle.addEventListener('change', togglePairAll);
   }
   
   if (syncQueueToggle) {
     syncQueueToggle.checked = autoSync;
-  }
-  
-  // Add event listener for sync queue toggle
-  if (syncQueueToggle) {
-    syncQueueToggle.addEventListener('change', (event) => {
-      const enabled = event.target.checked;
-      // Call the auto-sync toggle handler
-      toggleAutoSync(event);
-    });
+    syncQueueToggle.addEventListener('change', toggleAutoSync);
   }
   
   debugLog('Toggle switches initialized with default values', LOG_LEVELS.DEBUG);
@@ -2020,15 +2013,13 @@ function toggleDeviceManaged(macAddress, isManaged) {
 // Toggle automatic pairing of all devices
 function togglePairAll(event) {
   const enabled = event.target.checked;
+  const previousValue = autoPair;
+  
   debugLog(`Toggling pair-all mode: ${enabled}`, LOG_LEVELS.INFO);
   
-  // Update the setting in the backend
-  updateSetting('pair_mode_enabled', enabled);
-  
-  // Update local state
+  // Update local state optimistically
   autoPair = enabled;
   
-  // Update the backend config
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
@@ -2036,7 +2027,7 @@ function togglePairAll(event) {
     // Create the request
     const request = new grpcUtils.UpdateSettingRequest();
     request.setSettingName('pair_mode_enabled');
-    request.setBoolValue(newValue);
+    request.setBoolValue(enabled);
     
     // Call the service and handle response
     client.updateSetting(request, (error, response) => {
@@ -2049,18 +2040,17 @@ function togglePairAll(event) {
         if (pairAllToggle) {
           pairAllToggle.checked = previousValue;
         }
-        
         return;
       }
       
       // Update was successful
-      debugLog(`Successfully updated pair_mode_enabled to ${newValue}`, LOG_LEVELS.INFO);
+      debugLog(`Successfully updated pair_mode_enabled to ${enabled}`, LOG_LEVELS.INFO);
       
-      if (newValue) {
+      if (enabled) {
         addLogEntry('Auto-pairing enabled', 'info');
         // Start pairing all unpaired devices
         Object.values(allDevices)
-          .filter(d => d.status !== 'paired' && !pairingInProgress[d.macAddress])
+          .filter(d => !d.isPaired && !pairingInProgress[d.macAddress])
           .forEach(d => {
             pairDevice(d.macAddress);
           });
@@ -2083,15 +2073,13 @@ function togglePairAll(event) {
 // Toggle automatic syncing of all devices
 function toggleAutoSync(event) {
   const enabled = event.target.checked;
+  const previousValue = autoSync;
+  
   debugLog(`Toggling auto-sync mode: ${enabled}`, LOG_LEVELS.INFO);
   
-  // Update the setting in the backend
-  updateSetting('sync_enabled', enabled);
+  // Update local state optimistically
+  autoSync = enabled;
   
-  // Update the local state optimistically
-  autoSync = newValue;
-  
-  // Update the backend config
   try {
     const grpcUtils = require('./grpc-utils');
     const client = grpcUtils.getClient();
@@ -2099,7 +2087,7 @@ function toggleAutoSync(event) {
     // Create the request
     const request = new grpcUtils.UpdateSettingRequest();
     request.setSettingName('sync_enabled');
-    request.setBoolValue(newValue);
+    request.setBoolValue(enabled);
     
     // Call the service and handle response
     client.updateSetting(request, (error, response) => {
@@ -2109,17 +2097,16 @@ function toggleAutoSync(event) {
         
         // Revert local state and UI on error
         autoSync = previousValue;
-        if (autoSyncToggle) {
-          autoSyncToggle.checked = previousValue;
+        if (syncQueueToggle) {
+          syncQueueToggle.checked = previousValue;
         }
-        
         return;
       }
       
       // Update was successful
-      debugLog(`Successfully updated sync_enabled to ${newValue}`, LOG_LEVELS.INFO);
+      debugLog(`Successfully updated sync_enabled to ${enabled}`, LOG_LEVELS.INFO);
       
-      if (newValue) {
+      if (enabled) {
         addLogEntry('Auto-sync enabled', 'info');
         // Start syncing if there are devices in the queue
         if (syncQueue.length > 0 && Object.keys(syncingInProgress).length === 0) {
@@ -2135,8 +2122,8 @@ function toggleAutoSync(event) {
     
     // Revert local state and UI on exception
     autoSync = previousValue;
-    if (autoSyncToggle) {
-      autoSyncToggle.checked = previousValue;
+    if (syncQueueToggle) {
+      syncQueueToggle.checked = previousValue;
     }
   }
 }
@@ -3133,9 +3120,6 @@ function updateSetting(key, value) {
             debugLog(`Updated autoPair state to ${autoPair}`, LOG_LEVELS.DEBUG);
           } else if (key === 'sync_enabled') {
             autoSync = typedValue;
-            if (autoSyncToggle) {
-              autoSyncToggle.checked = autoSync;
-            }
             if (syncQueueToggle) {
               syncQueueToggle.checked = autoSync;
             }
@@ -3164,9 +3148,6 @@ function updateSetting(key, value) {
         }
       } else if (key === 'sync_enabled') {
         autoSync = value;
-        if (autoSyncToggle) {
-          autoSyncToggle.checked = value;
-        }
         if (syncQueueToggle) {
           syncQueueToggle.checked = value;
         }
@@ -3226,21 +3207,28 @@ function updateSettingsUI() {
 function updateSettingUI(settingName, value) {
   // Find the element with the data-setting attribute
   const element = document.querySelector(`[data-setting="${settingName}"]`);
-  if (!element) {
-    debugLog(`Element for setting ${settingName} not found`, LOG_LEVELS.WARN);
-    return;
+  
+  // Also check for special toggle elements
+  if (settingName === 'pair_mode_enabled' && pairAllToggle) {
+    pairAllToggle.checked = Boolean(value);
+  } else if (settingName === 'sync_enabled' && syncQueueToggle) {
+    syncQueueToggle.checked = Boolean(value);
   }
   
-  // Update based on element type
-  if (element.type === 'checkbox') {
-    element.checked = Boolean(value);
-  } else if (element.type === 'number') {
-    element.value = value;
-  } else if (element.tagName === 'SELECT') {
-    element.value = value;
+  // Update standard settings elements if they exist
+  if (element) {
+    if (element.type === 'checkbox') {
+      element.checked = Boolean(value);
+    } else if (element.type === 'number') {
+      element.value = value;
+    } else if (element.tagName === 'SELECT') {
+      element.value = value;
+    } else {
+      element.value = value;
+    }
+    
+    debugLog(`Updated UI for setting ${settingName} = ${value}`, LOG_LEVELS.DEBUG);
   } else {
-    element.value = value;
+    debugLog(`No standard UI element found for setting ${settingName}`, LOG_LEVELS.DEBUG);
   }
-  
-  debugLog(`Updated UI for setting ${settingName} = ${value}`, LOG_LEVELS.DEBUG);
 }

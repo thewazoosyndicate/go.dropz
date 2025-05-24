@@ -1395,6 +1395,14 @@ func (m *GoProManager) UpdateSetting(settingName string, value interface{}) (dat
 	config := m.db.GetConfig()
 
 	switch settingName {
+	case "pair_mode_enabled":
+		boolVal, ok := value.(bool)
+		if !ok {
+			return config, fmt.Errorf("invalid value type for pair_mode_enabled: expected bool")
+		}
+		config.PairModeEnabled = boolVal
+		m.log.Infof("Updated pair_mode_enabled to %v", boolVal)
+
 	case "sync_enabled":
 		boolVal, ok := value.(bool)
 		if !ok {
@@ -1551,6 +1559,10 @@ func (m *GoProManager) ResetSetting(settingName string) (database.Config, error)
 	defaultConfig := database.DefaultConfig()
 
 	switch settingName {
+	case "pair_mode_enabled":
+		config.PairModeEnabled = defaultConfig.PairModeEnabled
+		m.log.Infof("Reset pair_mode_enabled to default: %v", defaultConfig.PairModeEnabled)
+
 	case "sync_enabled":
 		config.SyncEnabled = defaultConfig.SyncEnabled
 		m.log.Infof("Reset sync_enabled to default: %v", defaultConfig.SyncEnabled)

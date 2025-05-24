@@ -21,7 +21,7 @@ const managedCountDisplay = document.getElementById('managed-count');
 const unpairedCountDisplay = document.getElementById('unpaired-count');
 const syncCountDisplay = document.getElementById('sync-count');
 const pairAllToggle = document.getElementById('pair-all-toggle');
-const autoSyncToggle = document.getElementById('auto-sync-toggle');
+const syncQueueToggle = document.getElementById('sync-queue-toggle');
 
 // View toggles
 const viewToggleButtons = document.querySelectorAll('.view-button');
@@ -91,7 +91,6 @@ function init() {
   restartButton.addEventListener('click', restartService);
   clearLogsButton.addEventListener('click', clearLogs);
   pairAllToggle.addEventListener('change', togglePairAll);
-  autoSyncToggle.addEventListener('change', toggleAutoSync);
   logLevelSelect.addEventListener('change', changeLogLevel);
   themeToggle.addEventListener('click', toggleTheme);
   
@@ -158,8 +157,17 @@ function initializeToggles() {
     pairAllToggle.checked = autoPair;
   }
   
-  if (autoSyncToggle) {
-    autoSyncToggle.checked = autoSync;
+  if (syncQueueToggle) {
+    syncQueueToggle.checked = autoSync;
+  }
+  
+  // Add event listener for sync queue toggle
+  if (syncQueueToggle) {
+    syncQueueToggle.addEventListener('change', (event) => {
+      const enabled = event.target.checked;
+      // Call the auto-sync toggle handler
+      toggleAutoSync(event);
+    });
   }
   
   debugLog('Toggle switches initialized with default values', LOG_LEVELS.DEBUG);
@@ -2011,13 +2019,14 @@ function toggleDeviceManaged(macAddress, isManaged) {
 
 // Toggle automatic pairing of all devices
 function togglePairAll(event) {
-  const newValue = event.target.checked;
-  const previousValue = autoPair;
+  const enabled = event.target.checked;
+  debugLog(`Toggling pair-all mode: ${enabled}`, LOG_LEVELS.INFO);
   
-  debugLog(`Toggle pair-all button clicked. Previous: ${previousValue}, New: ${newValue}`, LOG_LEVELS.INFO);
+  // Update the setting in the backend
+  updateSetting('pair_mode_enabled', enabled);
   
-  // Update the local state optimistically
-  autoPair = newValue;
+  // Update local state
+  autoPair = enabled;
   
   // Update the backend config
   try {
@@ -2073,10 +2082,11 @@ function togglePairAll(event) {
 
 // Toggle automatic syncing of all devices
 function toggleAutoSync(event) {
-  const newValue = event.target.checked;
-  const previousValue = autoSync;
+  const enabled = event.target.checked;
+  debugLog(`Toggling auto-sync mode: ${enabled}`, LOG_LEVELS.INFO);
   
-  debugLog(`Toggle auto-sync button clicked. Previous: ${previousValue}, New: ${newValue}`, LOG_LEVELS.INFO);
+  // Update the setting in the backend
+  updateSetting('sync_enabled', enabled);
   
   // Update the local state optimistically
   autoSync = newValue;
@@ -2677,7 +2687,8 @@ function loadConfig() {
       const config = response.getConfig();
       try {
         appConfig = {
-          logLevel: config.getLogLevel(),
+          pairModeEnabled: config.getPairModeEnabled(),
+          syncEnabled: config.getSyncEnabled(),
           scanIntervalSeconds: config.getScanIntervalSeconds(),
           connectTimeoutSeconds: config.getConnectTimeoutSeconds(),
           daysThreshold: config.getDaysThreshold(),
@@ -2685,24 +2696,29 @@ function loadConfig() {
           setTimeEnabled: config.getSetTimeEnabled(),
           inactivityTimeoutSeconds: config.getInactivityTimeoutSeconds(),
           inactivitySyncIntervalSeconds: config.getInactivitySyncIntervalSeconds(),
-          syncEnabled: config.getSyncEnabled()
+          logLevel: config.getLogLevel()
         };
         
         // Update the frontend toggle states based on config values
         autoSync = appConfig.syncEnabled;
+        autoPair = appConfig.pairModeEnabled;
         
         // Update the UI toggle elements
-        if (autoSyncToggle) {
-          autoSyncToggle.checked = autoSync;
+        if (syncQueueToggle) {
+          syncQueueToggle.checked = autoSync;
+        }
+        if (pairAllToggle) {
+          pairAllToggle.checked = autoPair;
         }
         
-        debugLog(`Sync settings synced from backend: autoSync=${autoSync}`, LOG_LEVELS.INFO);
+        debugLog(`Settings synced from backend: autoSync=${autoSync}, autoPair=${autoPair}`, LOG_LEVELS.INFO);
         
       } catch (configError) {
         // If any getter fails, create a partial config
         debugLog(`Error getting some config values: ${configError.message}`, LOG_LEVELS.WARN);
         appConfig = {
-          logLevel: config.getLogLevel ? config.getLogLevel() : 'info',
+          pairModeEnabled: config.getPairModeEnabled ? config.getPairModeEnabled() : false,
+          syncEnabled: config.getSyncEnabled ? config.getSyncEnabled() : false,
           scanIntervalSeconds: config.getScanIntervalSeconds ? config.getScanIntervalSeconds() : 30,
           connectTimeoutSeconds: config.getConnectTimeoutSeconds ? config.getConnectTimeoutSeconds() : 30,
           daysThreshold: config.getDaysThreshold ? config.getDaysThreshold() : 7, 
@@ -2710,15 +2726,19 @@ function loadConfig() {
           setTimeEnabled: config.getSetTimeEnabled ? config.getSetTimeEnabled() : true,
           inactivityTimeoutSeconds: config.getInactivityTimeoutSeconds ? config.getInactivityTimeoutSeconds() : 60,
           inactivitySyncIntervalSeconds: config.getInactivitySyncIntervalSeconds ? config.getInactivitySyncIntervalSeconds() : 600,
-          syncEnabled: config.getSyncEnabled ? config.getSyncEnabled() : false
+          logLevel: config.getLogLevel ? config.getLogLevel() : 'info'
         };
         
         // Still try to update the toggle states with what we have
         autoSync = appConfig.syncEnabled;
+        autoPair = appConfig.pairModeEnabled;
         
         // Update the UI toggle elements
-        if (autoSyncToggle) {
-          autoSyncToggle.checked = autoSync;
+        if (syncQueueToggle) {
+          syncQueueToggle.checked = autoSync;
+        }
+        if (pairAllToggle) {
+          pairAllToggle.checked = autoPair;
         }
       }
       
@@ -2745,6 +2765,7 @@ function resetAllSettings() {
   
   // Get all settings from the UI
   const settings = [
+    'pair_mode_enabled',
     'sync_enabled',
     'scan_interval_seconds',
     'connect_timeout_seconds',
@@ -3084,6 +3105,7 @@ function updateSetting(key, value) {
           'days_threshold': 'daysThreshold',
           'destination_folder': 'destinationFolder',
           'inactivity_timeout_seconds': 'inactivityTimeoutSeconds',
+          'inactivity_sync_interval_seconds': 'inactivitySyncIntervalSeconds',
           'set_time_enabled': 'setTimeEnabled',
           'log_level': 'logLevel'
         };
@@ -3114,7 +3136,19 @@ function updateSetting(key, value) {
             if (autoSyncToggle) {
               autoSyncToggle.checked = autoSync;
             }
+            if (syncQueueToggle) {
+              syncQueueToggle.checked = autoSync;
+            }
             debugLog(`Updated autoSync state to ${autoSync}`, LOG_LEVELS.DEBUG);
+          } else if (key === 'log_level') {
+            // Sync the frontend log level selector
+            if (logLevelSelect) {
+              logLevelSelect.value = value;
+            }
+            
+            // Update the frontend log level
+            const { setLogLevel } = require('./fileLogger');
+            setLogLevel(value.toUpperCase());
           }
           
           // Update any other UI elements as needed
@@ -3132,6 +3166,9 @@ function updateSetting(key, value) {
         autoSync = value;
         if (autoSyncToggle) {
           autoSyncToggle.checked = value;
+        }
+        if (syncQueueToggle) {
+          syncQueueToggle.checked = value;
         }
       } else if (key === 'log_level') {
         // Sync the frontend log level selector
@@ -3168,6 +3205,7 @@ function updateSettingsUI() {
     'daysThreshold': 'days_threshold',
     'destinationFolder': 'destination_folder',
     'inactivityTimeoutSeconds': 'inactivity_timeout_seconds',
+    'inactivitySyncIntervalSeconds': 'inactivity_sync_interval_seconds',
     'setTimeEnabled': 'set_time_enabled',
     'logLevel': 'log_level',
     'debugMode': 'debug_mode'

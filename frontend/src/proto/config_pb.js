@@ -262,9 +262,9 @@ proto.dropz.Config.toObject = function(includeInstance, msg) {
     daysThreshold: jspb.Message.getFieldWithDefault(msg, 5, 0),
     destinationFolder: jspb.Message.getFieldWithDefault(msg, 6, ""),
     inactivityTimeoutSeconds: jspb.Message.getFieldWithDefault(msg, 7, 0),
-    setTimeEnabled: jspb.Message.getBooleanFieldWithDefault(msg, 8, false),
-    logLevel: jspb.Message.getFieldWithDefault(msg, 9, ""),
-    debugMode: jspb.Message.getBooleanFieldWithDefault(msg, 10, false),
+    inactivitySyncIntervalSeconds: jspb.Message.getFieldWithDefault(msg, 8, 0),
+    setTimeEnabled: jspb.Message.getBooleanFieldWithDefault(msg, 9, false),
+    logLevel: jspb.Message.getFieldWithDefault(msg, 10, ""),
     lastUpdated: (f = msg.getLastUpdated()) && google_protobuf_timestamp_pb.Timestamp.toObject(includeInstance, f)
   };
 
@@ -331,16 +331,16 @@ proto.dropz.Config.deserializeBinaryFromReader = function(msg, reader) {
       msg.setInactivityTimeoutSeconds(value);
       break;
     case 8:
+      var value = /** @type {number} */ (reader.readInt32());
+      msg.setInactivitySyncIntervalSeconds(value);
+      break;
+    case 9:
       var value = /** @type {boolean} */ (reader.readBool());
       msg.setSetTimeEnabled(value);
       break;
-    case 9:
+    case 10:
       var value = /** @type {string} */ (reader.readString());
       msg.setLogLevel(value);
-      break;
-    case 10:
-      var value = /** @type {boolean} */ (reader.readBool());
-      msg.setDebugMode(value);
       break;
     case 11:
       var value = new google_protobuf_timestamp_pb.Timestamp;
@@ -425,23 +425,23 @@ proto.dropz.Config.serializeBinaryToWriter = function(message, writer) {
       f
     );
   }
+  f = message.getInactivitySyncIntervalSeconds();
+  if (f !== 0) {
+    writer.writeInt32(
+      8,
+      f
+    );
+  }
   f = message.getSetTimeEnabled();
   if (f) {
     writer.writeBool(
-      8,
+      9,
       f
     );
   }
   f = message.getLogLevel();
   if (f.length > 0) {
     writer.writeString(
-      9,
-      f
-    );
-  }
-  f = message.getDebugMode();
-  if (f) {
-    writer.writeBool(
       10,
       f
     );
@@ -584,11 +584,29 @@ proto.dropz.Config.prototype.setInactivityTimeoutSeconds = function(value) {
 
 
 /**
- * optional bool set_time_enabled = 8;
+ * optional int32 inactivity_sync_interval_seconds = 8;
+ * @return {number}
+ */
+proto.dropz.Config.prototype.getInactivitySyncIntervalSeconds = function() {
+  return /** @type {number} */ (jspb.Message.getFieldWithDefault(this, 8, 0));
+};
+
+
+/**
+ * @param {number} value
+ * @return {!proto.dropz.Config} returns this
+ */
+proto.dropz.Config.prototype.setInactivitySyncIntervalSeconds = function(value) {
+  return jspb.Message.setProto3IntField(this, 8, value);
+};
+
+
+/**
+ * optional bool set_time_enabled = 9;
  * @return {boolean}
  */
 proto.dropz.Config.prototype.getSetTimeEnabled = function() {
-  return /** @type {boolean} */ (jspb.Message.getBooleanFieldWithDefault(this, 8, false));
+  return /** @type {boolean} */ (jspb.Message.getBooleanFieldWithDefault(this, 9, false));
 };
 
 
@@ -597,16 +615,16 @@ proto.dropz.Config.prototype.getSetTimeEnabled = function() {
  * @return {!proto.dropz.Config} returns this
  */
 proto.dropz.Config.prototype.setSetTimeEnabled = function(value) {
-  return jspb.Message.setProto3BooleanField(this, 8, value);
+  return jspb.Message.setProto3BooleanField(this, 9, value);
 };
 
 
 /**
- * optional string log_level = 9;
+ * optional string log_level = 10;
  * @return {string}
  */
 proto.dropz.Config.prototype.getLogLevel = function() {
-  return /** @type {string} */ (jspb.Message.getFieldWithDefault(this, 9, ""));
+  return /** @type {string} */ (jspb.Message.getFieldWithDefault(this, 10, ""));
 };
 
 
@@ -615,25 +633,7 @@ proto.dropz.Config.prototype.getLogLevel = function() {
  * @return {!proto.dropz.Config} returns this
  */
 proto.dropz.Config.prototype.setLogLevel = function(value) {
-  return jspb.Message.setProto3StringField(this, 9, value);
-};
-
-
-/**
- * optional bool debug_mode = 10;
- * @return {boolean}
- */
-proto.dropz.Config.prototype.getDebugMode = function() {
-  return /** @type {boolean} */ (jspb.Message.getBooleanFieldWithDefault(this, 10, false));
-};
-
-
-/**
- * @param {boolean} value
- * @return {!proto.dropz.Config} returns this
- */
-proto.dropz.Config.prototype.setDebugMode = function(value) {
-  return jspb.Message.setProto3BooleanField(this, 10, value);
+  return jspb.Message.setProto3StringField(this, 10, value);
 };
 
 

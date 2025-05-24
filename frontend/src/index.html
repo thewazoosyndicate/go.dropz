@@ -162,41 +162,14 @@
           </div>
           <div class="panel-content">
             <div class="settings-grid">
-              <!-- Toggles Section -->
+              <!-- Toggle Settings Section -->
               <div class="settings-section">
-                <h3>Operation Mode</h3>
-                <div class="setting-item">
-                  <div class="setting-label">Auto-Pair Devices</div>
-                  <div class="toggle-wrapper">
-                    <label class="toggle-switch">
-                      <input type="checkbox" id="pair-mode-toggle" class="setting-toggle" data-setting="pair_mode_enabled">
-                      <span class="toggle-slider"></span>
-                    </label>
-                  </div>
-                </div>
-                <div class="setting-item">
-                  <div class="setting-label">Auto-Sync Media</div>
-                  <div class="toggle-wrapper">
-                    <label class="toggle-switch">
-                      <input type="checkbox" id="sync-enabled-toggle" class="setting-toggle" data-setting="sync_enabled">
-                      <span class="toggle-slider"></span>
-                    </label>
-                  </div>
-                </div>
+                <h3>General Settings</h3>
                 <div class="setting-item">
                   <div class="setting-label">Set Camera Time</div>
                   <div class="toggle-wrapper">
                     <label class="toggle-switch">
                       <input type="checkbox" id="set-time-toggle" class="setting-toggle" data-setting="set_time_enabled">
-                      <span class="toggle-slider"></span>
-                    </label>
-                  </div>
-                </div>
-                <div class="setting-item">
-                  <div class="setting-label">Debug Mode</div>
-                  <div class="toggle-wrapper">
-                    <label class="toggle-switch">
-                      <input type="checkbox" id="debug-mode-toggle" class="setting-toggle" data-setting="debug_mode">
                       <span class="toggle-slider"></span>
                     </label>
                   </div>
@@ -219,15 +192,21 @@
                   </div>
                 </div>
                 <div class="setting-item">
-                  <div class="setting-label">Media Age Threshold (days)</div>
+                  <div class="setting-label">Inactivity Timeout (seconds)</div>
                   <div class="setting-control">
-                    <input type="number" id="days-threshold-input" class="setting-input" data-setting="days_threshold" min="1" max="365">
+                    <input type="number" id="inactivity-timeout-input" class="setting-input" data-setting="inactivity_timeout_seconds" min="30" max="3600">
                   </div>
                 </div>
                 <div class="setting-item">
-                  <div class="setting-label">Inactivity Timeout (seconds)</div>
+                  <div class="setting-label">Inactivity Sync Interval (seconds)</div>
                   <div class="setting-control">
-                    <input type="number" id="inactivity-timeout-input" class="setting-input" data-setting="inactivity_timeout_seconds" min="10" max="600">
+                    <input type="number" id="inactivity-sync-interval-input" class="setting-input" data-setting="inactivity_sync_interval_seconds" min="60" max="3600" value="600">
+                  </div>
+                </div>
+                <div class="setting-item">
+                  <div class="setting-label">Media Age Threshold (days)</div>
+                  <div class="setting-control">
+                    <input type="number" id="days-threshold-input" class="setting-input" data-setting="days_threshold" min="1" max="365">
                   </div>
                 </div>
               </div>
@@ -249,7 +228,7 @@
                   <div class="setting-control">
                     <select id="backend-log-level-select" class="setting-select" data-setting="log_level">
                       <option value="trace">Trace</option>
-                      <option value="debug">Debug</option>
+                      <option value="debug">Debug (Verbose)</option>
                       <option value="info">Info</option>
                       <option value="warn">Warn</option>
                       <option value="error">Error</option>

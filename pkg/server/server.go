@@ -955,17 +955,16 @@ func (s *DropzServer) UpdateConfig(ctx context.Context, req *protocol.UpdateConf
 
 	// Convert proto config to database config
 	dbConfig := database.Config{
-		PairModeEnabled:          req.Config.PairModeEnabled,
-		SyncEnabled:              req.Config.SyncEnabled,
-		ScanIntervalSeconds:      req.Config.ScanIntervalSeconds,
-		ConnectTimeoutSeconds:    req.Config.ConnectTimeoutSeconds,
-		DaysThreshold:            req.Config.DaysThreshold,
-		DestinationFolder:        req.Config.DestinationFolder,
-		InactivityTimeoutSeconds: req.Config.InactivityTimeoutSeconds,
-		SetTimeEnabled:           req.Config.SetTimeEnabled,
-		LogLevel:                 req.Config.LogLevel,
-		DebugMode:                req.Config.DebugMode,
-		LastUpdated:              req.Config.LastUpdated.AsTime(),
+		SyncEnabled:                   req.Config.SyncEnabled,
+		ScanIntervalSeconds:           req.Config.ScanIntervalSeconds,
+		ConnectTimeoutSeconds:         req.Config.ConnectTimeoutSeconds,
+		DaysThreshold:                 req.Config.DaysThreshold,
+		DestinationFolder:             req.Config.DestinationFolder,
+		InactivityTimeoutSeconds:      req.Config.InactivityTimeoutSeconds,
+		InactivitySyncIntervalSeconds: req.Config.InactivitySyncIntervalSeconds,
+		SetTimeEnabled:                req.Config.SetTimeEnabled,
+		LogLevel:                      req.Config.LogLevel,
+		LastUpdated:                   req.Config.LastUpdated.AsTime(),
 	}
 
 	err := s.manager.UpdateConfig(dbConfig)

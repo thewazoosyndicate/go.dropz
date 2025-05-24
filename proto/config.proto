@@ -8,7 +8,7 @@ import "google/protobuf/timestamp.proto";
 // Configuration settings aligned with OpenAPI spec
 message Config {
   // Core system settings
-  bool pair_mode_enabled = 1;  // When true, system actively looks for and attempts to pair with new cameras
+  bool pair_mode_enabled = 1;  // When true, newly discovered cameras will be automatically paired
   bool sync_enabled = 2;       // When true, system automatically syncs content from cameras
   int32 scan_interval_seconds = 3;
   int32 connect_timeout_seconds = 4;
@@ -17,15 +17,13 @@ message Config {
   int32 days_threshold = 5;    // Only sync content newer than this many days
   string destination_folder = 6;
   int32 inactivity_timeout_seconds = 7;
+  int32 inactivity_sync_interval_seconds = 8;  // Interval between sync attempts during inactivity
   
   // Camera behavior settings
-  bool set_time_enabled = 8;   // Set camera time when connecting
-  
-  // Debug settings
-  string log_level = 9;
-  bool debug_mode = 10;
+  bool set_time_enabled = 9;   // Set camera time when connecting
   
   // Additional settings
+  string log_level = 10;
   google.protobuf.Timestamp last_updated = 11;
 }
 

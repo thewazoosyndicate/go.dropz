@@ -9,7 +9,7 @@ import (
 // Log levels
 const (
 	LevelTrace = "trace"
-	LevelDebug = "debug"
+	LevelDebug = "debug" // More verbose than trace
 	LevelInfo  = "info"
 	LevelWarn  = "warn"
 	LevelError = "error"

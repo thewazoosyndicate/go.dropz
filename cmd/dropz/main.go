@@ -20,7 +20,6 @@ var (
 	logLevel    = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	serverAddr  = flag.String("server-addr", "127.0.0.1:50051", "gRPC server address")
 	showVersion = flag.Bool("version", false, "Show version and exit")
-	debugMode   = flag.Bool("debug", false, "Enable debug mode")
 	pairMode    = flag.Bool("pair-mode", true, "Enable automatic pairing mode")
 	syncEnabled = flag.Bool("sync-enabled", true, "Enable automatic content synchronization")
 )
@@ -79,9 +78,6 @@ func main() {
 			configChanged = true
 		case "sync-enabled":
 			config.SyncEnabled = *syncEnabled
-			configChanged = true
-		case "debug":
-			config.DebugMode = *debugMode
 			configChanged = true
 		case "log-level":
 			config.LogLevel = *logLevel

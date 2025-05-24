@@ -1367,8 +1367,6 @@ func (m *GoProManager) GetSetting(settingName string) (interface{}, error) {
 	config := m.db.GetConfig()
 
 	switch settingName {
-	case "pair_mode_enabled":
-		return config.PairModeEnabled, nil
 	case "sync_enabled":
 		return config.SyncEnabled, nil
 	case "scan_interval_seconds":
@@ -1381,12 +1379,12 @@ func (m *GoProManager) GetSetting(settingName string) (interface{}, error) {
 		return config.DestinationFolder, nil
 	case "inactivity_timeout_seconds":
 		return config.InactivityTimeoutSeconds, nil
+	case "inactivity_sync_interval_seconds":
+		return config.InactivitySyncIntervalSeconds, nil
 	case "set_time_enabled":
 		return config.SetTimeEnabled, nil
 	case "log_level":
 		return config.LogLevel, nil
-	case "debug_mode":
-		return config.DebugMode, nil
 	default:
 		return nil, fmt.Errorf("unknown setting: %s", settingName)
 	}
@@ -1397,14 +1395,6 @@ func (m *GoProManager) UpdateSetting(settingName string, value interface{}) (dat
 	config := m.db.GetConfig()
 
 	switch settingName {
-	case "pair_mode_enabled":
-		boolVal, ok := value.(bool)
-		if !ok {
-			return config, fmt.Errorf("invalid value type for pair_mode_enabled: expected bool")
-		}
-		config.PairModeEnabled = boolVal
-		m.log.Infof("Updated pair_mode_enabled to %v", boolVal)
-
 	case "sync_enabled":
 		boolVal, ok := value.(bool)
 		if !ok {
@@ -1414,7 +1404,6 @@ func (m *GoProManager) UpdateSetting(settingName string, value interface{}) (dat
 		m.log.Infof("Updated sync_enabled to %v", boolVal)
 
 	case "scan_interval_seconds":
-		// Handle both float64 (common from JSON) and int
 		var intVal int32
 		switch v := value.(type) {
 		case float64:
@@ -1433,7 +1422,6 @@ func (m *GoProManager) UpdateSetting(settingName string, value interface{}) (dat
 		m.log.Infof("Updated scan_interval_seconds to %d", intVal)
 
 	case "connect_timeout_seconds":
-		// Handle both float64 (common from JSON) and int
 		var intVal int32
 		switch v := value.(type) {
 		case float64:
@@ -1452,7 +1440,6 @@ func (m *GoProManager) UpdateSetting(settingName string, value interface{}) (dat
 		m.log.Infof("Updated connect_timeout_seconds to %d", intVal)
 
 	case "days_threshold":
-		// Handle both float64 (common from JSON) and int
 		var intVal int32
 		switch v := value.(type) {
 		case float64:
@@ -1479,7 +1466,6 @@ func (m *GoProManager) UpdateSetting(settingName string, value interface{}) (dat
 		m.log.Infof("Updated destination_folder to %s", strVal)
 
 	case "inactivity_timeout_seconds":
-		// Handle both float64 (common from JSON) and int
 		var intVal int32
 		switch v := value.(type) {
 		case float64:
@@ -1491,11 +1477,29 @@ func (m *GoProManager) UpdateSetting(settingName string, value interface{}) (dat
 		default:
 			return config, fmt.Errorf("invalid value type for inactivity_timeout_seconds: expected number")
 		}
-		if intVal < 10 || intVal > 300 {
-			return config, fmt.Errorf("inactivity_timeout_seconds must be between 10 and 300 seconds")
+		if intVal < 30 || intVal > 3600 {
+			return config, fmt.Errorf("inactivity_timeout_seconds must be between 30 and 3600 seconds")
 		}
 		config.InactivityTimeoutSeconds = intVal
 		m.log.Infof("Updated inactivity_timeout_seconds to %d", intVal)
+
+	case "inactivity_sync_interval_seconds":
+		var intVal int32
+		switch v := value.(type) {
+		case float64:
+			intVal = int32(v)
+		case int:
+			intVal = int32(v)
+		case int32:
+			intVal = v
+		default:
+			return config, fmt.Errorf("invalid value type for inactivity_sync_interval_seconds: expected number")
+		}
+		if intVal < 60 || intVal > 3600 {
+			return config, fmt.Errorf("inactivity_sync_interval_seconds must be between 60 and 3600 seconds")
+		}
+		config.InactivitySyncIntervalSeconds = intVal
+		m.log.Infof("Updated inactivity_sync_interval_seconds to %d", intVal)
 
 	case "set_time_enabled":
 		boolVal, ok := value.(bool)
@@ -1510,7 +1514,6 @@ func (m *GoProManager) UpdateSetting(settingName string, value interface{}) (dat
 		if !ok {
 			return config, fmt.Errorf("invalid value type for log_level: expected string")
 		}
-		// Validate log level
 		validLogLevels := map[string]bool{
 			"debug": true,
 			"info":  true,
@@ -1522,14 +1525,6 @@ func (m *GoProManager) UpdateSetting(settingName string, value interface{}) (dat
 		}
 		config.LogLevel = strVal
 		m.log.Infof("Updated log_level to %s", strVal)
-
-	case "debug_mode":
-		boolVal, ok := value.(bool)
-		if !ok {
-			return config, fmt.Errorf("invalid value type for debug_mode: expected bool")
-		}
-		config.DebugMode = boolVal
-		m.log.Infof("Updated debug_mode to %v", boolVal)
 
 	default:
 		return config, fmt.Errorf("unknown setting: %s", settingName)
@@ -1556,10 +1551,6 @@ func (m *GoProManager) ResetSetting(settingName string) (database.Config, error)
 	defaultConfig := database.DefaultConfig()
 
 	switch settingName {
-	case "pair_mode_enabled":
-		config.PairModeEnabled = defaultConfig.PairModeEnabled
-		m.log.Infof("Reset pair_mode_enabled to default: %v", defaultConfig.PairModeEnabled)
-
 	case "sync_enabled":
 		config.SyncEnabled = defaultConfig.SyncEnabled
 		m.log.Infof("Reset sync_enabled to default: %v", defaultConfig.SyncEnabled)
@@ -1584,6 +1575,10 @@ func (m *GoProManager) ResetSetting(settingName string) (database.Config, error)
 		config.InactivityTimeoutSeconds = defaultConfig.InactivityTimeoutSeconds
 		m.log.Infof("Reset inactivity_timeout_seconds to default: %d", defaultConfig.InactivityTimeoutSeconds)
 
+	case "inactivity_sync_interval_seconds":
+		config.InactivitySyncIntervalSeconds = defaultConfig.InactivitySyncIntervalSeconds
+		m.log.Infof("Reset inactivity_sync_interval_seconds to default: %d", defaultConfig.InactivitySyncIntervalSeconds)
+
 	case "set_time_enabled":
 		config.SetTimeEnabled = defaultConfig.SetTimeEnabled
 		m.log.Infof("Reset set_time_enabled to default: %v", defaultConfig.SetTimeEnabled)
@@ -1591,10 +1586,6 @@ func (m *GoProManager) ResetSetting(settingName string) (database.Config, error)
 	case "log_level":
 		config.LogLevel = defaultConfig.LogLevel
 		m.log.Infof("Reset log_level to default: %s", defaultConfig.LogLevel)
-
-	case "debug_mode":
-		config.DebugMode = defaultConfig.DebugMode
-		m.log.Infof("Reset debug_mode to default: %v", defaultConfig.DebugMode)
 
 	case "all":
 		// Reset all settings to default

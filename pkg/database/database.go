@@ -110,17 +110,17 @@ type LogEntry struct {
 
 // Config represents the system-wide configuration settings
 type Config struct {
-	PairModeEnabled          bool      `json:"pair_mode_enabled"`
-	SyncEnabled              bool      `json:"sync_enabled"`
-	ScanIntervalSeconds      int32     `json:"scan_interval_seconds"`
-	ConnectTimeoutSeconds    int32     `json:"connect_timeout_seconds"`
-	DaysThreshold            int32     `json:"days_threshold"`
-	DestinationFolder        string    `json:"destination_folder"`
-	InactivityTimeoutSeconds int32     `json:"inactivity_timeout_seconds"`
-	SetTimeEnabled           bool      `json:"set_time_enabled"`
-	LogLevel                 string    `json:"log_level"`
-	DebugMode                bool      `json:"debug_mode"`
-	LastUpdated              time.Time `json:"last_updated"`
+	PairModeEnabled               bool      `json:"pair_mode_enabled"`
+	SyncEnabled                   bool      `json:"sync_enabled"`
+	ScanIntervalSeconds           int32     `json:"scan_interval_seconds"`
+	ConnectTimeoutSeconds         int32     `json:"connect_timeout_seconds"`
+	DaysThreshold                 int32     `json:"days_threshold"`
+	DestinationFolder             string    `json:"destination_folder"`
+	InactivityTimeoutSeconds      int32     `json:"inactivity_timeout_seconds"`
+	InactivitySyncIntervalSeconds int32     `json:"inactivity_sync_interval_seconds"`
+	SetTimeEnabled                bool      `json:"set_time_enabled"`
+	LogLevel                      string    `json:"log_level"`
+	LastUpdated                   time.Time `json:"last_updated"`
 }
 
 // Database represents the in-memory database with JSON persistence
@@ -144,7 +144,7 @@ type Database struct {
 var instance *Database
 var once sync.Once
 
-// GetDatabase returns a singleton database instance
+// GetDatabase returns the singleton database instance
 func GetDatabase() *Database {
 	once.Do(func() {
 		instance = &Database{
@@ -153,20 +153,8 @@ func GetDatabase() *Database {
 			Groups:       make([]*Group, 0),
 			Videos:       make([]*VideoFile, 0),
 			Logs:         make([]*LogEntry, 0),
-			Config: Config{
-				PairModeEnabled:          true,
-				SyncEnabled:              true,
-				ScanIntervalSeconds:      30,
-				ConnectTimeoutSeconds:    60,
-				DaysThreshold:            1,
-				DestinationFolder:        "videos",
-				InactivityTimeoutSeconds: 600,
-				SetTimeEnabled:           true,
-				LogLevel:                 "info",
-				DebugMode:                false,
-				LastUpdated:              time.Now(),
-			},
-			log: logger.GetLogger(),
+			Config:       DefaultConfig(),
+			log:          logger.GetLogger(),
 		}
 	})
 	return instance
@@ -708,17 +696,17 @@ func (v *VideoFile) ToProtoVideoFile() *protocol.VideoFile {
 // ToProtoConfig converts a Config to protocol Config
 func (c *Config) ToProtoConfig() *protocol.Config {
 	return &protocol.Config{
-		PairModeEnabled:          c.PairModeEnabled,
-		SyncEnabled:              c.SyncEnabled,
-		ScanIntervalSeconds:      c.ScanIntervalSeconds,
-		ConnectTimeoutSeconds:    c.ConnectTimeoutSeconds,
-		DaysThreshold:            c.DaysThreshold,
-		DestinationFolder:        c.DestinationFolder,
-		InactivityTimeoutSeconds: c.InactivityTimeoutSeconds,
-		SetTimeEnabled:           c.SetTimeEnabled,
-		LogLevel:                 c.LogLevel,
-		DebugMode:                c.DebugMode,
-		LastUpdated:              timestamppb.New(c.LastUpdated),
+		PairModeEnabled:               c.PairModeEnabled,
+		SyncEnabled:                   c.SyncEnabled,
+		ScanIntervalSeconds:           c.ScanIntervalSeconds,
+		ConnectTimeoutSeconds:         c.ConnectTimeoutSeconds,
+		DaysThreshold:                 c.DaysThreshold,
+		DestinationFolder:             c.DestinationFolder,
+		InactivityTimeoutSeconds:      c.InactivityTimeoutSeconds,
+		InactivitySyncIntervalSeconds: c.InactivitySyncIntervalSeconds,
+		SetTimeEnabled:                c.SetTimeEnabled,
+		LogLevel:                      c.LogLevel,
+		LastUpdated:                   timestamppb.New(c.LastUpdated),
 	}
 }
 
@@ -737,18 +725,22 @@ func (l *LogEntry) ToProtoLogEntry() *protocol.LogEntry {
 
 // DefaultConfig returns the default configuration
 func DefaultConfig() Config {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = "."
+	}
 	return Config{
-		PairModeEnabled:          true,
-		SyncEnabled:              true,
-		ScanIntervalSeconds:      30,
-		ConnectTimeoutSeconds:    60,
-		DaysThreshold:            1,
-		DestinationFolder:        "videos",
-		InactivityTimeoutSeconds: 600,
-		SetTimeEnabled:           true,
-		LogLevel:                 "info",
-		DebugMode:                false,
-		LastUpdated:              time.Now(),
+		PairModeEnabled:               false,
+		SyncEnabled:                   true,
+		ScanIntervalSeconds:           30,
+		ConnectTimeoutSeconds:         60,
+		DaysThreshold:                 1,
+		DestinationFolder:             filepath.Join(homeDir, "Videos", "dropz"),
+		InactivityTimeoutSeconds:      60,
+		InactivitySyncIntervalSeconds: 600,
+		SetTimeEnabled:                true,
+		LogLevel:                      "info",
+		LastUpdated:                   time.Now(),
 	}
 }
 

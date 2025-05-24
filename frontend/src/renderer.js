@@ -789,14 +789,13 @@ function debugLog(message, level = LOG_LEVELS.INFO) {
 
 // Helper to get log level name
 function getLogLevelName(level) {
-  const levels = {
-    0: 'ERROR',
-    1: 'WARN',
-    2: 'INFO',
-    3: 'DEBUG',
-    4: 'VERBOSE'
-  };
-  return levels[level] || 'INFO';
+  switch (level) {
+    case LOG_LEVELS.ERROR: return 'Error';
+    case LOG_LEVELS.WARN: return 'Warning';
+    case LOG_LEVELS.INFO: return 'Info';
+    case LOG_LEVELS.TRACE: return 'Trace';
+    default: return 'Unknown';
+  }
 }
 
 // Clean up devices that haven't been seen in a while
@@ -1156,71 +1155,15 @@ function changeLogLevel() {
 
 // Load current log level from backend
 function loadCurrentLogLevel() {
-  try {
-    debugLog('Initializing log level synchronization...', LOG_LEVELS.INFO);
-    
-    const client = getClient();
-    const { GetConfigRequest } = require('./proto/config_pb');
-    
-    const request = new GetConfigRequest();
-    
-    client.getConfig(request, (error, response) => {
-      if (error) {
-        debugLog(`Failed to load current log level from backend: ${error.message}`, LOG_LEVELS.ERROR);
-        addLogEntry(`Failed to load log level from backend: ${error.message}`, 'error');
-        
-        // If we couldn't get the backend level, default to DEBUG
-        debugLog('Using default DEBUG level for frontend', LOG_LEVELS.INFO);
-        const { setLogLevel } = require('./fileLogger');
-        setLogLevel('DEBUG');
-      } else if (response) {
-        const config = response.getConfig();
-        if (config && config.getLogLevel()) {
-          // Get the backend log level (likely lowercase like "debug" or "info")
-          let backendLevel = config.getLogLevel();
-          
-          // Convert to uppercase for frontend use and consistent display
-          const logLevelUppercase = backendLevel.toUpperCase();
-          
-          debugLog(`Backend log level: ${backendLevel}`, LOG_LEVELS.INFO);
-          
-          // Update the select element with the current value - make sure it matches case sensitivity of options
-          // Check if the select has the option, otherwise default to a valid option
-          const selectOptions = Array.from(logLevelSelect.options).map(opt => opt.value);
-          if (selectOptions.includes(backendLevel)) {
-            logLevelSelect.value = backendLevel;
-          } else if (backendLevel === 'trace' && !selectOptions.includes('trace')) {
-            // If backend uses trace but frontend doesn't have that option, use debug
-            logLevelSelect.value = 'debug';
-          } else {
-            // Default to info if the level isn't available
-            logLevelSelect.value = 'info';
-          }
-          
-          // Also update the frontend log level
-          const { setLogLevel } = require('./fileLogger');
-          setLogLevel(logLevelUppercase);
-          
-          debugLog(`Log level synchronized between frontend and backend: ${logLevelUppercase}`, LOG_LEVELS.INFO);
-          addLogEntry(`Log system initialized: level set to ${logLevelUppercase}`, 'info');
-          
-          // Generate test logs at various levels to demonstrate the current setting
-          debugLog('This is an INFO log test', LOG_LEVELS.INFO);
-          debugLog('This is a DEBUG log test (only visible at DEBUG or VERBOSE level)', LOG_LEVELS.DEBUG);
-          debugLog('This is a VERBOSE log test (only visible at VERBOSE level)', LOG_LEVELS.VERBOSE);
-        } else {
-          debugLog('Backend config received but no log level found', LOG_LEVELS.WARN);
-          addLogEntry('No log level configured in backend, using default', 'warn');
-          
-          // Set a default level
-          const { setLogLevel } = require('./fileLogger');
-          setLogLevel('DEBUG');
-        }
-      }
-    });
-  } catch (error) {
-    debugLog(`Exception loading log level: ${error.message}`, LOG_LEVELS.ERROR);
-  }
+  const select = document.getElementById('backend-log-level-select');
+  if (!select) return;
+
+  // Set default to info if not set
+  const currentLevel = localStorage.getItem('logLevel') || 'info';
+  select.value = currentLevel;
+
+  // Update the backend log level
+  updateSetting('log_level', currentLevel);
 }
 
 // Add or update a device in the global tracking
@@ -2741,24 +2684,19 @@ function loadConfig() {
           destinationFolder: config.getDestinationFolder(),
           setTimeEnabled: config.getSetTimeEnabled(),
           inactivityTimeoutSeconds: config.getInactivityTimeoutSeconds(),
-          pairModeEnabled: config.getPairModeEnabled(),
-          syncEnabled: config.getSyncEnabled(),
-          debugMode: config.getDebugMode()
+          inactivitySyncIntervalSeconds: config.getInactivitySyncIntervalSeconds(),
+          syncEnabled: config.getSyncEnabled()
         };
         
         // Update the frontend toggle states based on config values
-        autoPair = appConfig.pairModeEnabled;
         autoSync = appConfig.syncEnabled;
         
         // Update the UI toggle elements
-        if (pairAllToggle) {
-          pairAllToggle.checked = autoPair;
-        }
         if (autoSyncToggle) {
           autoSyncToggle.checked = autoSync;
         }
         
-        debugLog(`Sync settings synced from backend: autoPair=${autoPair}, autoSync=${autoSync}`, LOG_LEVELS.INFO);
+        debugLog(`Sync settings synced from backend: autoSync=${autoSync}`, LOG_LEVELS.INFO);
         
       } catch (configError) {
         // If any getter fails, create a partial config
@@ -2770,20 +2708,15 @@ function loadConfig() {
           daysThreshold: config.getDaysThreshold ? config.getDaysThreshold() : 7, 
           destinationFolder: config.getDestinationFolder ? config.getDestinationFolder() : '',
           setTimeEnabled: config.getSetTimeEnabled ? config.getSetTimeEnabled() : true,
-          inactivityTimeoutSeconds: config.getInactivityTimeoutSeconds ? config.getInactivityTimeoutSeconds() : 300,
-          pairModeEnabled: config.getPairModeEnabled ? config.getPairModeEnabled() : false,
-          syncEnabled: config.getSyncEnabled ? config.getSyncEnabled() : false,
-          debugMode: config.getDebugMode ? config.getDebugMode() : false
+          inactivityTimeoutSeconds: config.getInactivityTimeoutSeconds ? config.getInactivityTimeoutSeconds() : 60,
+          inactivitySyncIntervalSeconds: config.getInactivitySyncIntervalSeconds ? config.getInactivitySyncIntervalSeconds() : 600,
+          syncEnabled: config.getSyncEnabled ? config.getSyncEnabled() : false
         };
         
         // Still try to update the toggle states with what we have
-        autoPair = appConfig.pairModeEnabled;
         autoSync = appConfig.syncEnabled;
         
         // Update the UI toggle elements
-        if (pairAllToggle) {
-          pairAllToggle.checked = autoPair;
-        }
         if (autoSyncToggle) {
           autoSyncToggle.checked = autoSync;
         }
@@ -2800,1014 +2733,6 @@ function loadConfig() {
   }
 }
 
-// Update application configuration
-function updateConfig(configChanges) {
-  debugLog(`Updating configuration: ${JSON.stringify(configChanges)}`, LOG_LEVELS.INFO);
-  addLogEntry('Updating application configuration', 'info');
-  
-  try {
-    const grpcUtils = require('./grpc-utils');
-    const client = grpcUtils.getClient();
-    
-    // Create a new config with the current settings + changes
-    const newConfig = new grpcUtils.Config();
-    
-    // Start with current config values if we have them
-    if (appConfig) {
-      if (appConfig.logLevel) newConfig.setLogLevel(appConfig.logLevel);
-      if (appConfig.scanIntervalSeconds) newConfig.setScanIntervalSeconds(appConfig.scanIntervalSeconds);
-      if (appConfig.connectTimeoutSeconds) newConfig.setConnectTimeoutSeconds(appConfig.connectTimeoutSeconds);
-      if (appConfig.videoAgeDays) newConfig.setVideoAgeDays(appConfig.videoAgeDays);
-      if (appConfig.setTimeEnabled !== undefined) newConfig.setSetTimeEnabled(appConfig.setTimeEnabled);
-      if (appConfig.inactivityTimeoutSeconds) newConfig.setInactivityTimeoutSeconds(appConfig.inactivityTimeoutSeconds);
-    }
-    
-    // Apply changes
-    if (configChanges.logLevel !== undefined) newConfig.setLogLevel(configChanges.logLevel);
-    if (configChanges.scanIntervalSeconds !== undefined) newConfig.setScanIntervalSeconds(configChanges.scanIntervalSeconds);
-    if (configChanges.connectTimeoutSeconds !== undefined) newConfig.setConnectTimeoutSeconds(configChanges.connectTimeoutSeconds);
-    if (configChanges.videoAgeDays !== undefined) newConfig.setVideoAgeDays(configChanges.videoAgeDays);
-    if (configChanges.setTimeEnabled !== undefined) newConfig.setSetTimeEnabled(configChanges.setTimeEnabled);
-    if (configChanges.inactivityTimeoutSeconds !== undefined) newConfig.setInactivityTimeoutSeconds(configChanges.inactivityTimeoutSeconds);
-    
-    // Create and send the update request
-    const request = new grpcUtils.UpdateConfigRequest();
-    request.setConfig(newConfig);
-    
-    client.updateConfig(request, (error, response) => {
-      if (error) {
-        debugLog(`Error updating configuration: ${error.message}`, LOG_LEVELS.ERROR);
-        addLogEntry(`Failed to update configuration: ${error.message}`, 'error');
-        return;
-      }
-      
-      // Update the current config
-      const updatedConfig = response.getConfig();
-      appConfig = {
-        logLevel: updatedConfig.getLogLevel(),
-        scanIntervalSeconds: updatedConfig.getScanIntervalSeconds(),
-        connectTimeoutSeconds: updatedConfig.getConnectTimeoutSeconds(),
-        videoAgeDays: updatedConfig.getVideoAgeDays(),
-        setTimeEnabled: updatedConfig.getSetTimeEnabled(),
-        inactivityTimeoutSeconds: updatedConfig.getInactivityTimeoutSeconds()
-      };
-      
-      debugLog(`Configuration updated: ${JSON.stringify(appConfig)}`, LOG_LEVELS.INFO);
-      addLogEntry('Configuration updated successfully', 'success');
-      
-      // Update UI
-      updateConfigUI();
-    });
-  } catch (error) {
-    debugLog(`Exception updating configuration: ${error.message}`, LOG_LEVELS.ERROR);
-    addLogEntry(`Error updating configuration: ${error.message}`, 'error');
-  }
-}
-
-// Get a specific setting
-function getSetting(key) {
-  debugLog(`Getting setting: ${key}`, LOG_LEVELS.INFO);
-  
-  try {
-    const grpcUtils = require('./grpc-utils');
-    const client = grpcUtils.getClient();
-    
-    // Create the request
-    const request = new grpcUtils.GetSettingRequest();
-    request.setKey(key);
-    
-    // Call the service
-    client.getSetting(request, (error, response) => {
-      if (error) {
-        debugLog(`Error getting setting ${key}: ${error.message}`, LOG_LEVELS.ERROR);
-        addLogEntry(`Failed to get setting ${key}: ${error.message}`, 'error');
-        return null;
-      }
-      
-      // Process the setting
-      const value = response.getValue();
-      debugLog(`Got setting ${key}: ${value}`, LOG_LEVELS.INFO);
-      return value;
-    });
-  } catch (error) {
-    debugLog(`Exception getting setting: ${error.message}`, LOG_LEVELS.ERROR);
-    addLogEntry(`Error getting setting ${key}: ${error.message}`, 'error');
-    return null;
-  }
-}
-
-// Update a specific setting
-function updateSetting(key, value) {
-  debugLog(`Updating setting: ${key} = ${value}`, LOG_LEVELS.INFO);
-  addLogEntry(`Updating setting: ${key}`, 'info');
-  
-  try {
-    const grpcUtils = require('./grpc-utils');
-    const client = grpcUtils.getClient();
-    
-    // Create the request
-    const request = new grpcUtils.UpdateSettingRequest();
-    request.setSettingName(key);
-    
-    // Set the appropriate value field based on type
-    if (typeof value === 'boolean') {
-      request.setBoolValue(value);
-      debugLog(`Setting boolean value: ${value}`, LOG_LEVELS.DEBUG);
-    } else if (typeof value === 'number') {
-      request.setIntValue(value);
-      debugLog(`Setting integer value: ${value}`, LOG_LEVELS.DEBUG);
-    } else {
-      // Convert to string for everything else
-      request.setStringValue(String(value));
-      debugLog(`Setting string value: ${value}`, LOG_LEVELS.DEBUG);
-    }
-    
-    // Call the service
-    client.updateSetting(request, (error, response) => {
-      if (error) {
-        debugLog(`Error updating setting ${key}: ${error.message}`, LOG_LEVELS.ERROR);
-        addLogEntry(`Failed to update setting ${key}: ${error.message}`, 'error');
-        return;
-      }
-      
-      debugLog(`Setting ${key} updated to ${value}`, LOG_LEVELS.INFO);
-      addLogEntry(`Setting ${key} updated successfully`, 'success');
-      
-      // Update local config if available
-      if (appConfig) {
-        // Map backend setting key to frontend config property
-        const configMapping = {
-          'pair_mode_enabled': 'pairModeEnabled',
-          'sync_enabled': 'syncEnabled',
-          'scan_interval_seconds': 'scanIntervalSeconds',
-          'connect_timeout_seconds': 'connectTimeoutSeconds',
-          'days_threshold': 'daysThreshold',
-          'destination_folder': 'destinationFolder',
-          'inactivity_timeout_seconds': 'inactivityTimeoutSeconds',
-          'set_time_enabled': 'setTimeEnabled',
-          'log_level': 'logLevel'
-        };
-        
-        // Update the local config if key mapping exists
-        const configKey = configMapping[key];
-        if (configKey && configKey in appConfig) {
-          // Convert value to the appropriate type
-          let typedValue = value;
-          if (typeof appConfig[configKey] === 'boolean') {
-            typedValue = value === 'true' || value === true;
-          } else if (typeof appConfig[configKey] === 'number') {
-            typedValue = Number(value);
-          }
-          
-          appConfig[configKey] = typedValue;
-          debugLog(`Updated local config: ${configKey}=${typedValue}`, LOG_LEVELS.DEBUG);
-          
-          // Update local state variables and UI based on the setting
-          if (key === 'pair_mode_enabled') {
-            autoPair = typedValue;
-            if (pairAllToggle) {
-              pairAllToggle.checked = autoPair;
-            }
-            debugLog(`Updated autoPair state to ${autoPair}`, LOG_LEVELS.DEBUG);
-          } else if (key === 'sync_enabled') {
-            autoSync = typedValue;
-            if (autoSyncToggle) {
-              autoSyncToggle.checked = autoSync;
-            }
-            debugLog(`Updated autoSync state to ${autoSync}`, LOG_LEVELS.DEBUG);
-          }
-          
-          // Update any other UI elements as needed
-          updateConfigUI();
-        }
-      }
-      
-      // Special handling for certain settings
-      if (key === 'pair_mode_enabled') {
-        autoPair = value;
-        if (pairAllToggle) {
-          pairAllToggle.checked = value;
-        }
-      } else if (key === 'sync_enabled') {
-        autoSync = value;
-        if (autoSyncToggle) {
-          autoSyncToggle.checked = value;
-        }
-      } else if (key === 'log_level') {
-        // Sync the frontend log level selector
-        if (logLevelSelect) {
-          logLevelSelect.value = value;
-        }
-        
-        // Update the frontend log level
-        const { setLogLevel } = require('./fileLogger');
-        setLogLevel(value.toUpperCase());
-      }
-    });
-  } catch (error) {
-    debugLog(`Exception updating setting: ${error.message}`, LOG_LEVELS.ERROR);
-    addLogEntry(`Error updating setting ${key}: ${error.message}`, 'error');
-  }
-}
-
-// Reset a specific setting to default
-function resetSetting(key) {
-  debugLog(`Resetting setting: ${key}`, LOG_LEVELS.INFO);
-  addLogEntry(`Resetting setting: ${key} to default`, 'info');
-  
-  try {
-    const grpcUtils = require('./grpc-utils');
-    const client = grpcUtils.getClient();
-    
-    // Create the request
-    const request = new grpcUtils.ResetSettingRequest();
-    request.setKey(key);
-    
-    // Call the service
-    client.resetSetting(request, (error, response) => {
-      if (error) {
-        debugLog(`Error resetting setting ${key}: ${error.message}`, LOG_LEVELS.ERROR);
-        addLogEntry(`Failed to reset setting ${key}: ${error.message}`, 'error');
-        return;
-      }
-      
-      // Get the default value
-      const updatedConfig = response;
-      const defaultValue = key in updatedConfig ? updatedConfig[key] : null;
-      
-      debugLog(`Setting ${key} reset to default: ${defaultValue}`, LOG_LEVELS.INFO);
-      addLogEntry(`Setting ${key} reset to default`, 'success');
-      
-      // Update local config if it exists
-      if (appConfig && key in appConfig && defaultValue !== null) {
-        appConfig[key] = defaultValue;
-        updateConfigUI();
-      }
-    });
-  } catch (error) {
-    debugLog(`Exception resetting setting: ${error.message}`, LOG_LEVELS.ERROR);
-    addLogEntry(`Error resetting setting ${key}: ${error.message}`, 'error');
-  }
-}
-
-// Update the configuration UI
-function updateConfigUI() {
-  debugLog('Updating configuration UI', LOG_LEVELS.DEBUG);
-  
-  // Update the settings panel
-  updateSettingsUI();
-  
-  // Update log level select if it exists
-  if (appConfig && appConfig.logLevel && logLevelSelect) {
-    const levelValue = appConfig.logLevel.toLowerCase();
-    // Find the option with this value
-    for (let i = 0; i < logLevelSelect.options.length; i++) {
-      if (logLevelSelect.options[i].value.toLowerCase() === levelValue) {
-        logLevelSelect.selectedIndex = i;
-        break;
-      }
-    }
-  }
-  
-  // Update backend log level select if it exists
-  if (appConfig && appConfig.logLevel) {
-    const backendLogLevelSelect = document.getElementById('backend-log-level-select');
-    if (backendLogLevelSelect) {
-      backendLogLevelSelect.value = appConfig.logLevel.toLowerCase();
-    }
-  }
-}
-
-// Check gRPC connection with a test call
-function checkGrpcConnection() {
-  return new Promise((resolve, reject) => {
-    try {
-      const grpcUtils = require('./grpc-utils');
-      const client = grpcUtils.getClient();
-      
-      // Use a simple GetConfig call to check connection
-      const request = new grpcUtils.GetConfigRequest();
-      
-      client.getConfig(request, (error, response) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(response);
-        }
-      });
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-// Simple wrapper function to handle device stream updates
-function handleDeviceStreamUpdate(cameras, callback) {
-  if (!cameras || cameras.length === 0) {
-    return;
-  }
-  
-  cameras.forEach(camera => {
-    const cameraObj = callback(camera);
-    if (cameraObj) {
-      addOrUpdateDevice(cameraObj);
-    }
-  });
-  
-  // Update UI
-  updateDeviceLists();
-  updateCounters();
-}
-
-// Toggle between light and dark themes
-function toggleTheme() {
-  isDarkMode = !isDarkMode;
-  updateTheme();
-  saveThemePreference();
-}
-
-// Update the theme based on the current state
-function updateTheme() {
-  const htmlElement = document.documentElement;
-  const themeIcon = themeToggle.querySelector('i');
-  
-  if (isDarkMode) {
-    htmlElement.setAttribute('data-theme', 'dark');
-    themeIcon.className = 'fas fa-sun';
-  } else {
-    htmlElement.removeAttribute('data-theme');
-    themeIcon.className = 'fas fa-moon';
-  }
-  
-  debugLog(`Theme switched to ${isDarkMode ? 'dark' : 'light'} mode`, LOG_LEVELS.INFO);
-}
-
-// Save the theme preference to localStorage
-function saveThemePreference() {
-  try {
-    localStorage.setItem('darkMode', isDarkMode ? 'true' : 'false');
-  } catch (error) {
-    debugLog(`Error saving theme preference: ${error.message}`, LOG_LEVELS.ERROR);
-  }
-}
-
-// Load theme preference from localStorage
-function loadThemePreference() {
-  try {
-    const savedPreference = localStorage.getItem('darkMode');
-    if (savedPreference !== null) {
-      isDarkMode = savedPreference === 'true';
-    } else {
-      // If no saved preference, check system preference
-      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      isDarkMode = prefersDark;
-    }
-    
-    // Apply the theme
-    updateTheme();
-  } catch (error) {
-    debugLog(`Error loading theme preference: ${error.message}`, LOG_LEVELS.ERROR);
-  }
-}
-
-// Format time since a given date for a user-friendly display
-function formatTimeSince(date) {
-  if (!date) return 'unknown';
-  
-  // Convert to date object if it's a string
-  if (typeof date === 'string') {
-    date = new Date(date);
-  }
-  
-  // Get seconds difference
-  const seconds = Math.floor((new Date() - date) / 1000);
-  
-  // Less than a minute
-  if (seconds < 60) {
-    return 'just now';
-  }
-  
-  // Less than an hour
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) {
-    return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
-  }
-  
-  // Less than a day
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
-  }
-  
-  // Less than a week
-  const days = Math.floor(hours / 24);
-  if (days < 7) {
-    return `${days} ${days === 1 ? 'day' : 'days'} ago`;
-  }
-  
-  // Format as date if more than a week ago
-  return date.toLocaleDateString();
-}
-
-// Setup settings panel handlers
-function setupSettingsHandlers() {
-  // Get all toggle settings
-  const toggleSettings = document.querySelectorAll('.setting-toggle');
-  toggleSettings.forEach(toggle => {
-    toggle.addEventListener('change', handleSettingChange);
-  });
-  
-  // Get all number inputs
-  const numberInputs = document.querySelectorAll('.setting-input[type="number"]');
-  numberInputs.forEach(input => {
-    input.addEventListener('change', handleSettingChange);
-  });
-  
-  // Get all text inputs
-  const textInputs = document.querySelectorAll('.setting-input[type="text"]');
-  textInputs.forEach(input => {
-    input.addEventListener('change', handleSettingChange);
-  });
-  
-  // Get all select elements
-  const selectInputs = document.querySelectorAll('.setting-select');
-  selectInputs.forEach(select => {
-    select.addEventListener('change', handleSettingChange);
-  });
-  
-  // Setup folder browse button
-  const browseButton = document.getElementById('browse-folder');
-  if (browseButton) {
-    browseButton.addEventListener('click', () => {
-      // Use Electron's dialog to open a folder picker
-      ipcRenderer.send('open-folder-dialog');
-    });
-    
-    // Listen for the selected folder
-    ipcRenderer.on('selected-folder', (event, path) => {
-      // Update the input element
-      const folderInput = document.getElementById('destination-folder-input');
-      if (folderInput && path) {
-        folderInput.value = path;
-        // Trigger the change event to save the setting
-        folderInput.dispatchEvent(new Event('change'));
-      }
-    });
-  }
-  
-  // Setup reset settings button
-  const resetButton = document.getElementById('reset-settings');
-  if (resetButton) {
-    resetButton.addEventListener('click', resetAllSettings);
-  }
-  
-  debugLog('Settings handlers initialized', LOG_LEVELS.DEBUG);
-}
-
-// Handle setting change
-function handleSettingChange(event) {
-  const target = event.target;
-  const settingName = target.dataset.setting;
-  
-  if (!settingName) {
-    debugLog('Setting name not found for element', LOG_LEVELS.ERROR);
-    return;
-  }
-  
-  let value;
-  
-  // Get the appropriate value based on input type
-  if (target.type === 'checkbox') {
-    value = target.checked;
-  } else if (target.type === 'number') {
-    value = parseInt(target.value, 10);
-  } else {
-    value = target.value;
-  }
-  
-  debugLog(`Setting ${settingName} changed to ${value}`, LOG_LEVELS.INFO);
-  
-  // Highlight the changed setting
-  const settingItem = target.closest('.setting-item');
-  if (settingItem) {
-    settingItem.classList.add('setting-changed');
-    setTimeout(() => {
-      settingItem.classList.remove('setting-changed');
-    }, 2000);
-  }
-  
-  // Save the setting to the backend
-  updateSetting(settingName, value);
-}
-
-// Update a setting in the backend
-function updateSetting(key, value) {
-  debugLog(`Updating setting: ${key} = ${value}`, LOG_LEVELS.INFO);
-  
-  try {
-    const grpcUtils = require('./grpc-utils');
-    const client = grpcUtils.getClient();
-    
-    // Create the request
-    const request = new grpcUtils.UpdateSettingRequest();
-    request.setSettingName(key);
-    
-    // Set the appropriate value field based on type
-    if (typeof value === 'boolean') {
-      request.setBoolValue(value);
-    } else if (typeof value === 'number') {
-      request.setIntValue(value);
-    } else {
-      request.setStringValue(String(value));
-    }
-    
-    // Call the service
-    client.updateSetting(request, (error, response) => {
-      if (error) {
-        debugLog(`Error updating setting ${key}: ${error.message}`, LOG_LEVELS.ERROR);
-        addLogEntry(`Failed to update setting ${key}: ${error.message}`, 'error');
-        return;
-      }
-      
-      debugLog(`Setting ${key} updated to ${value}`, LOG_LEVELS.INFO);
-      addLogEntry(`Setting ${key} updated successfully`, 'success');
-      
-      // Update local config if available
-      if (appConfig) {
-        // Map backend setting key to frontend config property
-        const configMapping = {
-          'pair_mode_enabled': 'pairModeEnabled',
-          'sync_enabled': 'syncEnabled',
-          'scan_interval_seconds': 'scanIntervalSeconds',
-          'connect_timeout_seconds': 'connectTimeoutSeconds',
-          'days_threshold': 'daysThreshold',
-          'destination_folder': 'destinationFolder',
-          'inactivity_timeout_seconds': 'inactivityTimeoutSeconds',
-          'set_time_enabled': 'setTimeEnabled',
-          'log_level': 'logLevel'
-        };
-        
-        // Update the local config if key mapping exists
-        const configKey = configMapping[key];
-        if (configKey && configKey in appConfig) {
-          // Convert value to the appropriate type
-          let typedValue = value;
-          if (typeof appConfig[configKey] === 'boolean') {
-            typedValue = value === 'true' || value === true;
-          } else if (typeof appConfig[configKey] === 'number') {
-            typedValue = Number(value);
-          }
-          
-          appConfig[configKey] = typedValue;
-          debugLog(`Updated local config: ${configKey}=${typedValue}`, LOG_LEVELS.DEBUG);
-          
-          // Update local state variables and UI based on the setting
-          if (key === 'pair_mode_enabled') {
-            autoPair = typedValue;
-            if (pairAllToggle) {
-              pairAllToggle.checked = autoPair;
-            }
-            debugLog(`Updated autoPair state to ${autoPair}`, LOG_LEVELS.DEBUG);
-          } else if (key === 'sync_enabled') {
-            autoSync = typedValue;
-            if (autoSyncToggle) {
-              autoSyncToggle.checked = autoSync;
-            }
-            debugLog(`Updated autoSync state to ${autoSync}`, LOG_LEVELS.DEBUG);
-          }
-          
-          // Update any other UI elements as needed
-          updateConfigUI();
-        }
-      }
-      
-      // Special handling for certain settings
-      if (key === 'pair_mode_enabled') {
-        autoPair = value;
-        if (pairAllToggle) {
-          pairAllToggle.checked = value;
-        }
-      } else if (key === 'sync_enabled') {
-        autoSync = value;
-        if (autoSyncToggle) {
-          autoSyncToggle.checked = value;
-        }
-      } else if (key === 'log_level') {
-        // Sync the frontend log level selector
-        if (logLevelSelect) {
-          logLevelSelect.value = value;
-        }
-        
-        // Update the frontend log level
-        const { setLogLevel } = require('./fileLogger');
-        setLogLevel(value.toUpperCase());
-      }
-    });
-  } catch (error) {
-    debugLog(`Exception updating setting: ${error.message}`, LOG_LEVELS.ERROR);
-    addLogEntry(`Error updating setting ${key}: ${error.message}`, 'error');
-  }
-}
-
-// Reset a specific setting to default
-function resetSetting(key) {
-  debugLog(`Resetting setting: ${key}`, LOG_LEVELS.INFO);
-  addLogEntry(`Resetting setting: ${key} to default`, 'info');
-  
-  try {
-    const grpcUtils = require('./grpc-utils');
-    const client = grpcUtils.getClient();
-    
-    // Create the request
-    const request = new grpcUtils.ResetSettingRequest();
-    request.setKey(key);
-    
-    // Call the service
-    client.resetSetting(request, (error, response) => {
-      if (error) {
-        debugLog(`Error resetting setting ${key}: ${error.message}`, LOG_LEVELS.ERROR);
-        addLogEntry(`Failed to reset setting ${key}: ${error.message}`, 'error');
-        return;
-      }
-      
-      // Get the default value
-      const updatedConfig = response;
-      const defaultValue = key in updatedConfig ? updatedConfig[key] : null;
-      
-      debugLog(`Setting ${key} reset to default: ${defaultValue}`, LOG_LEVELS.INFO);
-      addLogEntry(`Setting ${key} reset to default`, 'success');
-      
-      // Update local config if it exists
-      if (appConfig && key in appConfig && defaultValue !== null) {
-        appConfig[key] = defaultValue;
-        updateConfigUI();
-      }
-    });
-  } catch (error) {
-    debugLog(`Exception resetting setting: ${error.message}`, LOG_LEVELS.ERROR);
-    addLogEntry(`Error resetting setting ${key}: ${error.message}`, 'error');
-  }
-}
-
-// Update the configuration UI
-function updateConfigUI() {
-  debugLog('Updating configuration UI', LOG_LEVELS.DEBUG);
-  
-  // Update the settings panel
-  updateSettingsUI();
-  
-  // Update log level select if it exists
-  if (appConfig && appConfig.logLevel && logLevelSelect) {
-    const levelValue = appConfig.logLevel.toLowerCase();
-    // Find the option with this value
-    for (let i = 0; i < logLevelSelect.options.length; i++) {
-      if (logLevelSelect.options[i].value.toLowerCase() === levelValue) {
-        logLevelSelect.selectedIndex = i;
-        break;
-      }
-    }
-  }
-  
-  // Update backend log level select if it exists
-  if (appConfig && appConfig.logLevel) {
-    const backendLogLevelSelect = document.getElementById('backend-log-level-select');
-    if (backendLogLevelSelect) {
-      backendLogLevelSelect.value = appConfig.logLevel.toLowerCase();
-    }
-  }
-}
-
-// Check gRPC connection with a test call
-function checkGrpcConnection() {
-  return new Promise((resolve, reject) => {
-    try {
-      const grpcUtils = require('./grpc-utils');
-      const client = grpcUtils.getClient();
-      
-      // Use a simple GetConfig call to check connection
-      const request = new grpcUtils.GetConfigRequest();
-      
-      client.getConfig(request, (error, response) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(response);
-        }
-      });
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-// Simple wrapper function to handle device stream updates
-function handleDeviceStreamUpdate(cameras, callback) {
-  if (!cameras || cameras.length === 0) {
-    return;
-  }
-  
-  cameras.forEach(camera => {
-    const cameraObj = callback(camera);
-    if (cameraObj) {
-      addOrUpdateDevice(cameraObj);
-    }
-  });
-  
-  // Update UI
-  updateDeviceLists();
-  updateCounters();
-}
-
-// Toggle between light and dark themes
-function toggleTheme() {
-  isDarkMode = !isDarkMode;
-  updateTheme();
-  saveThemePreference();
-}
-
-// Update the theme based on the current state
-function updateTheme() {
-  const htmlElement = document.documentElement;
-  const themeIcon = themeToggle.querySelector('i');
-  
-  if (isDarkMode) {
-    htmlElement.setAttribute('data-theme', 'dark');
-    themeIcon.className = 'fas fa-sun';
-  } else {
-    htmlElement.removeAttribute('data-theme');
-    themeIcon.className = 'fas fa-moon';
-  }
-  
-  debugLog(`Theme switched to ${isDarkMode ? 'dark' : 'light'} mode`, LOG_LEVELS.INFO);
-}
-
-// Save the theme preference to localStorage
-function saveThemePreference() {
-  try {
-    localStorage.setItem('darkMode', isDarkMode ? 'true' : 'false');
-  } catch (error) {
-    debugLog(`Error saving theme preference: ${error.message}`, LOG_LEVELS.ERROR);
-  }
-}
-
-// Load theme preference from localStorage
-function loadThemePreference() {
-  try {
-    const savedPreference = localStorage.getItem('darkMode');
-    if (savedPreference !== null) {
-      isDarkMode = savedPreference === 'true';
-    } else {
-      // If no saved preference, check system preference
-      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      isDarkMode = prefersDark;
-    }
-    
-    // Apply the theme
-    updateTheme();
-  } catch (error) {
-    debugLog(`Error loading theme preference: ${error.message}`, LOG_LEVELS.ERROR);
-  }
-}
-
-// Format time since a given date for a user-friendly display
-function formatTimeSince(date) {
-  if (!date) return 'unknown';
-  
-  // Convert to date object if it's a string
-  if (typeof date === 'string') {
-    date = new Date(date);
-  }
-  
-  // Get seconds difference
-  const seconds = Math.floor((new Date() - date) / 1000);
-  
-  // Less than a minute
-  if (seconds < 60) {
-    return 'just now';
-  }
-  
-  // Less than an hour
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) {
-    return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
-  }
-  
-  // Less than a day
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
-  }
-  
-  // Less than a week
-  const days = Math.floor(hours / 24);
-  if (days < 7) {
-    return `${days} ${days === 1 ? 'day' : 'days'} ago`;
-  }
-  
-  // Format as date if more than a week ago
-  return date.toLocaleDateString();
-}
-
-// Setup settings panel handlers
-function setupSettingsHandlers() {
-  // Get all toggle settings
-  const toggleSettings = document.querySelectorAll('.setting-toggle');
-  toggleSettings.forEach(toggle => {
-    toggle.addEventListener('change', handleSettingChange);
-  });
-  
-  // Get all number inputs
-  const numberInputs = document.querySelectorAll('.setting-input[type="number"]');
-  numberInputs.forEach(input => {
-    input.addEventListener('change', handleSettingChange);
-  });
-  
-  // Get all text inputs
-  const textInputs = document.querySelectorAll('.setting-input[type="text"]');
-  textInputs.forEach(input => {
-    input.addEventListener('change', handleSettingChange);
-  });
-  
-  // Get all select elements
-  const selectInputs = document.querySelectorAll('.setting-select');
-  selectInputs.forEach(select => {
-    select.addEventListener('change', handleSettingChange);
-  });
-  
-  // Setup folder browse button
-  const browseButton = document.getElementById('browse-folder');
-  if (browseButton) {
-    browseButton.addEventListener('click', () => {
-      // Use Electron's dialog to open a folder picker
-      ipcRenderer.send('open-folder-dialog');
-    });
-    
-    // Listen for the selected folder
-    ipcRenderer.on('selected-folder', (event, path) => {
-      // Update the input element
-      const folderInput = document.getElementById('destination-folder-input');
-      if (folderInput && path) {
-        folderInput.value = path;
-        // Trigger the change event to save the setting
-        folderInput.dispatchEvent(new Event('change'));
-      }
-    });
-  }
-  
-  // Setup reset settings button
-  const resetButton = document.getElementById('reset-settings');
-  if (resetButton) {
-    resetButton.addEventListener('click', resetAllSettings);
-  }
-  
-  debugLog('Settings handlers initialized', LOG_LEVELS.DEBUG);
-}
-
-// Handle setting change
-function handleSettingChange(event) {
-  const target = event.target;
-  const settingName = target.dataset.setting;
-  
-  if (!settingName) {
-    debugLog('Setting name not found for element', LOG_LEVELS.ERROR);
-    return;
-  }
-  
-  let value;
-  
-  // Get the appropriate value based on input type
-  if (target.type === 'checkbox') {
-    value = target.checked;
-  } else if (target.type === 'number') {
-    value = parseInt(target.value, 10);
-  } else {
-    value = target.value;
-  }
-  
-  debugLog(`Setting ${settingName} changed to ${value}`, LOG_LEVELS.INFO);
-  
-  // Highlight the changed setting
-  const settingItem = target.closest('.setting-item');
-  if (settingItem) {
-    settingItem.classList.add('setting-changed');
-    setTimeout(() => {
-      settingItem.classList.remove('setting-changed');
-    }, 2000);
-  }
-  
-  // Save the setting to the backend
-  updateSetting(settingName, value);
-}
-
-// Update a setting in the backend
-function updateSetting(key, value) {
-  debugLog(`Updating setting: ${key} = ${value}`, LOG_LEVELS.INFO);
-  
-  try {
-    const grpcUtils = require('./grpc-utils');
-    const client = grpcUtils.getClient();
-    
-    // Create the request
-    const request = new grpcUtils.UpdateSettingRequest();
-    request.setSettingName(key);
-    
-    // Set the appropriate value field based on type
-    if (typeof value === 'boolean') {
-      request.setBoolValue(value);
-    } else if (typeof value === 'number') {
-      request.setIntValue(value);
-    } else {
-      request.setStringValue(String(value));
-    }
-    
-    // Call the service
-    client.updateSetting(request, (error, response) => {
-      if (error) {
-        debugLog(`Error updating setting ${key}: ${error.message}`, LOG_LEVELS.ERROR);
-        addLogEntry(`Failed to update setting ${key}: ${error.message}`, 'error');
-        return;
-      }
-      
-      debugLog(`Setting ${key} updated to ${value}`, LOG_LEVELS.INFO);
-      addLogEntry(`Setting ${key} updated successfully`, 'success');
-      
-      // Update local config if available
-      if (appConfig) {
-        // Map backend setting key to frontend config property
-        const configMapping = {
-          'pair_mode_enabled': 'pairModeEnabled',
-          'sync_enabled': 'syncEnabled',
-          'scan_interval_seconds': 'scanIntervalSeconds',
-          'connect_timeout_seconds': 'connectTimeoutSeconds',
-          'days_threshold': 'daysThreshold',
-          'destination_folder': 'destinationFolder',
-          'inactivity_timeout_seconds': 'inactivityTimeoutSeconds',
-          'set_time_enabled': 'setTimeEnabled',
-          'log_level': 'logLevel'
-        };
-        
-        // Update the local config if key mapping exists
-        const configKey = configMapping[key];
-        if (configKey && configKey in appConfig) {
-          // Convert value to the appropriate type
-          let typedValue = value;
-          if (typeof appConfig[configKey] === 'boolean') {
-            typedValue = value === 'true' || value === true;
-          } else if (typeof appConfig[configKey] === 'number') {
-            typedValue = Number(value);
-          }
-          
-          appConfig[configKey] = typedValue;
-          debugLog(`Updated local config: ${configKey}=${typedValue}`, LOG_LEVELS.DEBUG);
-          
-          // Update local state variables and UI based on the setting
-          if (key === 'pair_mode_enabled') {
-            autoPair = typedValue;
-            if (pairAllToggle) {
-              pairAllToggle.checked = autoPair;
-            }
-            debugLog(`Updated autoPair state to ${autoPair}`, LOG_LEVELS.DEBUG);
-          } else if (key === 'sync_enabled') {
-            autoSync = typedValue;
-            if (autoSyncToggle) {
-              autoSyncToggle.checked = autoSync;
-            }
-            debugLog(`Updated autoSync state to ${autoSync}`, LOG_LEVELS.DEBUG);
-          }
-          
-          // Update any other UI elements as needed
-          updateConfigUI();
-        }
-      }
-      
-      // Special handling for certain settings
-      if (key === 'pair_mode_enabled') {
-        autoPair = value;
-        if (pairAllToggle) {
-          pairAllToggle.checked = value;
-        }
-      } else if (key === 'sync_enabled') {
-        autoSync = value;
-        if (autoSyncToggle) {
-          autoSyncToggle.checked = value;
-        }
-      } else if (key === 'log_level') {
-        // Sync the frontend log level selector
-        if (logLevelSelect) {
-          logLevelSelect.value = value;
-        }
-        
-        // Update the frontend log level
-        const { setLogLevel } = require('./fileLogger');
-        setLogLevel(value.toUpperCase());
-      }
-    });
-  } catch (error) {
-    debugLog(`Exception updating setting: ${error.message}`, LOG_LEVELS.ERROR);
-    addLogEntry(`Error updating setting ${key}: ${error.message}`, 'error');
-  }
-}
-
 // Reset all settings to defaults
 function resetAllSettings() {
   debugLog('Resetting all settings to defaults', LOG_LEVELS.INFO);
@@ -3820,16 +2745,15 @@ function resetAllSettings() {
   
   // Get all settings from the UI
   const settings = [
-    'pair_mode_enabled',
     'sync_enabled',
     'scan_interval_seconds',
     'connect_timeout_seconds',
     'days_threshold',
     'destination_folder',
     'inactivity_timeout_seconds',
+    'inactivity_sync_interval_seconds',
     'set_time_enabled',
-    'log_level',
-    'debug_mode'
+    'log_level'
   ];
   
   try {
@@ -3864,6 +2788,365 @@ function resetAllSettings() {
   } catch (error) {
     debugLog(`Exception resetting settings: ${error.message}`, LOG_LEVELS.ERROR);
     addLogEntry(`Error resetting settings: ${error.message}`, 'error');
+  }
+}
+
+// Update the configuration UI
+function updateConfigUI() {
+  debugLog('Updating configuration UI', LOG_LEVELS.DEBUG);
+  
+  // Update the settings panel
+  updateSettingsUI();
+  
+  // Update log level select if it exists
+  if (appConfig && appConfig.logLevel && logLevelSelect) {
+    const levelValue = appConfig.logLevel.toLowerCase();
+    // Find the option with this value
+    for (let i = 0; i < logLevelSelect.options.length; i++) {
+      if (logLevelSelect.options[i].value.toLowerCase() === levelValue) {
+        logLevelSelect.selectedIndex = i;
+        break;
+      }
+    }
+  }
+  
+  // Update backend log level select if it exists
+  if (appConfig && appConfig.logLevel) {
+    const backendLogLevelSelect = document.getElementById('backend-log-level-select');
+    if (backendLogLevelSelect) {
+      backendLogLevelSelect.value = appConfig.logLevel.toLowerCase();
+    }
+  }
+}
+
+// Check gRPC connection with a test call
+function checkGrpcConnection() {
+  return new Promise((resolve, reject) => {
+    try {
+      const grpcUtils = require('./grpc-utils');
+      const client = grpcUtils.getClient();
+      
+      // Use a simple GetConfig call to check connection
+      const request = new grpcUtils.GetConfigRequest();
+      
+      client.getConfig(request, (error, response) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve(response);
+        }
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+// Simple wrapper function to handle device stream updates
+function handleDeviceStreamUpdate(cameras, callback) {
+  if (!cameras || cameras.length === 0) {
+    return;
+  }
+  
+  cameras.forEach(camera => {
+    const cameraObj = callback(camera);
+    if (cameraObj) {
+      addOrUpdateDevice(cameraObj);
+    }
+  });
+  
+  // Update UI
+  updateDeviceLists();
+  updateCounters();
+}
+
+// Toggle between light and dark themes
+function toggleTheme() {
+  isDarkMode = !isDarkMode;
+  updateTheme();
+  saveThemePreference();
+}
+
+// Update the theme based on the current state
+function updateTheme() {
+  const htmlElement = document.documentElement;
+  const themeIcon = themeToggle.querySelector('i');
+  
+  if (isDarkMode) {
+    htmlElement.setAttribute('data-theme', 'dark');
+    themeIcon.className = 'fas fa-sun';
+  } else {
+    htmlElement.removeAttribute('data-theme');
+    themeIcon.className = 'fas fa-moon';
+  }
+  
+  debugLog(`Theme switched to ${isDarkMode ? 'dark' : 'light'} mode`, LOG_LEVELS.INFO);
+}
+
+// Save the theme preference to localStorage
+function saveThemePreference() {
+  try {
+    localStorage.setItem('darkMode', isDarkMode ? 'true' : 'false');
+  } catch (error) {
+    debugLog(`Error saving theme preference: ${error.message}`, LOG_LEVELS.ERROR);
+  }
+}
+
+// Load theme preference from localStorage
+function loadThemePreference() {
+  try {
+    const savedPreference = localStorage.getItem('darkMode');
+    if (savedPreference !== null) {
+      isDarkMode = savedPreference === 'true';
+    } else {
+      // If no saved preference, check system preference
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      isDarkMode = prefersDark;
+    }
+    
+    // Apply the theme
+    updateTheme();
+  } catch (error) {
+    debugLog(`Error loading theme preference: ${error.message}`, LOG_LEVELS.ERROR);
+  }
+}
+
+// Format time since a given date for a user-friendly display
+function formatTimeSince(date) {
+  if (!date) return 'unknown';
+  
+  // Convert to date object if it's a string
+  if (typeof date === 'string') {
+    date = new Date(date);
+  }
+  
+  // Get seconds difference
+  const seconds = Math.floor((new Date() - date) / 1000);
+  
+  // Less than a minute
+  if (seconds < 60) {
+    return 'just now';
+  }
+  
+  // Less than an hour
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
+  }
+  
+  // Less than a day
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+  }
+  
+  // Less than a week
+  const days = Math.floor(hours / 24);
+  if (days < 7) {
+    return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+  }
+  
+  // Format as date if more than a week ago
+  return date.toLocaleDateString();
+}
+
+// Setup settings panel handlers
+function setupSettingsHandlers() {
+  // Get all toggle settings
+  const toggleSettings = document.querySelectorAll('.setting-toggle');
+  toggleSettings.forEach(toggle => {
+    toggle.addEventListener('change', handleSettingChange);
+  });
+  
+  // Get all number inputs
+  const numberInputs = document.querySelectorAll('.setting-input[type="number"]');
+  numberInputs.forEach(input => {
+    input.addEventListener('change', handleSettingChange);
+  });
+  
+  // Get all text inputs
+  const textInputs = document.querySelectorAll('.setting-input[type="text"]');
+  textInputs.forEach(input => {
+    input.addEventListener('change', handleSettingChange);
+  });
+  
+  // Get all select elements
+  const selectInputs = document.querySelectorAll('.setting-select');
+  selectInputs.forEach(select => {
+    select.addEventListener('change', handleSettingChange);
+  });
+  
+  // Setup folder browse button
+  const browseButton = document.getElementById('browse-folder');
+  if (browseButton) {
+    browseButton.addEventListener('click', () => {
+      // Use Electron's dialog to open a folder picker
+      ipcRenderer.send('open-folder-dialog');
+    });
+    
+    // Listen for the selected folder
+    ipcRenderer.on('selected-folder', (event, path) => {
+      // Update the input element
+      const folderInput = document.getElementById('destination-folder-input');
+      if (folderInput && path) {
+        folderInput.value = path;
+        // Trigger the change event to save the setting
+        folderInput.dispatchEvent(new Event('change'));
+      }
+    });
+  }
+  
+  // Setup reset settings button
+  const resetButton = document.getElementById('reset-settings');
+  if (resetButton) {
+    resetButton.addEventListener('click', resetAllSettings);
+  }
+  
+  debugLog('Settings handlers initialized', LOG_LEVELS.DEBUG);
+}
+
+// Handle setting change
+function handleSettingChange(event) {
+  const target = event.target;
+  const settingName = target.dataset.setting;
+  
+  if (!settingName) {
+    debugLog('Setting name not found for element', LOG_LEVELS.ERROR);
+    return;
+  }
+  
+  let value;
+  
+  // Get the appropriate value based on input type
+  if (target.type === 'checkbox') {
+    value = target.checked;
+  } else if (target.type === 'number') {
+    value = parseInt(target.value, 10);
+  } else {
+    value = target.value;
+  }
+  
+  debugLog(`Setting ${settingName} changed to ${value}`, LOG_LEVELS.INFO);
+  
+  // Highlight the changed setting
+  const settingItem = target.closest('.setting-item');
+  if (settingItem) {
+    settingItem.classList.add('setting-changed');
+    setTimeout(() => {
+      settingItem.classList.remove('setting-changed');
+    }, 2000);
+  }
+  
+  // Save the setting to the backend
+  updateSetting(settingName, value);
+}
+
+// Update a setting in the backend
+function updateSetting(key, value) {
+  debugLog(`Updating setting: ${key} = ${value}`, LOG_LEVELS.INFO);
+  
+  try {
+    const grpcUtils = require('./grpc-utils');
+    const client = grpcUtils.getClient();
+    
+    // Create the request
+    const request = new grpcUtils.UpdateSettingRequest();
+    request.setSettingName(key);
+    
+    // Set the appropriate value field based on type
+    if (typeof value === 'boolean') {
+      request.setBoolValue(value);
+    } else if (typeof value === 'number') {
+      request.setIntValue(value);
+    } else {
+      request.setStringValue(String(value));
+    }
+    
+    // Call the service
+    client.updateSetting(request, (error, response) => {
+      if (error) {
+        debugLog(`Error updating setting ${key}: ${error.message}`, LOG_LEVELS.ERROR);
+        addLogEntry(`Failed to update setting ${key}: ${error.message}`, 'error');
+        return;
+      }
+      
+      debugLog(`Setting ${key} updated to ${value}`, LOG_LEVELS.INFO);
+      addLogEntry(`Setting ${key} updated successfully`, 'success');
+      
+      // Update local config if available
+      if (appConfig) {
+        // Map backend setting key to frontend config property
+        const configMapping = {
+          'pair_mode_enabled': 'pairModeEnabled',
+          'sync_enabled': 'syncEnabled',
+          'scan_interval_seconds': 'scanIntervalSeconds',
+          'connect_timeout_seconds': 'connectTimeoutSeconds',
+          'days_threshold': 'daysThreshold',
+          'destination_folder': 'destinationFolder',
+          'inactivity_timeout_seconds': 'inactivityTimeoutSeconds',
+          'set_time_enabled': 'setTimeEnabled',
+          'log_level': 'logLevel'
+        };
+        
+        // Update the local config if key mapping exists
+        const configKey = configMapping[key];
+        if (configKey && configKey in appConfig) {
+          // Convert value to the appropriate type
+          let typedValue = value;
+          if (typeof appConfig[configKey] === 'boolean') {
+            typedValue = value === 'true' || value === true;
+          } else if (typeof appConfig[configKey] === 'number') {
+            typedValue = Number(value);
+          }
+          
+          appConfig[configKey] = typedValue;
+          debugLog(`Updated local config: ${configKey}=${typedValue}`, LOG_LEVELS.DEBUG);
+          
+          // Update local state variables and UI based on the setting
+          if (key === 'pair_mode_enabled') {
+            autoPair = typedValue;
+            if (pairAllToggle) {
+              pairAllToggle.checked = autoPair;
+            }
+            debugLog(`Updated autoPair state to ${autoPair}`, LOG_LEVELS.DEBUG);
+          } else if (key === 'sync_enabled') {
+            autoSync = typedValue;
+            if (autoSyncToggle) {
+              autoSyncToggle.checked = autoSync;
+            }
+            debugLog(`Updated autoSync state to ${autoSync}`, LOG_LEVELS.DEBUG);
+          }
+          
+          // Update any other UI elements as needed
+          updateConfigUI();
+        }
+      }
+      
+      // Special handling for certain settings
+      if (key === 'pair_mode_enabled') {
+        autoPair = value;
+        if (pairAllToggle) {
+          pairAllToggle.checked = value;
+        }
+      } else if (key === 'sync_enabled') {
+        autoSync = value;
+        if (autoSyncToggle) {
+          autoSyncToggle.checked = value;
+        }
+      } else if (key === 'log_level') {
+        // Sync the frontend log level selector
+        if (logLevelSelect) {
+          logLevelSelect.value = value;
+        }
+        
+        // Update the frontend log level
+        const { setLogLevel } = require('./fileLogger');
+        setLogLevel(value.toUpperCase());
+      }
+    });
+  } catch (error) {
+    debugLog(`Exception updating setting: ${error.message}`, LOG_LEVELS.ERROR);
+    addLogEntry(`Error updating setting ${key}: ${error.message}`, 'error');
   }
 }
 

@@ -3,8 +3,6 @@ package manager
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,7 +13,6 @@ import (
 	"github.com/dropz/dropz/pkg/database"
 	"github.com/dropz/dropz/pkg/logger"
 	"github.com/dropz/dropz/pkg/queue"
-	"github.com/dropz/dropz/pkg/wifi"
 	"github.com/google/uuid"
 )
 
@@ -313,332 +310,6 @@ func markUnreachableDevices(m *GoProManager, dbMutex *sync.Mutex, changesMade *a
 	}
 }
 
-// processSyncQueue checks the sync queue and processes cameras that need syncing
-func (m *GoProManager) processSyncQueue() {
-	if !m.db.GetConfig().SyncEnabled {
-		m.log.Debug("Sync is disabled, skipping sync queue processing")
-		return
-	}
-
-	m.log.Debug("Processing sync queue")
-	syncQueue := m.db.GetSyncQueue()
-
-	for _, entry := range syncQueue {
-		// Check if we already have an active sync task for this camera
-		m.mutex.RLock()
-		_, exists := m.activeSyncTasks[entry.CameraID]
-		m.mutex.RUnlock()
-
-		if exists {
-			// Skip this entry, it's already being synced
-			m.log.Debugf("Camera %s is already being synced, skipping", entry.CameraID)
-			continue
-		}
-
-		// Get the camera details
-		camera, found := m.db.GetManagedCameraByID(entry.CameraID)
-		if !found {
-			m.log.Warnf("Camera %s not found, removing from sync queue", entry.CameraID)
-			m.db.RemoveSyncQueueEntry(entry.CameraID)
-			continue
-		}
-
-		// Check if the camera is suitable for syncing
-		if !camera.CameraState.Status.IsReachable {
-			m.log.Debugf("Camera %s is not reachable, skipping sync", entry.CameraID)
-			continue
-		}
-
-		if camera.CameraState.Status.IsSyncing {
-			m.log.Debugf("Camera %s is already marked as syncing, skipping", entry.CameraID)
-			continue
-		}
-
-		// Set camera as syncing
-		m.log.Infof("Starting sync for camera %s", camera.CameraState.Camera.Name)
-		m.db.UpdateCameraSyncingStatus(camera.CameraState.Camera.MACAddress, true)
-
-		// Create and start a sync task
-		syncTask := &SyncTask{
-			CameraID:   camera.CameraState.Camera.ID,
-			MACAddress: camera.CameraState.Camera.MACAddress,
-			CameraName: camera.CameraState.Camera.Name,
-			StartedAt:  time.Now(),
-		}
-
-		m.mutex.Lock()
-		m.activeSyncTasks[entry.CameraID] = syncTask
-		m.mutex.Unlock()
-
-		// Start sync in background
-		go m.performCameraSync(syncTask)
-	}
-}
-
-// performCameraSync handles the actual syncing of a camera
-func (m *GoProManager) performCameraSync(task *SyncTask) {
-	// Remove task when done
-	defer func() {
-		m.mutex.Lock()
-		delete(m.activeSyncTasks, task.CameraID)
-		m.mutex.Unlock()
-	}()
-
-	m.log.Infof("Syncing camera %s (%s)", task.CameraName, task.MACAddress)
-
-	// Get the camera details to work with
-	camera, found := m.db.GetManagedCameraByID(task.CameraID)
-	if !found {
-		m.log.Errorf("Cannot sync camera %s: not found in database", task.CameraID)
-		return
-	}
-
-	// Create sync queue entry if it doesn't exist
-	syncEntry := &database.SyncQueueEntry{
-		CameraID:         task.CameraID,
-		QueuedAt:         time.Now(),
-		ProgressPercent:  0,
-		CurrentOperation: "Starting sync",
-	}
-
-	// Set camera as syncing in database
-	if err := m.db.UpdateCameraSyncingStatus(task.MACAddress, true); err != nil {
-		m.log.Errorf("Failed to mark camera as syncing: %v", err)
-	}
-
-	// Make sure the syncing flag is reset when done, regardless of the outcome
-	defer func() {
-		if err := m.db.UpdateCameraSyncingStatus(task.MACAddress, false); err != nil {
-			m.log.Errorf("Failed to reset syncing status: %v", err)
-		}
-	}()
-
-	// Get the current config
-	config := m.db.GetConfig()
-
-	// Create a context for the sync operation
-	ctx, cancel := context.WithTimeout(m.ctx, 30*time.Minute)
-	defer cancel()
-
-	// Real implementation of camera sync process
-	// Step 1: Connect to camera via BLE
-	syncEntry.CurrentOperation = "Connecting via BLE"
-	syncEntry.ProgressPercent = 10
-	if err := m.db.UpdateSyncQueueEntry(syncEntry); err != nil {
-		m.log.Errorf("Failed to update sync queue entry progress: %v", err)
-	}
-
-	// Notify about the status change
-	if m.notifier != nil {
-		m.notifier.NotifyUpdate()
-	}
-
-	m.log.Infof("Sync for camera %s: %s (%d%%)",
-		camera.CameraState.Camera.Name, syncEntry.CurrentOperation, syncEntry.ProgressPercent)
-
-	// Use BLEOperation to handle concurrency and semaphores correctly
-	connErr := m.BLEOperation(ctx, "ConnectForSync", func() error {
-		return m.ble.Connect(camera.CameraState.Camera.MACAddress)
-	})
-
-	if connErr != nil {
-		syncEntry.CurrentOperation = "BLE Connection Failed"
-		// Just update the entry without setting a status enum
-		if err := m.db.UpdateSyncQueueEntry(syncEntry); err != nil {
-			m.log.Errorf("Failed to update sync queue entry: %v", err)
-		}
-		m.log.Errorf("Failed to connect to camera via BLE: %v", connErr)
-		return
-	}
-
-	// Ensure BLE disconnection happens in all cases
-	defer func() {
-		disconnectErr := m.BLEOperation(ctx, "DisconnectAfterSync", func() error {
-			return m.ble.Disconnect(camera.CameraState.Camera.MACAddress)
-		})
-		if disconnectErr != nil {
-			m.log.Warnf("Failed to disconnect from BLE after sync: %v", disconnectErr)
-		}
-	}()
-
-	// Step 2: Enable WiFi on the camera
-	syncEntry.CurrentOperation = "Enabling WiFi"
-	syncEntry.ProgressPercent = 30
-	if err := m.db.UpdateSyncQueueEntry(syncEntry); err != nil {
-		m.log.Errorf("Failed to update sync queue entry progress: %v", err)
-	}
-
-	if m.notifier != nil {
-		m.notifier.NotifyUpdate()
-	}
-
-	m.log.Infof("Sync for camera %s: %s (%d%%)",
-		camera.CameraState.Camera.Name, syncEntry.CurrentOperation, syncEntry.ProgressPercent)
-
-	wifiErr := m.BLEOperation(ctx, "EnableWifi", func() error {
-		return m.ble.EnableWifi(camera.CameraState.Camera.MACAddress)
-	})
-
-	if wifiErr != nil {
-		syncEntry.CurrentOperation = "WiFi Enabling Failed"
-		if err := m.db.UpdateSyncQueueEntry(syncEntry); err != nil {
-			m.log.Errorf("Failed to update sync queue entry: %v", err)
-		}
-		m.log.Errorf("Failed to enable WiFi: %v", wifiErr)
-		return
-	}
-
-	// Give the camera a moment to fully enable WiFi
-	select {
-	case <-ctx.Done():
-		m.log.Warnf("Sync operation canceled: %v", ctx.Err())
-		return
-	case <-time.After(2 * time.Second):
-		// Continue to next step
-	}
-
-	// Step 3: Connect to WiFi
-	syncEntry.CurrentOperation = "Connecting to WiFi"
-	syncEntry.ProgressPercent = 50
-	if err := m.db.UpdateSyncQueueEntry(syncEntry); err != nil {
-		m.log.Errorf("Failed to update sync queue entry progress: %v", err)
-	}
-
-	if m.notifier != nil {
-		m.notifier.NotifyUpdate()
-	}
-
-	m.log.Infof("Sync for camera %s: %s (%d%%)",
-		camera.CameraState.Camera.Name, syncEntry.CurrentOperation, syncEntry.ProgressPercent)
-
-	// Create WiFi manager instance
-	wifiManager, err := wifi.NewWiFiManager()
-	if err != nil {
-		syncEntry.CurrentOperation = "WiFi Manager Creation Failed"
-		if err := m.db.UpdateSyncQueueEntry(syncEntry); err != nil {
-			m.log.Errorf("Failed to update sync queue entry: %v", err)
-		}
-		m.log.Errorf("Failed to create WiFi manager: %v", err)
-		return
-	}
-
-	// Connect to WiFi using stored credentials
-	wifiCtx, wifiCancel := context.WithTimeout(ctx, time.Duration(config.ConnectTimeoutSeconds)*time.Second)
-	defer wifiCancel()
-
-	err = wifiManager.Connect(wifiCtx, camera.CameraState.Camera.WiFiSSID, camera.CameraState.Camera.WiFiPassword)
-	if err != nil {
-		syncEntry.CurrentOperation = "WiFi Connection Failed"
-		if err := m.db.UpdateSyncQueueEntry(syncEntry); err != nil {
-			m.log.Errorf("Failed to update sync queue entry: %v", err)
-		}
-		m.log.Errorf("Failed to connect to camera WiFi: %v", err)
-		return
-	}
-
-	// Ensure we disconnect from WiFi when done
-	defer func() {
-		disconnectErr := wifiManager.Disconnect()
-		if disconnectErr != nil {
-			m.log.Warnf("Failed to disconnect from WiFi: %v", disconnectErr)
-		}
-	}()
-
-	// Step 4: Download media
-	syncEntry.CurrentOperation = "Downloading media"
-	syncEntry.ProgressPercent = 70
-	if err := m.db.UpdateSyncQueueEntry(syncEntry); err != nil {
-		m.log.Errorf("Failed to update sync queue entry progress: %v", err)
-	}
-
-	if m.notifier != nil {
-		m.notifier.NotifyUpdate()
-	}
-
-	m.log.Infof("Sync for camera %s: %s (%d%%)",
-		camera.CameraState.Camera.Name, syncEntry.CurrentOperation, syncEntry.ProgressPercent)
-
-	// Ensure destination directory exists
-	if err := os.MkdirAll(config.DestinationFolder, 0755); err != nil {
-		syncEntry.CurrentOperation = "Failed to create destination folder"
-		if err := m.db.UpdateSyncQueueEntry(syncEntry); err != nil {
-			m.log.Errorf("Failed to update sync queue entry: %v", err)
-		}
-		m.log.Errorf("Failed to create destination folder: %v", err)
-		return
-	}
-
-	// Download videos from the last X days
-	downloadCtx, downloadCancel := context.WithTimeout(ctx, 20*time.Minute)
-	defer downloadCancel()
-
-	downloadedFiles, err := wifiManager.DownloadVideos(downloadCtx, config.DestinationFolder, int(config.DaysThreshold))
-	if err != nil {
-		syncEntry.CurrentOperation = "Media Download Failed"
-		if err := m.db.UpdateSyncQueueEntry(syncEntry); err != nil {
-			m.log.Errorf("Failed to update sync queue entry: %v", err)
-		}
-		m.log.Errorf("Failed to download media: %v", err)
-		return
-	}
-
-	// Step 5: Process files (move to final location, add metadata, etc.)
-	syncEntry.CurrentOperation = "Processing files"
-	syncEntry.ProgressPercent = 90
-	if err := m.db.UpdateSyncQueueEntry(syncEntry); err != nil {
-		m.log.Errorf("Failed to update sync queue entry progress: %v", err)
-	}
-
-	if m.notifier != nil {
-		m.notifier.NotifyUpdate()
-	}
-
-	m.log.Infof("Sync for camera %s: %s (%d%%), downloaded %d files",
-		camera.CameraState.Camera.Name, syncEntry.CurrentOperation, syncEntry.ProgressPercent, len(downloadedFiles))
-
-	// Create a folder for the camera if it doesn't exist
-	cameraFolder := filepath.Join(config.DestinationFolder, camera.CameraState.Camera.Name)
-	if err := os.MkdirAll(cameraFolder, 0755); err != nil {
-		m.log.Warnf("Failed to create camera-specific folder: %v", err)
-		// Continue anyway, use the main destination folder
-	} else {
-		// Move files to camera-specific folder if needed
-		for _, file := range downloadedFiles {
-			if filepath.Dir(file) != cameraFolder {
-				newPath := filepath.Join(cameraFolder, filepath.Base(file))
-				if err := os.Rename(file, newPath); err != nil {
-					m.log.Warnf("Failed to move file %s to camera folder: %v", file, err)
-				} else {
-					m.log.Debugf("Moved file to camera folder: %s -> %s", file, newPath)
-				}
-			}
-		}
-	}
-
-	// Mark sync as complete - set appropriate boolean flags instead of status enum
-	m.db.MarkCameraSynced(task.MACAddress)
-	m.log.Infof("Camera %s synced successfully", task.CameraName)
-
-	// Update completion status in sync entry
-	syncEntry.ProgressPercent = 100
-	syncEntry.CurrentOperation = "Completed"
-	if err := m.db.UpdateSyncQueueEntry(syncEntry); err != nil {
-		m.log.Errorf("Failed to update sync queue entry on completion: %v", err)
-	}
-
-	// Remove from sync queue
-	m.db.RemoveSyncQueueEntry(task.CameraID)
-
-	// Update completion status
-	task.CompletedAt = time.Now()
-	task.Success = true
-
-	// Notify about the status change
-	if m.notifier != nil {
-		m.notifier.NotifyUpdate()
-	}
-}
-
 // ManageCamera adds a camera to the managed camera pool
 func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, error) {
 	// Find the camera
@@ -680,9 +351,31 @@ func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, e
 
 	// If we're in pair mode, queue pairing for the camera
 	config := m.db.GetConfig()
-	if config.PairModeEnabled && !cameraState.Status.IsPaired {
-		m.log.Infof("Pair mode enabled, starting pairing for camera %s", cameraState.Camera.Name)
-		go m.PairCamera(cameraID)
+	if config.PairModeEnabled {
+		// Check actual device pairing state instead of just database state
+		macAddress := cameraState.Camera.MACAddress
+		devicePaired, err := m.ble.IsPaired(macAddress)
+
+		if err != nil {
+			// If we can't check device state, fall back to database state
+			m.log.Debugf("Failed to check device pairing state for %s, using database state: %v",
+				cameraState.Camera.Name, err)
+			devicePaired = cameraState.Status.IsPaired
+		} else if devicePaired != cameraState.Status.IsPaired {
+			// Update database to match device state
+			m.log.Infof("Updating database pairing state for camera %s: database=%v, device=%v",
+				cameraState.Camera.Name, cameraState.Status.IsPaired, devicePaired)
+			if updateErr := m.db.SetCameraPaired(macAddress, devicePaired); updateErr != nil {
+				m.log.Warnf("Failed to update pairing state: %v", updateErr)
+			}
+		}
+
+		if !devicePaired {
+			m.log.Infof("Pair mode enabled, starting pairing for camera %s", cameraState.Camera.Name)
+			go m.PairCamera(cameraID)
+		} else {
+			m.log.Infof("Camera %s is already paired on device", cameraState.Camera.Name)
+		}
 	}
 
 	// Return the managed camera view
@@ -746,6 +439,14 @@ func (m *GoProManager) Start() error {
 
 	// ResetTransientStates resets transient camera states (is_syncing, is_pairing) on startup
 	m.ResetTransientStates()
+
+	// Perform initial sync of device pairing states with database
+	go func() {
+		// Wait a bit for BLE to be fully ready
+		time.Sleep(5 * time.Second)
+		m.log.Info("Performing initial device pairing state synchronization")
+		m.syncDevicePairingStates()
+	}()
 
 	return nil
 }
@@ -847,59 +548,6 @@ func (m *GoProManager) startContinuousScan(ctx context.Context, scanInProgress *
 	}
 }
 
-// startBackgroundScanner starts the background scanner
-func (m *GoProManager) startBackgroundScanner() {
-	m.log.Info("Starting background scanner")
-
-	// Create a ticker for regular scan intervals
-	ticker := time.NewTicker(m.scanInterval)
-	defer ticker.Stop()
-
-	// Create a watchdog ticker to ensure scanning is active
-	watchdogTicker := time.NewTicker(1 * time.Minute)
-	defer watchdogTicker.Stop()
-
-	// Track scan state
-	var scanInProgress atomic.Bool
-
-	// Create initial scan context
-	continuousScanCtx, cancelContinuousScan := context.WithCancel(m.ctx)
-	defer cancelContinuousScan()
-
-	// Start initial scan
-	go m.startContinuousScan(continuousScanCtx, &scanInProgress)
-
-	for {
-		select {
-		case <-m.ctx.Done():
-			m.log.Debug("Background scanner stopping due to context cancellation.")
-			return
-
-		case <-ticker.C:
-			// If we're not actively scanning, restart the continuous scanning process
-			if !scanInProgress.Load() {
-				m.log.Info("Regular scan interval triggered, restarting continuous scan")
-				// Cancel any existing scan and create a new context
-				cancelContinuousScan()
-				continuousScanCtx, cancelContinuousScan = context.WithCancel(m.ctx)
-
-				go m.startContinuousScan(continuousScanCtx, &scanInProgress)
-			}
-
-		case <-watchdogTicker.C:
-			// Check if scanning is active, if not restart it
-			if !scanInProgress.Load() {
-				m.log.Info("Watchdog detected scan not running, restarting continuous scan")
-				// Cancel any existing scan and create a new context
-				cancelContinuousScan()
-				continuousScanCtx, cancelContinuousScan = context.WithCancel(m.ctx)
-
-				go m.startContinuousScan(continuousScanCtx, &scanInProgress)
-			}
-		}
-	}
-}
-
 // deviceManager periodically checks managed devices
 func (m *GoProManager) deviceManager() {
 	defer m.wg.Done()
@@ -916,6 +564,8 @@ func (m *GoProManager) deviceManager() {
 			m.log.Debug("Device manager stopping due to context cancellation.")
 			return
 		case <-ticker.C:
+			// Sync device pairing states with database
+			m.syncDevicePairingStates()
 			m.checkManagedDevices()
 			// Process sync queue to start sync tasks for pending cameras
 			m.processSyncQueue()
@@ -958,6 +608,22 @@ func (m *GoProManager) checkManagedDevices() {
 			continue
 		}
 
+		// Check if camera is paired before attempting sync
+		// Query device directly for most accurate state
+		macAddress := camera.CameraState.Camera.MACAddress
+		devicePaired, err := m.ble.IsPaired(macAddress)
+		if err != nil {
+			// If we can't check device state, fall back to database state
+			m.log.Debugf("Failed to check device pairing state for %s, using database state: %v",
+				camera.CameraState.Camera.Name, err)
+			devicePaired = camera.CameraState.Status.IsPaired
+		}
+
+		if !devicePaired {
+			m.log.Debugf("Camera %s is not paired, skipping sync", camera.CameraState.Camera.Name)
+			continue
+		}
+
 		// Check if we should sync based on last sync time
 		// If LastSynced is zero time or more than threshold days ago, queue for sync
 		shouldSync := camera.CameraState.Status.LastSynced.IsZero() ||
@@ -981,367 +647,6 @@ func (m *GoProManager) checkManagedDevices() {
 			}
 		}
 	}
-}
-
-// PairCamera pairs with a GoPro camera using BLE
-func (m *GoProManager) PairCamera(cameraID string) (*database.ManagedCamera, error) {
-	// First check if we can find the camera
-	var cameraState *database.CameraWithState
-
-	// Check all cameras
-	for _, state := range m.db.CameraStates {
-		if state.Camera.ID == cameraID {
-			cameraState = state
-			break
-		}
-	}
-
-	if cameraState == nil {
-		return nil, fmt.Errorf("camera with ID %s not found", cameraID)
-	}
-
-	// Mark camera as pairing
-	m.db.UpdateCameraPairingStatus(cameraState.Camera.MACAddress, true)
-	m.log.Infof("Starting pairing process for camera %s", cameraState.Camera.Name)
-
-	// Notify about the status change
-	if m.notifier != nil {
-		m.notifier.NotifyUpdate()
-	}
-
-	// TODO: Implement actual pairing logic here
-	// For now, just simulate a successful pairing
-	// Create a context with a reasonable timeout for pairing operation
-	ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
-	defer cancel()
-
-	// Perform the BLE pairing operation
-	bleErr := m.BLEOperation(ctx, "PairCamera", func() error {
-		// Get the MAC address, which is used for BLE operations
-		macAddress := cameraState.Camera.MACAddress
-
-		// Connect to the device
-		m.log.Infof("Connecting to device %s for pairing", macAddress)
-		if err := m.ble.Connect(macAddress); err != nil {
-			return fmt.Errorf("failed to connect: %v", err)
-		}
-
-		// Get WiFi credentials
-		ssid, password, err := m.ble.GetWifiCredentials(macAddress)
-		if err != nil {
-			// Try to disconnect gracefully even if getting WiFi credentials failed
-			_ = m.ble.Disconnect(macAddress)
-			return fmt.Errorf("failed to get WiFi credentials: %v", err)
-		}
-
-		// Store WiFi credentials in the database
-		m.log.Debugf("Obtained WiFi credentials for camera %s: SSID=%s", cameraID, ssid)
-
-		// Update the camera's WiFi credentials in the cameraState object
-		cameraState.Camera.WiFiSSID = ssid
-		cameraState.Camera.WiFiPassword = password
-
-		// Disconnect from the camera
-		if err := m.ble.Disconnect(macAddress); err != nil {
-			m.log.Warnf("Failed to disconnect from camera: %v", err)
-			// This is not critical, we can continue
-		}
-
-		return nil
-	})
-
-	// Handle any BLE operation errors
-	if bleErr != nil {
-		m.log.Errorf("BLE pairing operation failed: %v", bleErr)
-		// Make sure pairing flag is reset if BLE operation failed
-		m.db.UpdateCameraPairingStatus(cameraState.Camera.MACAddress, false)
-		return nil, fmt.Errorf("failed in BLE pairing operation: %v", bleErr)
-	}
-
-	// Mark camera as paired and ensure pairing flag is reset
-	pairErr := m.db.SetCameraPaired(cameraState.Camera.MACAddress, true)
-	if pairErr != nil {
-		m.log.Errorf("Error setting camera paired status: %v", pairErr)
-		// Make sure pairing flag is reset even if there was an error
-		m.db.UpdateCameraPairingStatus(cameraState.Camera.MACAddress, false)
-		return nil, fmt.Errorf("failed to set camera paired status: %v", pairErr)
-	}
-
-	// Double-check the paired status was correctly set
-	updatedState, exists := m.db.CameraStates[cameraState.Camera.MACAddress]
-	if exists {
-		m.log.Infof("Camera %s paired successfully. isPaired=%v, isPairing=%v",
-			cameraState.Camera.Name, updatedState.Status.IsPaired, updatedState.Status.IsPairing)
-	} else {
-		m.log.Warnf("Camera state not found after pairing for %s", cameraState.Camera.MACAddress)
-	}
-
-	// Notify about the status change
-	if m.notifier != nil {
-		m.notifier.NotifyUpdate()
-	}
-
-	// Return the managed camera view
-	managedCamera, exists := m.db.GetManagedCamera(cameraState.Camera.MACAddress)
-
-	// If the camera is paired but not managed, it won't be returned by GetManagedCamera
-	// In this case, we need to create a ManagedCamera wrapper around the CameraState
-	// to return to the caller
-	if !exists {
-		m.log.Debugf("Camera %s is paired but not yet managed, creating managed view", cameraState.Camera.Name)
-		managedCamera = &database.ManagedCamera{
-			CameraState: cameraState,
-		}
-	}
-
-	return managedCamera, nil
-}
-
-// ForceSync adds a camera to the sync queue for immediate synchronization
-func (m *GoProManager) ForceSync(cameraID string) (*database.SyncQueueEntry, error) {
-	// Find the camera
-	var cameraState *database.CameraWithState
-
-	// Check all cameras
-	for _, state := range m.db.CameraStates {
-		if state.Camera.ID == cameraID {
-			cameraState = state
-			break
-		}
-	}
-
-	if cameraState == nil {
-		return nil, fmt.Errorf("camera with ID %s not found", cameraID)
-	}
-
-	// Check if camera is already in the sync queue
-	for _, entry := range m.db.GetSyncQueue() {
-		if entry.CameraID == cameraID {
-			m.log.Infof("Camera %s is already in the sync queue", cameraState.Camera.Name)
-			return entry, nil
-		}
-	}
-
-	// Create a new sync queue entry
-	syncEntry := &database.SyncQueueEntry{
-		CameraID:         cameraID,
-		QueuedAt:         time.Now(),
-		ProgressPercent:  0,
-		CurrentOperation: "Waiting to start",
-	}
-
-	// Add to sync queue
-	if err := m.db.AddSyncQueueEntry(syncEntry); err != nil {
-		return nil, fmt.Errorf("failed to add camera to sync queue: %v", err)
-	}
-
-	// Mark the camera as not synced so it will appear in sync queue
-	m.db.ResetSyncStatus(cameraState.Camera.MACAddress)
-
-	m.log.Infof("Added camera %s to sync queue", cameraState.Camera.Name)
-
-	// Notify immediately
-	if m.notifier != nil {
-		m.notifier.NotifyUpdate()
-	}
-
-	return syncEntry, nil
-}
-
-// CreateGroup creates a new group with the specified cameras
-func (m *GoProManager) CreateGroup(name string, cameraIDs []string) (*database.Group, error) {
-	// Create a new group
-	group := &database.Group{
-		ID:        uuid.New().String(),
-		Name:      name,
-		CameraIDs: cameraIDs,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-
-	// Add to database
-	if err := m.db.AddOrUpdateGroup(group); err != nil {
-		return nil, fmt.Errorf("failed to create group: %v", err)
-	}
-
-	// Update camera records to associate with this group
-	for _, cameraID := range cameraIDs {
-		// Find the camera in database
-		found := false
-		for _, state := range m.db.CameraStates {
-			if state.Camera.ID == cameraID {
-				state.GroupID = group.ID
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			m.log.Warnf("Camera %s not found when adding to group", cameraID)
-		}
-	}
-
-	// Save changes
-	if err := m.db.SaveChanges(); err != nil {
-		m.log.Warnf("Failed to update camera group associations: %v", err)
-	}
-
-	m.log.Infof("Created group %s with %d cameras", name, len(cameraIDs))
-	return group, nil
-}
-
-// UpdateGroup updates an existing group
-func (m *GoProManager) UpdateGroup(groupID, name string, cameraIDs []string) (*database.Group, error) {
-	// Get the existing group
-	group, exists := m.db.GetGroup(groupID)
-	if !exists {
-		return nil, fmt.Errorf("group with ID %s not found", groupID)
-	}
-
-	// Update group details
-	group.Name = name
-
-	// Get the original camera IDs for comparison
-	originalCameraIDs := make(map[string]bool)
-	for _, cameraID := range group.CameraIDs {
-		originalCameraIDs[cameraID] = true
-	}
-
-	// Update camera list
-	group.CameraIDs = cameraIDs
-	group.UpdatedAt = time.Now()
-
-	// Add to database
-	if err := m.db.AddOrUpdateGroup(group); err != nil {
-		return nil, fmt.Errorf("failed to update group: %v", err)
-	}
-
-	// Update camera records that are newly added to this group
-	for _, cameraID := range cameraIDs {
-		if !originalCameraIDs[cameraID] {
-			// This is a newly added camera
-			found := false
-			for _, state := range m.db.CameraStates {
-				if state.Camera.ID == cameraID {
-					state.GroupID = group.ID
-					found = true
-					break
-				}
-			}
-
-			if !found {
-				m.log.Warnf("Camera %s not found when adding to group", cameraID)
-			}
-		}
-	}
-
-	// Remove the group association from cameras that were removed from the group
-	for cameraID := range originalCameraIDs {
-		stillInGroup := false
-		for _, id := range cameraIDs {
-			if id == cameraID {
-				stillInGroup = true
-				break
-			}
-		}
-
-		if !stillInGroup {
-			// This camera was removed from the group
-			found := false
-			for _, state := range m.db.CameraStates {
-				if state.Camera.ID == cameraID && state.GroupID == groupID {
-					state.GroupID = ""
-					found = true
-					break
-				}
-			}
-
-			if !found {
-				m.log.Warnf("Camera %s not found when removing from group", cameraID)
-			}
-		}
-	}
-
-	// Save changes
-	if err := m.db.SaveChanges(); err != nil {
-		m.log.Warnf("Failed to update camera group associations: %v", err)
-	}
-
-	m.log.Infof("Updated group %s with %d cameras", name, len(cameraIDs))
-	return group, nil
-}
-
-// DeleteGroup deletes a group
-func (m *GoProManager) DeleteGroup(groupID string) error {
-	// Get the existing group
-	group, exists := m.db.GetGroup(groupID)
-	if !exists {
-		return fmt.Errorf("group with ID %s not found", groupID)
-	}
-
-	// Remove the group association from all cameras in the group
-	for _, cameraID := range group.CameraIDs {
-		found := false
-		for _, state := range m.db.CameraStates {
-			if state.Camera.ID == cameraID && state.GroupID == groupID {
-				state.GroupID = ""
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			m.log.Warnf("Camera %s not found when removing from group", cameraID)
-		}
-	}
-
-	// Remove the group from the database
-	if err := m.db.RemoveGroup(groupID); err != nil {
-		return fmt.Errorf("failed to delete group: %v", err)
-	}
-
-	// Save changes
-	if err := m.db.SaveChanges(); err != nil {
-		m.log.Warnf("Failed to update camera group associations: %v", err)
-	}
-
-	m.log.Infof("Deleted group %s", group.Name)
-	return nil
-}
-
-// GetAllVideos returns all videos
-func (m *GoProManager) GetAllVideos() []*database.VideoFile {
-	return m.db.GetAllVideos()
-}
-
-// GetVideosByCamera returns videos for a specific camera
-func (m *GoProManager) GetVideosByCamera(cameraID string, startDate, endDate time.Time, limit, offset int) ([]*database.VideoFile, int) {
-	videos := m.db.GetVideosByCamera(cameraID)
-
-	// Filter by date range
-	var filtered []*database.VideoFile
-	for _, video := range videos {
-		if !startDate.IsZero() && video.CreatedAt.Before(startDate) {
-			continue
-		}
-		if !endDate.IsZero() && video.CreatedAt.After(endDate) {
-			continue
-		}
-		filtered = append(filtered, video)
-	}
-
-	// Apply pagination
-	totalCount := len(filtered)
-	if offset >= totalCount {
-		return []*database.VideoFile{}, totalCount
-	}
-
-	end := offset + limit
-	if end > totalCount {
-		end = totalCount
-	}
-
-	return filtered[offset:end], totalCount
 }
 
 // GetConfig returns the current configuration

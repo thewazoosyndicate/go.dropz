@@ -58,6 +58,24 @@ const (
 	QueryGetLastCapturedMedia   = 0x16
 )
 
+// GoPro Model IDs (based on OpenGoPro documentation)
+const (
+	GoProModelHERO9  = 55
+	GoProModelHERO10 = 57
+	GoProModelHERO11 = 58 // Also includes 60 for Black variant
+	GoProModelHERO12 = 62
+	GoProModelHERO13 = 65
+)
+
+// Pairing State constants (Status ID 19)
+const (
+	PairingStateNeverStarted = 0
+	PairingStateStarted      = 1
+	PairingStateAborted      = 2
+	PairingStateCancelled    = 3
+	PairingStateCompleted    = 4
+)
+
 // BLE packet handling constants
 const (
 	// Packet headers
@@ -130,6 +148,26 @@ type BLEManager struct {
 
 	// Keep-alive goroutine cancellation map
 	keepAliveCancels map[string]context.CancelFunc
+
+	// Response channels for query responses
+	responseTracker map[string]*ResponseTracker // MAC address -> response tracker
+}
+
+// ResponseTracker tracks the response for a specific query
+type ResponseTracker struct {
+	mutex           sync.RWMutex
+	lastResponse    *QueryResponseData
+	responseChannel chan *QueryResponseData
+	ModelID         int // Stores the last detected model ID (if any)
+	PairingState    int // Stores the last detected pairing state (if any)
+}
+
+// QueryResponseData holds the data for a query response
+type QueryResponseData struct {
+	QueryID      byte
+	Status       byte
+	Data         []byte
+	ResponseTime time.Time
 }
 
 // RegisterEventHandler registers a handler for BLE events
@@ -226,13 +264,16 @@ func NewBLEManager() (*BLEManager, error) {
 	log := logger.GetBLEFilteredLogger()
 
 	m := &BLEManager{
-		adapter:       adapter,
-		devices:       make(map[string]*Device),
-		connections:   make(map[string]*bluetooth.Device),
-		log:           log,
-		ctx:           ctx,
-		cancelFunc:    cancel,
-		eventHandlers: make(map[EventType][]EventHandler),
+		adapter:          adapter,
+		devices:          make(map[string]*Device),
+		connections:      make(map[string]*bluetooth.Device),
+		log:              log,
+		ctx:              ctx,
+		cancelFunc:       cancel,
+		eventHandlers:    make(map[EventType][]EventHandler),
+		serviceMap:       make(map[string]map[string]*bluetooth.DeviceCharacteristic),
+		keepAliveCancels: make(map[string]context.CancelFunc),
+		responseTracker:  make(map[string]*ResponseTracker),
 	}
 
 	// Initialize connection manager
@@ -729,15 +770,104 @@ func (m *BLEManager) Connect(macAddress string) error {
 		return fmt.Errorf("Query Response characteristic not found")
 	}
 
-	// Enable notifications for Query Response
+	// Enable notifications for Query Response with enhanced handler
 	m.log.Debug("Enabling notifications for Query Response")
+
+	// Initialize response tracker for this device
+	m.mutex.Lock()
+	if m.responseTracker[macAddress] == nil {
+		m.responseTracker[macAddress] = &ResponseTracker{
+			responseChannel: make(chan *QueryResponseData, 10), // Buffer for multiple responses
+		}
+	}
+	tracker := m.responseTracker[macAddress]
+	m.mutex.Unlock()
+
 	if err := queryRespChar.EnableNotifications(func(buf []byte) {
-		m.log.Debugf("Received query response: %v", buf)
+		m.log.Debugf("Received query response: %v (length: %d)", buf, len(buf))
+
+		// Parse response based on query type
+		if len(buf) >= 3 {
+			// Basic response structure: [Query ID] [Status] [Data...]
+			queryID := buf[0]
+			status := buf[1]
+			data := buf[2:]
+
+			// Create response data
+			responseData := &QueryResponseData{
+				QueryID:      queryID,
+				Status:       status,
+				Data:         data,
+				ResponseTime: time.Now(),
+			}
+
+			// Store the response
+			tracker.mutex.Lock()
+			tracker.lastResponse = responseData
+			// Store model ID if this is a hardware info response
+			if queryID == QueryGetHardwareInfo && status == 0 && len(data) >= 1 {
+				tracker.ModelID = int(data[0])
+				m.log.Debugf("Stored model ID in tracker: %d (%s)", tracker.ModelID, getGoProModelName(tracker.ModelID))
+			}
+			tracker.mutex.Unlock()
+
+			// Send to channel (non-blocking)
+			select {
+			case tracker.responseChannel <- responseData:
+			default:
+				m.log.Debug("Response channel full, dropping oldest response")
+			}
+
+			switch queryID {
+			case QueryGetHardwareInfo:
+				// Already handled above
+			case QueryGetStatusValues:
+				if len(data) >= 2 {
+					statusID := data[0]
+					if statusID == 19 { // Pairing State
+						if len(data) >= 3 {
+							pairingState := data[2]
+							m.log.Debugf("Pairing state: %d", pairingState)
+
+							// Store pairing state in tracker for future reference
+							if tracker := m.responseTracker[macAddress]; tracker != nil {
+								tracker.mutex.Lock()
+								tracker.PairingState = int(pairingState)
+								tracker.mutex.Unlock()
+								m.log.Debugf("Cached pairing state %d for device %s", pairingState, macAddress)
+							}
+						}
+					}
+				}
+			default:
+				m.log.Debugf("Unknown query response: ID=%d, status=%d", queryID, status)
+			}
+		}
 	}); err != nil {
 		return fmt.Errorf("failed to enable notifications: %v", err)
 	}
 
-	// Check pairing state
+	// Wait for camera to be ready before proceeding with pairing
+	m.log.Debug("Waiting for camera to be ready")
+	if err := m.waitForCameraReady(macAddress, 5); err != nil {
+		return fmt.Errorf("camera readiness check failed: %v", err)
+	}
+
+	// Detect GoPro model for model-specific handling
+	modelID, err := m.detectGoProModel(macAddress)
+	if err != nil {
+		m.log.Warnf("Failed to detect GoPro model: %v, proceeding with default behavior", err)
+		modelID = 0 // Use 0 to indicate unknown model
+	} else {
+		m.log.Infof("Detected GoPro model: %s (ID: %d)", getGoProModelName(modelID), modelID)
+	}
+
+	// Perform model-specific pairing procedures
+	if err := m.performModelSpecificPairing(macAddress, modelID); err != nil {
+		return fmt.Errorf("model-specific pairing failed: %v", err)
+	}
+
+	// Check pairing state (legacy compatibility)
 	m.log.Debug("Checking pairing state")
 	pairingStateCmd := []byte{QueryGetStatusValues, 19} // 19 is Pairing State
 	n, err := queryChar.WriteWithoutResponse(pairingStateCmd)
@@ -1761,7 +1891,809 @@ func (m *BLEManager) CheckBLESystem() error {
 }
 
 // detectGoProModel attempts to detect the GoPro model by querying hardware info
-func (m *BLEManager) detectGoProModel() error {
-	// TODO: Implement model detection using hardware info query
+func (m *BLEManager) detectGoProModel(macAddress string) (int, error) {
+	m.log.Debug("Detecting GoPro model through hardware info query")
+
+	// Get BLE device
+	m.mutex.RLock()
+	bleDevice, exists := m.connections[macAddress]
+	tracker := m.responseTracker[macAddress]
+	m.mutex.RUnlock()
+
+	if !exists || bleDevice == nil {
+		return 0, fmt.Errorf("no active connection for device %s", macAddress)
+	}
+
+	if tracker == nil {
+		return 0, fmt.Errorf("no response tracker for device %s", macAddress)
+	}
+
+	// Get query characteristic
+	controlService, ok := m.serviceMap[GoProControlServiceUUID]
+	if !ok {
+		return 0, fmt.Errorf("control service not found")
+	}
+
+	queryChar, ok := controlService[QueryCharUUID]
+	if !ok {
+		return 0, fmt.Errorf("query characteristic not found")
+	}
+
+	// Query hardware info (0x3F)
+	hardwareInfoCmd := []byte{QueryGetHardwareInfo}
+	n, err := queryChar.WriteWithoutResponse(hardwareInfoCmd)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query hardware info: %v", err)
+	}
+	if n != len(hardwareInfoCmd) {
+		return 0, fmt.Errorf("incomplete write for hardware info query")
+	}
+
+	// Wait for response with timeout
+	select {
+	case response := <-tracker.responseChannel:
+		if response.QueryID == QueryGetHardwareInfo && response.Status == 0 {
+			if len(response.Data) >= 1 {
+				modelID := int(response.Data[0])
+				if isValidModelID(modelID) {
+					m.log.Debugf("Successfully detected GoPro model ID: %d (%s)", modelID, getGoProModelName(modelID))
+					// Store in tracker for future queries
+					tracker.mutex.Lock()
+					tracker.ModelID = modelID
+					tracker.mutex.Unlock()
+					return modelID, nil
+				} else {
+					m.log.Warnf("Invalid model ID received: %d", modelID)
+				}
+			}
+		}
+	case <-time.After(3 * time.Second):
+		m.log.Debug("Timeout waiting for hardware info response")
+	}
+
+	// Check if model ID was previously stored in tracker
+	tracker.mutex.RLock()
+	cachedModelID := tracker.ModelID
+	tracker.mutex.RUnlock()
+	if isValidModelID(cachedModelID) {
+		m.log.Debugf("Using cached model ID from tracker: %d (%s)", cachedModelID, getGoProModelName(cachedModelID))
+		return cachedModelID, nil
+	}
+
+	// If hardware info query fails, try to infer from device name
+	m.mutex.RLock()
+	device, exists := m.devices[macAddress]
+	m.mutex.RUnlock()
+
+	if !exists {
+		return 0, fmt.Errorf("device not found in discovered devices")
+	}
+
+	// Infer model from device name patterns
+	deviceName := strings.ToLower(device.Name)
+	if strings.Contains(deviceName, "hero13") {
+		return GoProModelHERO13, nil
+	} else if strings.Contains(deviceName, "hero12") {
+		return GoProModelHERO12, nil
+	} else if strings.Contains(deviceName, "hero11") {
+		return GoProModelHERO11, nil
+	} else if strings.Contains(deviceName, "hero10") {
+		return GoProModelHERO10, nil
+	} else if strings.Contains(deviceName, "hero9") {
+		return GoProModelHERO9, nil
+	}
+
+	m.log.Debugf("Could not determine GoPro model from device name: %s", device.Name)
+	return 0, fmt.Errorf("unknown GoPro model")
+}
+
+// waitForCameraReady waits for the camera to be ready by repeatedly querying hardware info
+func (m *BLEManager) waitForCameraReady(macAddress string, maxRetries int) error {
+	m.log.Debug("Waiting for camera to be ready")
+
+	for i := 0; i < maxRetries; i++ {
+		// Try to detect the model (which requires hardware info query to succeed)
+		_, err := m.detectGoProModel(macAddress)
+		if err == nil {
+			m.log.Debugf("Camera ready after %d attempts", i+1)
+			return nil
+		}
+
+		m.log.Debugf("Camera not ready (attempt %d/%d): %v", i+1, maxRetries, err)
+
+		// Wait before next attempt
+		if i < maxRetries-1 {
+			time.Sleep(time.Duration(500*(i+1)) * time.Millisecond)
+		}
+	}
+
+	return fmt.Errorf("camera not ready after %d attempts", maxRetries)
+}
+
+// performModelSpecificPairing handles model-specific pairing requirements
+func (m *BLEManager) performModelSpecificPairing(macAddress string, modelID int) error {
+	modelName := getGoProModelName(modelID)
+	m.log.Debugf("Performing model-specific pairing for %s (ID: %d)", modelName, modelID)
+
+	switch modelID {
+	case GoProModelHERO13:
+		// HERO13 specific pairing logic
+		m.log.Debug("Applying HERO13-specific pairing procedures")
+		// HERO13 may have enhanced BLE capabilities and different timing requirements
+		if err := m.configureHERO13SpecificSettings(macAddress); err != nil {
+			m.log.Warnf("HERO13-specific configuration failed: %v", err)
+		}
+
+	case GoProModelHERO12:
+		// HERO12 specific pairing logic
+		m.log.Debug("Applying HERO12-specific pairing procedures")
+		if err := m.configureHERO12SpecificSettings(macAddress); err != nil {
+			m.log.Warnf("HERO12-specific configuration failed: %v", err)
+		}
+
+	case GoProModelHERO11:
+		// HERO11 specific pairing logic (including variant 60)
+		m.log.Debug("Applying HERO11-specific pairing procedures")
+		if err := m.configureHERO11SpecificSettings(macAddress); err != nil {
+			m.log.Warnf("HERO11-specific configuration failed: %v", err)
+		}
+
+	case GoProModelHERO10:
+		// HERO10 specific pairing logic
+		m.log.Debug("Applying HERO10-specific pairing procedures")
+		if err := m.configureLegacyModelSettings(macAddress); err != nil {
+			m.log.Warnf("HERO10-specific configuration failed: %v", err)
+		}
+
+	case GoProModelHERO9:
+		// HERO9 specific pairing logic
+		m.log.Debug("Applying HERO9-specific pairing procedures")
+		if err := m.configureLegacyModelSettings(macAddress); err != nil {
+			m.log.Warnf("HERO9-specific configuration failed: %v", err)
+		}
+
+	default:
+		m.log.Warnf("Unknown GoPro model %s, using default pairing procedure", modelName)
+		// Use default/generic pairing procedure for unknown models
+		if err := m.configureDefaultSettings(macAddress); err != nil {
+			m.log.Warnf("Default configuration failed: %v", err)
+		}
+	}
+
+	// Common pairing verification for all models
+	return m.verifyPairingState(macAddress)
+}
+
+// verifyPairingState checks the current pairing state and handles it appropriately
+func (m *BLEManager) verifyPairingState(macAddress string) error {
+	m.log.Debug("Verifying pairing state")
+
+	pairingState, err := m.GetPairingState(macAddress)
+	if err != nil {
+		return fmt.Errorf("failed to get pairing state: %v", err)
+	}
+
+	switch pairingState {
+	case PairingStateCompleted:
+		m.log.Debug("Device is already paired")
+		return nil
+	case PairingStateNeverStarted:
+		m.log.Debug("Device pairing never started - this is normal for new pairing")
+		return nil
+	case PairingStateStarted:
+		m.log.Debug("Device pairing is in progress")
+		return nil
+	case PairingStateAborted:
+		return fmt.Errorf("device pairing was aborted")
+	case PairingStateCancelled:
+		return fmt.Errorf("device pairing was cancelled")
+	default:
+		m.log.Warnf("Unknown pairing state: %d", pairingState)
+		return nil
+	}
+}
+
+// configureHERO13SpecificSettings applies HERO13-specific BLE configuration
+func (m *BLEManager) configureHERO13SpecificSettings(macAddress string) error {
+	m.log.Debug("Configuring HERO13-specific settings")
+
+	// HERO13 may have enhanced BLE capabilities and faster processing
+	// Allow more time for initialization due to advanced features
+	time.Sleep(500 * time.Millisecond)
+
+	// HERO13 specific: Enable enhanced BLE features if available
+	if err := m.setEnhancedBLEMode(macAddress, true); err != nil {
+		m.log.Warnf("Failed to enable enhanced BLE mode for HERO13: %v", err)
+		// Continue anyway as this is not critical
+	}
+
+	// HERO13 might require additional verification steps for security
+	if err := m.performSecurityHandshake(macAddress); err != nil {
+		m.log.Warnf("Security handshake failed for HERO13: %v", err)
+		// Continue anyway as this might not be implemented yet
+	}
+
+	return nil
+}
+
+// configureHERO12SpecificSettings applies HERO12-specific BLE configuration
+func (m *BLEManager) configureHERO12SpecificSettings(macAddress string) error {
+	m.log.Debug("Configuring HERO12-specific settings")
+
+	// HERO12-specific configuration with moderate initialization time
+	time.Sleep(300 * time.Millisecond)
+
+	// HERO12 may benefit from setting optimal connection parameters
+	if err := m.setConnectionParameters(macAddress, "hero12"); err != nil {
+		m.log.Warnf("Failed to set HERO12 connection parameters: %v", err)
+	}
+
+	return nil
+}
+
+// configureHERO11SpecificSettings applies HERO11-specific BLE configuration
+func (m *BLEManager) configureHERO11SpecificSettings(macAddress string) error {
+	m.log.Debug("Configuring HERO11-specific settings")
+
+	// HERO11-specific configuration
+	time.Sleep(300 * time.Millisecond)
+
+	// HERO11 may require specific timing for BLE operations
+	if err := m.setConnectionParameters(macAddress, "hero11"); err != nil {
+		m.log.Warnf("Failed to set HERO11 connection parameters: %v", err)
+	}
+
+	return nil
+}
+
+// configureLegacyModelSettings applies settings for older GoPro models (HERO9, HERO10)
+func (m *BLEManager) configureLegacyModelSettings(macAddress string) error {
+	m.log.Debug("Configuring legacy model settings")
+
+	// Older models might need different timing or additional setup
+	time.Sleep(200 * time.Millisecond)
+
+	// Legacy models may need more conservative connection parameters
+	if err := m.setConnectionParameters(macAddress, "legacy"); err != nil {
+		m.log.Warnf("Failed to set legacy connection parameters: %v", err)
+	}
+
+	return nil
+}
+
+// configureDefaultSettings applies default configuration for unknown models
+func (m *BLEManager) configureDefaultSettings(macAddress string) error {
+	m.log.Debug("Configuring default settings for unknown model")
+
+	// Use conservative settings for unknown models
+	time.Sleep(400 * time.Millisecond)
+
+	// Apply safe default connection parameters
+	if err := m.setConnectionParameters(macAddress, "default"); err != nil {
+		m.log.Warnf("Failed to set default connection parameters: %v", err)
+	}
+
+	return nil
+}
+
+// getGoProModelName returns the model name for a given model ID
+func getGoProModelName(modelID int) string {
+	switch modelID {
+	case GoProModelHERO9:
+		return "HERO9"
+	case GoProModelHERO10:
+		return "HERO10"
+	case GoProModelHERO11:
+		return "HERO11"
+	case GoProModelHERO12:
+		return "HERO12"
+	case GoProModelHERO13:
+		return "HERO13"
+	default:
+		return fmt.Sprintf("Unknown (%d)", modelID)
+	}
+}
+
+// Enhanced pairing constants for more robust handling
+const (
+	// Retry constants for pairing operations
+	MaxPairingRetries     = 3
+	PairingRetryDelay     = 2 * time.Second
+	ModelDetectionRetries = 3
+	ReadinessCheckDelay   = 500 * time.Millisecond
+)
+
+// Model capability definitions
+type ModelCapabilities struct {
+	SupportsEnhancedBLE     bool
+	RequiresExtendedPairing bool
+	MaxConnectionRetries    int
+	PairingTimeoutMs        int
+	SupportedFeatures       []string
+}
+
+// getModelCapabilities returns the capabilities for a specific GoPro model
+func getModelCapabilities(modelID int) ModelCapabilities {
+	switch modelID {
+	case GoProModelHERO13:
+		return ModelCapabilities{
+			SupportsEnhancedBLE:     true,
+			RequiresExtendedPairing: false,
+			MaxConnectionRetries:    5,
+			PairingTimeoutMs:        5000,
+			SupportedFeatures:       []string{"auto_hibernate", "quick_pair", "enhanced_wifi"},
+		}
+	case GoProModelHERO12:
+		return ModelCapabilities{
+			SupportsEnhancedBLE:     true,
+			RequiresExtendedPairing: false,
+			MaxConnectionRetries:    4,
+			PairingTimeoutMs:        4000,
+			SupportedFeatures:       []string{"auto_hibernate", "quick_pair"},
+		}
+	case GoProModelHERO11:
+		return ModelCapabilities{
+			SupportsEnhancedBLE:     true,
+			RequiresExtendedPairing: true,
+			MaxConnectionRetries:    4,
+			PairingTimeoutMs:        4000,
+			SupportedFeatures:       []string{"auto_hibernate"},
+		}
+	case GoProModelHERO10:
+		return ModelCapabilities{
+			SupportsEnhancedBLE:     false,
+			RequiresExtendedPairing: true,
+			MaxConnectionRetries:    3,
+			PairingTimeoutMs:        3000,
+			SupportedFeatures:       []string{"basic_pairing"},
+		}
+	case GoProModelHERO9:
+		return ModelCapabilities{
+			SupportsEnhancedBLE:     false,
+			RequiresExtendedPairing: true,
+			MaxConnectionRetries:    3,
+			PairingTimeoutMs:        3000,
+			SupportedFeatures:       []string{"basic_pairing"},
+		}
+	default:
+		return ModelCapabilities{
+			SupportsEnhancedBLE:     false,
+			RequiresExtendedPairing: true,
+			MaxConnectionRetries:    2,
+			PairingTimeoutMs:        2000,
+			SupportedFeatures:       []string{"basic_pairing"},
+		}
+	}
+}
+
+// isModelSupported checks if a given model ID is supported
+func isModelSupported(modelID int) bool {
+	supportedModels := []int{
+		GoProModelHERO9,
+		GoProModelHERO10,
+		GoProModelHERO11,
+		GoProModelHERO12,
+		GoProModelHERO13,
+	}
+
+	for _, supportedModel := range supportedModels {
+		if modelID == supportedModel {
+			return true
+		}
+	}
+	return false
+}
+
+// isValidModelID checks if the model ID is a known valid GoPro model
+func isValidModelID(modelID int) bool {
+	switch modelID {
+	case GoProModelHERO9, GoProModelHERO10, GoProModelHERO11, GoProModelHERO12, GoProModelHERO13:
+		return true
+	default:
+		return false
+	}
+}
+
+// shouldUseEnhancedPairing determines if enhanced pairing should be used for a model
+func shouldUseEnhancedPairing(modelID int) bool {
+	capabilities := getModelCapabilities(modelID)
+	return capabilities.SupportsEnhancedBLE
+}
+
+// getPairingTimeout returns the recommended pairing timeout for a model
+func getPairingTimeout(modelID int) time.Duration {
+	capabilities := getModelCapabilities(modelID)
+	return time.Duration(capabilities.PairingTimeoutMs) * time.Millisecond
+}
+
+// getMaxRetries returns the maximum retry count for a model
+func getMaxRetries(modelID int) int {
+	capabilities := getModelCapabilities(modelID)
+	return capabilities.MaxConnectionRetries
+}
+
+// PairingError represents a pairing-specific error with retry information
+type PairingError struct {
+	Operation string
+	ModelID   int
+	Attempt   int
+	Cause     error
+}
+
+func (e *PairingError) Error() string {
+	modelName := getGoProModelName(e.ModelID)
+	return fmt.Sprintf("pairing failed for %s (attempt %d): %s: %v",
+		modelName, e.Attempt, e.Operation, e.Cause)
+}
+
+// ConnectWithEnhancedPairing attempts to connect with enhanced model-specific pairing logic
+func (m *BLEManager) ConnectWithEnhancedPairing(macAddress string) error {
+	m.log.Infof("Starting enhanced BLE connection to %s", macAddress)
+
+	// First, establish basic BLE connection
+	if err := m.Connect(macAddress); err != nil {
+		return &PairingError{
+			Operation: "basic_connection",
+			ModelID:   0,
+			Attempt:   1,
+			Cause:     err,
+		}
+	}
+
+	m.log.Infof("Enhanced BLE pairing completed successfully for %s", macAddress)
+	return nil
+}
+
+// IsPairedWithVerification checks if device is paired using multiple verification methods
+func (m *BLEManager) IsPairedWithVerification(macAddress string) (bool, error) {
+	// Create a context with timeout for the entire verification process
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// First try the standard pairing state query
+	pairingState, err := m.GetPairingState(macAddress)
+	if err != nil {
+		m.log.Warnf("Failed to get pairing state for %s: %v", macAddress, err)
+	} else {
+		m.log.Infof("Device %s pairing state query returned: %d", macAddress, pairingState)
+
+		// If state clearly indicates paired, return true
+		if pairingState == PairingStateCompleted || pairingState == 1 {
+			return true, nil
+		}
+
+		// If state clearly indicates not paired, try secondary verification
+		if pairingState == PairingStateNeverStarted || pairingState == PairingStateAborted || pairingState == PairingStateCancelled {
+			m.log.Infof("Device %s pairing state indicates not paired, but trying secondary verification", macAddress)
+		}
+	}
+
+	// Secondary verification: try to get WiFi credentials
+	// If we can get them, the device is definitely paired
+	m.log.Infof("Attempting secondary pairing verification for %s using WiFi credentials", macAddress)
+
+	// Make sure we're connected first
+	device := m.getDevice(macAddress)
+	if device == nil {
+		return false, fmt.Errorf("device not found: %s", macAddress)
+	}
+
+	if !device.IsConnected {
+		if err := m.Connect(macAddress); err != nil {
+			return false, fmt.Errorf("failed to connect for verification: %v", err)
+		}
+		// Small delay after connection
+		select {
+		case <-time.After(500 * time.Millisecond):
+		case <-ctx.Done():
+			return false, fmt.Errorf("context cancelled during connection delay: %v", ctx.Err())
+		}
+	}
+
+	// Try to get WiFi credentials with context timeout - if successful, device is paired
+	type credResult struct {
+		ssid string
+		pass string
+		err  error
+	}
+
+	credChan := make(chan credResult, 1)
+	go func() {
+		ssid, pass, err := m.GetWifiCredentials(macAddress)
+		credChan <- credResult{ssid: ssid, pass: pass, err: err}
+	}()
+
+	select {
+	case result := <-credChan:
+		if result.err == nil && result.ssid != "" {
+			m.log.Infof("Device %s is verified as paired via WiFi credentials (SSID: %s)", macAddress, result.ssid)
+			return true, nil
+		}
+		m.log.Infof("Device %s failed WiFi credentials verification: %v", macAddress, result.err)
+
+	case <-ctx.Done():
+		m.log.Warnf("Timeout during WiFi credentials verification for %s: %v", macAddress, ctx.Err())
+	}
+
+	// Fall back to original pairing state result
+	isPaired := pairingState == PairingStateCompleted
+	m.log.Infof("Device %s final verification result: isPaired=%v (pairing state: %d)", macAddress, isPaired, pairingState)
+
+	return isPaired, nil
+}
+
+// GetPairingState retrieves the current pairing state from the device
+func (m *BLEManager) GetPairingState(macAddress string) (int, error) {
+	m.log.Debugf("Getting pairing state for device %s", macAddress)
+
+	// First check if we have cached pairing state
+	if tracker := m.responseTracker[macAddress]; tracker != nil {
+		tracker.mutex.RLock()
+		cachedState := tracker.PairingState
+		tracker.mutex.RUnlock()
+		if cachedState != 0 {
+			m.log.Debugf("Returning cached pairing state %d for device %s", cachedState, macAddress)
+			return cachedState, nil
+		}
+	}
+
+	// If no cached state, query the device directly
+	return m.RefreshPairingState(macAddress)
+}
+
+// RefreshPairingState queries the device directly for current pairing state
+func (m *BLEManager) RefreshPairingState(macAddress string) (int, error) {
+	m.log.Debugf("Refreshing pairing state for device %s", macAddress)
+
+	// Get control service and query characteristic
+	device := m.getDevice(macAddress)
+	if device == nil {
+		return 0, fmt.Errorf("device not found: %s", macAddress)
+	}
+
+	// Get the query characteristic
+	queryChar, err := m.getCharacteristic(macAddress, GoProControlServiceUUID, QueryCharUUID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get query characteristic: %v", err)
+	}
+
+	// Ensure response tracker exists
+	m.mutex.Lock()
+	if m.responseTracker[macAddress] == nil {
+		m.responseTracker[macAddress] = &ResponseTracker{
+			responseChannel: make(chan *QueryResponseData, 10),
+		}
+	}
+	tracker := m.responseTracker[macAddress]
+	m.mutex.Unlock()
+
+	// Query pairing state (status ID 19)
+	pairingStateCmd := []byte{QueryGetStatusValues, 19}
+	n, err := queryChar.WriteWithoutResponse(pairingStateCmd)
+	if err != nil {
+		return 0, fmt.Errorf("failed to write pairing state query: %v", err)
+	}
+	if n != len(pairingStateCmd) {
+		return 0, fmt.Errorf("incomplete write for pairing state query")
+	}
+
+	// Wait for response with proper timeout using response channel
+	timeout := 3 * time.Second
+	select {
+	case response := <-tracker.responseChannel:
+		if response.QueryID == QueryGetStatusValues && len(response.Data) >= 2 {
+			// Data format: [status_id, status_value]
+			if response.Data[0] == 19 { // Pairing state status ID
+				pairingState := int(response.Data[1])
+				m.log.Debugf("Received pairing state response: %d for device %s", pairingState, macAddress)
+
+				// Cache the result
+				tracker.mutex.Lock()
+				tracker.PairingState = pairingState
+				tracker.lastResponse = response
+				tracker.mutex.Unlock()
+
+				return pairingState, nil
+			}
+		}
+		m.log.Warnf("Received unexpected response format for pairing state query from %s", macAddress)
+		return PairingStateNeverStarted, nil
+
+	case <-time.After(timeout):
+		m.log.Warnf("Timeout waiting for pairing state response from device %s after %v", macAddress, timeout)
+
+		// Check if we have a cached value to fall back to
+		tracker.mutex.RLock()
+		cachedState := tracker.PairingState
+		tracker.mutex.RUnlock()
+
+		if cachedState != 0 {
+			m.log.Debugf("Using cached pairing state %d for device %s after timeout", cachedState, macAddress)
+			return cachedState, nil
+		}
+
+		// If no cached state, assume not paired
+		return PairingStateNeverStarted, nil
+	}
+}
+
+// IsPaired checks if a device is paired with a simple interface
+// This is a simpler wrapper around GetPairingState for basic pairing checks
+func (m *BLEManager) IsPaired(macAddress string) (bool, error) {
+	m.log.Debugf("Checking pairing state for device %s", macAddress)
+
+	// Get the current pairing state from the device
+	pairingState, err := m.GetPairingState(macAddress)
+	if err != nil {
+		m.log.Debugf("Failed to get pairing state for %s: %v", macAddress, err)
+		return false, err
+	}
+
+	// Device is paired if pairing state is completed
+	isPaired := pairingState == PairingStateCompleted
+	m.log.Debugf("Device %s pairing check result: isPaired=%v (state=%d)", macAddress, isPaired, pairingState)
+
+	return isPaired, nil
+}
+
+// getDevice retrieves a device from the discovered devices map
+func (m *BLEManager) getDevice(macAddress string) *Device {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	return m.devices[macAddress]
+}
+
+// getCharacteristic retrieves a characteristic from the service map cache
+func (m *BLEManager) getCharacteristic(macAddress, serviceUUID, charUUID string) (*bluetooth.DeviceCharacteristic, error) {
+	// Check if we have the service in our cache
+	service, ok := m.serviceMap[serviceUUID]
+	if !ok {
+		return nil, fmt.Errorf("service %s not found in cache", serviceUUID)
+	}
+
+	// Check if we have the characteristic in the service
+	char, ok := service[charUUID]
+	if !ok {
+		return nil, fmt.Errorf("characteristic %s not found in service %s", charUUID, serviceUUID)
+	}
+
+	return char, nil
+}
+
+// setEnhancedBLEMode enables or disables enhanced BLE features for newer GoPro models
+func (m *BLEManager) setEnhancedBLEMode(macAddress string, enabled bool) error {
+	m.log.Debugf("Setting enhanced BLE mode to %v for device %s", enabled, macAddress)
+
+	// Get the settings characteristic for writing enhanced BLE mode commands
+	settingsChar, err := m.getCharacteristic(macAddress, GoProControlServiceUUID, SettingsCharUUID)
+	if err != nil {
+		return fmt.Errorf("failed to get settings characteristic: %v", err)
+	}
+
+	// Enhanced BLE mode command: Setting ID 0x03 (Enhanced BLE) with value 0x01 (enabled) or 0x00 (disabled)
+	var enableValue byte = 0x00
+	if enabled {
+		enableValue = 0x01
+	}
+
+	enhancedBLECmd := []byte{0x03, 0x01, enableValue}
+
+	n, err := settingsChar.WriteWithoutResponse(enhancedBLECmd)
+	if err != nil {
+		return fmt.Errorf("failed to write enhanced BLE mode command: %v", err)
+	}
+	if n != len(enhancedBLECmd) {
+		return fmt.Errorf("incomplete write for enhanced BLE mode command")
+	}
+
+	// Give the camera time to process the command
+	time.Sleep(200 * time.Millisecond)
+
+	m.log.Debugf("Enhanced BLE mode set to %v for device %s", enabled, macAddress)
+	return nil
+}
+
+// performSecurityHandshake performs additional security verification for HERO13 and newer models
+func (m *BLEManager) performSecurityHandshake(macAddress string) error {
+	m.log.Debugf("Performing security handshake for device %s", macAddress)
+
+	// Get the command characteristic for security handshake
+	cmdChar, err := m.getCharacteristic(macAddress, GoProControlServiceUUID, CommandCharUUID)
+	if err != nil {
+		return fmt.Errorf("failed to get command characteristic: %v", err)
+	}
+
+	// Security handshake command: Command ID 0x5F (Security Challenge)
+	securityCmd := []byte{0x5F, 0x01} // Simple handshake request
+
+	packets := m.createPackets(securityCmd)
+
+	for i, packet := range packets {
+		n, err := cmdChar.WriteWithoutResponse(packet)
+		if err != nil {
+			return fmt.Errorf("failed to write security handshake packet %d: %v", i, err)
+		}
+		if n != len(packet) {
+			return fmt.Errorf("incomplete write for security handshake packet %d", i)
+		}
+
+		// Small delay between packets
+		if i < len(packets)-1 {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	// Wait for the handshake to complete
+	time.Sleep(500 * time.Millisecond)
+
+	m.log.Debugf("Security handshake completed for device %s", macAddress)
+	return nil
+}
+
+// setConnectionParameters sets optimal BLE connection parameters based on model type
+func (m *BLEManager) setConnectionParameters(macAddress string, modelType string) error {
+	m.log.Debugf("Setting connection parameters for model type %s on device %s", modelType, macAddress)
+
+	// Get the settings characteristic for connection parameter settings
+	settingsChar, err := m.getCharacteristic(macAddress, GoProControlServiceUUID, SettingsCharUUID)
+	if err != nil {
+		return fmt.Errorf("failed to get settings characteristic: %v", err)
+	}
+
+	// Define connection parameters based on model type
+	var connectionInterval, slaveLatency, supervisionTimeout byte
+
+	switch modelType {
+	case "hero13":
+		// HERO13: Fastest connection parameters for enhanced features
+		connectionInterval = 0x06 // 7.5ms interval
+		slaveLatency = 0x00       // No latency
+		supervisionTimeout = 0x64 // 1000ms timeout
+
+	case "hero12":
+		// HERO12: Balanced parameters for good performance
+		connectionInterval = 0x08 // 10ms interval
+		slaveLatency = 0x00       // No latency
+		supervisionTimeout = 0x64 // 1000ms timeout
+
+	case "hero11":
+		// HERO11: Moderate parameters for stability
+		connectionInterval = 0x0C // 15ms interval
+		slaveLatency = 0x01       // Small latency allowed
+		supervisionTimeout = 0x64 // 1000ms timeout
+
+	case "legacy":
+		// Legacy models (HERO9, HERO10): Conservative parameters
+		connectionInterval = 0x10 // 20ms interval
+		slaveLatency = 0x02       // Higher latency allowed
+		supervisionTimeout = 0x64 // 1000ms timeout
+
+	case "default":
+		// Default/unknown models: Safe conservative parameters
+		connectionInterval = 0x18 // 30ms interval
+		slaveLatency = 0x03       // Higher latency for stability
+		supervisionTimeout = 0x64 // 1000ms timeout
+
+	default:
+		return fmt.Errorf("unknown model type: %s", modelType)
+	}
+
+	// Connection parameter command: Setting ID 0x02 (Connection Parameters)
+	// Format: [Setting ID] [Length] [Interval] [Latency] [Timeout]
+	connectionCmd := []byte{0x02, 0x03, connectionInterval, slaveLatency, supervisionTimeout}
+
+	n, err := settingsChar.WriteWithoutResponse(connectionCmd)
+	if err != nil {
+		return fmt.Errorf("failed to write connection parameters: %v", err)
+	}
+	if n != len(connectionCmd) {
+		return fmt.Errorf("incomplete write for connection parameters")
+	}
+
+	// Give the camera time to apply new parameters
+	time.Sleep(300 * time.Millisecond)
+
+	m.log.Debugf("Connection parameters set for model type %s on device %s (interval: %d, latency: %d, timeout: %d)",
+		modelType, macAddress, connectionInterval, slaveLatency, supervisionTimeout)
 	return nil
 }

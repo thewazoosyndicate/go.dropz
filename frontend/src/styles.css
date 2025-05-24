@@ -194,7 +194,7 @@ p {
 
 .dashboard-panels {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
   gap: 24px;
   margin-bottom: 20px;
 }
@@ -1065,12 +1065,12 @@ input:checked + .toggle-slider:before {
 /* Responsive adjustments */
 @media (max-width: 1200px) {
   .dashboard-panels {
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
   }
   
   .devices-grid,
   .gopro-grid-container {
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   }
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/dropz/dropz/pkg/logger"
 	"github.com/dropz/dropz/pkg/queue"
 	"github.com/google/uuid"
+	"tinygo.org/x/bluetooth"
 )
 
 // Ensure the uuid dependency is in go.mod
@@ -57,7 +58,7 @@ type SyncTask struct {
 // GoProManager is the main service that coordinates all GoPro operations
 type GoProManager struct {
 	db             *database.Database
-	ble            *ble.BLEManager
+	ble            ble.BLEInterface
 	queue          *queue.TaskQueue
 	log            logger.Logger
 	scanInterval   time.Duration
@@ -91,11 +92,37 @@ func NewGoProManager(dbPath, destinationDir string) (*GoProManager, error) {
 		return nil, fmt.Errorf("failed to initialize database: %v", err)
 	}
 
-	bleManager, err := ble.NewBLEManager()
-	if err != nil {
-		cancel() // Clean up the context
-		return nil, fmt.Errorf("failed to create BLE manager: %v", err)
+	// Initialize BLE adapter
+	adapter := bluetooth.DefaultAdapter
+	if adapter == nil {
+		cancel()
+		return nil, fmt.Errorf("failed to get default Bluetooth adapter")
 	}
+
+	// Enable BLE adapter with timeout
+	enableCtx, enableCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer enableCancel()
+
+	enableCh := make(chan error, 1)
+	go func() {
+		enableCh <- adapter.Enable()
+	}()
+
+	select {
+	case err := <-enableCh:
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to enable BLE adapter: %w", err)
+		}
+	case <-enableCtx.Done():
+		cancel()
+		return nil, fmt.Errorf("timeout while enabling BLE adapter")
+	}
+
+	bleManager := ble.NewManager(ble.ManagerConfig{
+		Logger:  logger.GetBLEFilteredLogger(),
+		Adapter: adapter,
+	})
 
 	if err := bleManager.Start(); err != nil {
 		cancel() // Clean up the context

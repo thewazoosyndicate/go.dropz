@@ -59,7 +59,6 @@ type ConnectionManager struct {
 	mutex         sync.RWMutex
 	log           logger.Logger
 	eventHandlers []func(ConnectionEvent)
-	bleManager    *BLEManager // Reference to BLEManager for GoPro-specific operations
 }
 
 // ConnectionInfo stores connection details for a device
@@ -80,50 +79,6 @@ func NewConnectionManager(adapter *bluetooth.Adapter, log logger.Logger) *Connec
 		adapter:     adapter,
 		connections: make(map[string]*ConnectionInfo),
 		log:         log,
-	}
-}
-
-// SetBLEManager sets the BLEManager reference for GoPro-specific functions
-func (cm *ConnectionManager) SetBLEManager(manager *BLEManager) {
-	cm.mutex.Lock()
-	defer cm.mutex.Unlock()
-
-	if manager == nil {
-		cm.log.Errorf("ConnectionManager.SetBLEManager: Attempted to set nil BLEManager reference")
-		return
-	}
-
-	// Store the reference
-	oldManager := cm.bleManager
-	cm.bleManager = manager
-
-	// Log the operation
-	if oldManager == nil {
-		cm.log.Infof("ConnectionManager.SetBLEManager: BLEManager reference set successfully")
-	} else if oldManager != manager {
-		cm.log.Warnf("ConnectionManager.SetBLEManager: Replaced existing BLEManager reference with new instance")
-	} else {
-		cm.log.Debugf("ConnectionManager.SetBLEManager: Same BLEManager reference provided, no changes made")
-	}
-
-	// Check all existing connections to ensure both ConnectionManager and BLEManager
-	// have consistent state about connected devices
-	for mac, info := range cm.connections {
-		if info.State == StateConnected || info.State == StateReady {
-			cm.log.Infof("ConnectionManager.SetBLEManager: Found active connection to %s in state %s",
-				mac, info.State)
-
-			// Check if BLEManager knows about this connection
-			manager.mutex.RLock()
-			_, exists := manager.connections[mac]
-			manager.mutex.RUnlock()
-
-			if !exists {
-				cm.log.Warnf("ConnectionManager.SetBLEManager: BLEManager doesn't know about connection to %s, state may be inconsistent", mac)
-			} else {
-				cm.log.Debugf("ConnectionManager.SetBLEManager: Connection to %s is tracked by both managers", mac)
-			}
-		}
 	}
 }
 
@@ -320,19 +275,6 @@ func (cm *ConnectionManager) Disconnect(macAddress string) error {
 	}
 	device := info.Device
 	cm.mutex.RUnlock()
-
-	// Try to put GoPro to sleep if we have a BLEManager reference
-	if cm.bleManager != nil {
-		cm.log.Infof("ConnectionManager.Disconnect: BLEManager reference exists, calling DisconnectGoPro for %s", macAddress)
-		// Use the dedicated DisconnectGoPro method which handles sleep command
-		err := cm.bleManager.DisconnectGoPro(macAddress)
-		if err != nil {
-			cm.log.Warnf("ConnectionManager: Failed to prepare GoPro for disconnection: %v", err)
-			// Continue with disconnection even if sleep failed
-		}
-	} else {
-		cm.log.Warnf("ConnectionManager.Disconnect: BLEManager reference is nil, cannot send sleep command to %s", macAddress)
-	}
 
 	// Perform the actual disconnection
 	var disconnectErr error

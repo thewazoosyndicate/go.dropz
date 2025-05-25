@@ -97,30 +97,19 @@ func (m *GoProManager) deviceManager() {
 
 // checkManagedDevices checks all managed devices and queues tasks
 func (m *GoProManager) checkManagedDevices() {
-	managedCameras := m.db.GetAllManagedCameras()
+	// Use GetCamerasForSyncQueue which properly validates reachable + paired + managed + not synced
+	syncCandidates := m.db.GetCamerasForSyncQueue()
 	config := m.db.GetConfig()
 
 	// Log the current sync configuration for debugging
 	m.log.Debugf("Current sync configuration: SyncEnabled=%v, DaysThreshold=%v",
 		config.SyncEnabled, config.DaysThreshold)
 
-	for _, camera := range managedCameras {
+	for _, camera := range syncCandidates {
 		// Never change status for cameras that are actively syncing or pairing
 		if camera.CameraState.Status.IsSyncing || camera.CameraState.Status.IsPairing {
 			m.log.Debugf("Camera %s is actively syncing or pairing, preserving status during check",
 				camera.CameraState.Camera.Name)
-			continue
-		}
-
-		// Check if the camera is reachable
-		if !camera.CameraState.Status.IsReachable {
-			m.log.Debugf("Camera %s is not reachable", camera.CameraState.Camera.Name)
-			continue
-		}
-
-		// Skip sync check if the camera is already synced
-		if camera.CameraState.Status.IsSynced {
-			m.log.Debugf("Camera %s is already synced, skipping check", camera.CameraState.Camera.Name)
 			continue
 		}
 
@@ -130,8 +119,7 @@ func (m *GoProManager) checkManagedDevices() {
 			continue
 		}
 
-		// Check if camera is paired before attempting sync
-		// Query device directly for most accurate state
+		// Double-check device pairing state for extra safety
 		macAddress := camera.CameraState.Camera.MACAddress
 		devicePaired, err := m.ble.IsPaired(macAddress)
 		if err != nil {
@@ -142,7 +130,7 @@ func (m *GoProManager) checkManagedDevices() {
 		}
 
 		if !devicePaired {
-			m.log.Debugf("Camera %s is not paired, skipping sync", camera.CameraState.Camera.Name)
+			m.log.Debugf("Camera %s is not paired on device, skipping sync", camera.CameraState.Camera.Name)
 			continue
 		}
 

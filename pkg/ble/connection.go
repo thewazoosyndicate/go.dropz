@@ -215,10 +215,15 @@ func (cm *ConnectionManager) Connect(ctx context.Context, macAddress string) (*b
 
 	go func() {
 		defer close(connectDone)
-		// Actual connection logic depends on the bluetooth library
-		// This is a placeholder for the actual connection code
-		addr := bluetooth.Address{}
-		// Code to parse macAddress into bluetooth.Address format goes here
+		// Parse the MAC address string using the tinygo bluetooth library
+		mac, parseErr := bluetooth.ParseMAC(macAddress)
+		if parseErr != nil {
+			connectErr = fmt.Errorf("failed to parse MAC address %s: %v", macAddress, parseErr)
+			return
+		}
+
+		// Create bluetooth.Address with the parsed MAC
+		addr := bluetooth.Address{MACAddress: bluetooth.MACAddress{MAC: mac}}
 
 		device, connectErr = cm.adapter.Connect(addr, bluetooth.ConnectionParams{})
 	}()

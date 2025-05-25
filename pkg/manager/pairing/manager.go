@@ -63,11 +63,14 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 		if pm.notifier != nil {
 			pm.notifier.NotifyUpdate()
 		}
-		// Return the managed camera view - with defensive check
+		// Return the managed camera view - GetManagedCamera returns cameras that are both paired AND managed
+		// If the camera is paired but not managed, we'll create a ManagedCamera wrapper below
 		managedCamera, exists := pm.db.GetManagedCamera(macAddress)
-		if !exists || managedCamera == nil || managedCamera.CameraState == nil {
-			pm.log.Warnf("Failed to retrieve valid managed camera for %s after setting paired status", cameraState.Camera.Name)
-			return nil, fmt.Errorf("camera state corruption detected for %s", cameraState.Camera.Name)
+		if !exists {
+			pm.log.Debugf("Camera %s is paired but not yet managed, creating managed view", cameraState.Camera.Name)
+			managedCamera = &database.ManagedCamera{
+				CameraState: cameraState,
+			}
 		}
 		return managedCamera, nil
 	}

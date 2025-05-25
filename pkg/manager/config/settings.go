@@ -141,13 +141,15 @@ func (cm *Manager) UpdateSetting(settingName string, value interface{}) (databas
 			return config, fmt.Errorf("invalid value type for log_level: expected string")
 		}
 		validLogLevels := map[string]bool{
+			"trace": true,
 			"debug": true,
 			"info":  true,
 			"warn":  true,
 			"error": true,
+			"fatal": true,
 		}
 		if !validLogLevels[strings.ToLower(strVal)] {
-			return config, fmt.Errorf("invalid log_level: expected one of debug, info, warn, error")
+			return config, fmt.Errorf("invalid log_level: expected one of trace, debug, info, warn, error, fatal")
 		}
 		config.LogLevel = strVal
 		cm.log.Infof("Updated log_level to %s", strVal)

@@ -648,6 +648,21 @@ func (c *DiscoveredCamera) ToProtoDiscoveredCamera() *protocol.DiscoveredCamera 
 
 // ToProtoManagedCamera converts a ManagedCamera to protocol ManagedCamera
 func (c *ManagedCamera) ToProtoManagedCamera() *protocol.ManagedCamera {
+	// Defensive check to prevent nil pointer dereference
+	if c.CameraState == nil {
+		// This should never happen, but log and return an empty managed camera if it does
+		// to prevent crash and allow debugging
+		return &protocol.ManagedCamera{
+			CameraState: &protocol.CameraWithState{
+				Camera: &protocol.Camera{
+					Id:         "unknown",
+					Name:       "Invalid Camera State",
+					MacAddress: "unknown",
+				},
+				Status: &protocol.CameraStatus{},
+			},
+		}
+	}
 	return &protocol.ManagedCamera{
 		CameraState: c.CameraState.ToProtoCameraWithState(),
 	}

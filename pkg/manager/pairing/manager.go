@@ -48,36 +48,11 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 		return nil, fmt.Errorf("camera with ID %s not found", cameraID)
 	}
 
-	// First check if the device is already paired by querying it directly
 	macAddress := cameraState.Camera.MACAddress
-	pm.log.Infof("Checking current pairing state for camera %s", cameraState.Camera.Name)
-
-	// Try to check current pairing state from device
-	if isPaired, err := pm.ble.IsPaired(macAddress); err == nil && isPaired {
-		pm.log.Infof("Camera %s is already paired on device, updating database", cameraState.Camera.Name)
-		// Update database to reflect actual device state
-		if err := pm.db.SetCameraPaired(macAddress, true); err != nil {
-			pm.log.Warnf("Failed to update database pairing status: %v", err)
-		}
-		// Notify about the status change
-		if pm.notifier != nil {
-			pm.notifier.NotifyUpdate()
-		}
-		// Return the managed camera view - GetManagedCamera returns cameras that are both paired AND managed
-		// If the camera is paired but not managed, we'll create a ManagedCamera wrapper below
-		managedCamera, exists := pm.db.GetManagedCamera(macAddress)
-		if !exists {
-			pm.log.Debugf("Camera %s is paired but not yet managed, creating managed view", cameraState.Camera.Name)
-			managedCamera = &database.ManagedCamera{
-				CameraState: cameraState,
-			}
-		}
-		return managedCamera, nil
-	}
+	pm.log.Infof("Starting pairing process for camera %s", cameraState.Camera.Name)
 
 	// Mark camera as pairing
-	pm.db.UpdateCameraPairingStatus(cameraState.Camera.MACAddress, true)
-	pm.log.Infof("Starting pairing process for camera %s", cameraState.Camera.Name)
+	pm.db.UpdateCameraPairingStatus(macAddress, true)
 
 	// Notify about the status change
 	if pm.notifier != nil {
@@ -90,7 +65,41 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 
 	// Perform the BLE pairing operation
 	bleErr := bleOperation(ctx, "PairCamera", func() error {
-		return pm.performPairingOperation(cameraState, macAddress)
+		// Use ONLY ConnectWithEnhancedPairing - it handles everything
+		pm.log.Infof("Connecting to device %s with enhanced pairing", macAddress)
+
+		if err := pm.ble.ConnectWithEnhancedPairing(macAddress); err != nil {
+			return fmt.Errorf("failed to connect with enhanced pairing: %v", err)
+		}
+
+		// Get WiFi credentials directly - no need for separate connection
+		ssid, password, err := pm.ble.GetWifiCredentials(macAddress)
+		if err != nil {
+			// Try to disconnect gracefully even if getting WiFi credentials failed
+			_ = pm.ble.Disconnect(macAddress)
+			return fmt.Errorf("failed to get WiFi credentials: %v", err)
+		}
+
+		// Store WiFi credentials in the database
+		pm.log.Infof("Obtained WiFi credentials for camera %s: SSID=%s", cameraState.Camera.ID, ssid)
+
+		// Update the camera's WiFi credentials in the cameraState object
+		cameraState.Camera.WiFiSSID = ssid
+		cameraState.Camera.WiFiPassword = password
+
+		// Notify about WiFi credentials obtained
+		if pm.notifier != nil {
+			pm.notifier.NotifyUpdate()
+		}
+
+		// Disconnect from the camera
+		if err := pm.ble.Disconnect(macAddress); err != nil {
+			pm.log.Warnf("Failed to disconnect from camera: %v", err)
+			// This is not critical, we can continue
+		}
+
+		pm.log.Infof("Pairing operation completed for camera %s", cameraState.Camera.Name)
+		return nil
 	})
 
 	// Handle any BLE operation errors
@@ -103,57 +112,6 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 
 	// Verify and complete pairing
 	return pm.completePairingOperation(cameraState, macAddress)
-}
-
-// performPairingOperation handles the actual BLE pairing process
-func (pm *Manager) performPairingOperation(cameraState *database.CameraWithState, macAddress string) error {
-	// Connect to the device with enhanced model-specific pairing
-	pm.log.Infof("Connecting to device %s with enhanced pairing", macAddress)
-
-	// Notify about connection attempt
-	if pm.notifier != nil {
-		pm.notifier.NotifyUpdate()
-	}
-
-	if err := pm.ble.ConnectWithEnhancedPairing(macAddress); err != nil {
-		return fmt.Errorf("failed to connect with enhanced pairing: %v", err)
-	}
-
-	pm.log.Infof("Successfully connected to device %s, retrieving WiFi credentials", macAddress)
-
-	// Notify about successful connection
-	if pm.notifier != nil {
-		pm.notifier.NotifyUpdate()
-	}
-
-	// Get WiFi credentials
-	ssid, password, err := pm.ble.GetWifiCredentials(macAddress)
-	if err != nil {
-		// Try to disconnect gracefully even if getting WiFi credentials failed
-		_ = pm.ble.Disconnect(macAddress)
-		return fmt.Errorf("failed to get WiFi credentials: %v", err)
-	}
-
-	// Store WiFi credentials in the database
-	pm.log.Infof("Obtained WiFi credentials for camera %s: SSID=%s", cameraState.Camera.ID, ssid)
-
-	// Update the camera's WiFi credentials in the cameraState object
-	cameraState.Camera.WiFiSSID = ssid
-	cameraState.Camera.WiFiPassword = password
-
-	// Notify about WiFi credentials obtained
-	if pm.notifier != nil {
-		pm.notifier.NotifyUpdate()
-	}
-
-	// Disconnect from the camera
-	if err := pm.ble.Disconnect(macAddress); err != nil {
-		pm.log.Warnf("Failed to disconnect from camera: %v", err)
-		// This is not critical, we can continue
-	}
-
-	pm.log.Infof("Pairing operation completed for camera %s", cameraState.Camera.Name)
-	return nil
 }
 
 // completePairingOperation verifies pairing and updates database

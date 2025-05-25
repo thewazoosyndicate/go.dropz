@@ -70,7 +70,6 @@ type ConnectionInfo struct {
 	Metadata        map[string]interface{}
 	notifyChars     map[string]bluetooth.DeviceCharacteristic
 	serviceCache    map[string]bluetooth.DeviceService
-	mutex           sync.RWMutex
 }
 
 // NewConnectionManager creates a new connection manager
@@ -178,6 +177,31 @@ func (cm *ConnectionManager) RecordActivity(macAddress string) {
 	}
 }
 
+// GetConnection returns the active connection for a device
+func (cm *ConnectionManager) GetConnection(macAddress string) *bluetooth.Device {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+
+	if info, exists := cm.connections[macAddress]; exists && info.Device != nil {
+		// Only return device if we're in a connected state
+		if info.State == StateConnected || info.State == StateReady {
+			return info.Device
+		}
+	}
+	return nil
+}
+
+// GetConnectionInfo returns connection information for a device
+func (cm *ConnectionManager) GetConnectionInfo(macAddress string) *ConnectionInfo {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+
+	if info, exists := cm.connections[macAddress]; exists {
+		return info
+	}
+	return nil
+}
+
 // Connect initiates a connection to a device with proper state management
 func (cm *ConnectionManager) Connect(ctx context.Context, macAddress string) (*bluetooth.Device, error) {
 	// Check current state
@@ -206,8 +230,8 @@ func (cm *ConnectionManager) Connect(ctx context.Context, macAddress string) (*b
 	// Set state to connecting
 	cm.ChangeState(macAddress, StateConnecting, nil)
 
-	// Attempt connection with timeout
-	connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	// Attempt connection with a shorter, more aggressive timeout
+	connectCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
 	// Use a channel to handle connection completion
@@ -215,21 +239,49 @@ func (cm *ConnectionManager) Connect(ctx context.Context, macAddress string) (*b
 	var device *bluetooth.Device
 	var connectErr error
 
+	cm.log.Infof("ConnectionManager.Connect: Starting connection attempt for device %s with 15s timeout", macAddress)
+
 	go func() {
 		defer close(connectDone)
+		cm.log.Debugf("ConnectionManager.Connect: Starting connection goroutine for device %s", macAddress)
+
 		// Parse the MAC address string using the tinygo bluetooth library
 		mac, parseErr := bluetooth.ParseMAC(macAddress)
 		if parseErr != nil {
 			connectErr = fmt.Errorf("failed to parse MAC address %s: %v", macAddress, parseErr)
+			cm.log.Errorf("ConnectionManager.Connect: MAC parsing failed for %s: %v", macAddress, parseErr)
 			return
 		}
 
 		// Create bluetooth.Address with the parsed MAC
 		addr := bluetooth.Address{MACAddress: bluetooth.MACAddress{MAC: mac}}
 
-		deviceValue, connectErr := cm.adapter.Connect(addr, bluetooth.ConnectionParams{})
-		if connectErr == nil {
-			device = &deviceValue
+		cm.log.Debugf("ConnectionManager.Connect: Attempting adapter.Connect for device %s", macAddress)
+
+		// Create a timer for the actual connection attempt
+		connectionTimer := time.NewTimer(12 * time.Second)
+		connectionResult := make(chan struct{})
+
+		go func() {
+			defer close(connectionResult)
+			deviceValue, err := cm.adapter.Connect(addr, bluetooth.ConnectionParams{})
+			if err == nil {
+				device = &deviceValue
+				cm.log.Debugf("ConnectionManager.Connect: adapter.Connect succeeded for device %s", macAddress)
+			} else {
+				connectErr = err
+				cm.log.Errorf("ConnectionManager.Connect: adapter.Connect failed for device %s: %v", macAddress, err)
+			}
+		}()
+
+		// Wait for either connection completion or timeout
+		select {
+		case <-connectionResult:
+			connectionTimer.Stop()
+			cm.log.Debugf("ConnectionManager.Connect: Connection attempt completed for device %s", macAddress)
+		case <-connectionTimer.C:
+			connectErr = fmt.Errorf("connection attempt timed out after 12 seconds")
+			cm.log.Errorf("ConnectionManager.Connect: Connection attempt timed out for device %s", macAddress)
 		}
 	}()
 
@@ -238,6 +290,7 @@ func (cm *ConnectionManager) Connect(ctx context.Context, macAddress string) (*b
 	case <-connectDone:
 		// Connection completed (success or error)
 		if connectErr != nil {
+			cm.log.Errorf("ConnectionManager.Connect: Connection failed for device %s: %v", macAddress, connectErr)
 			cm.ChangeState(macAddress, StateDisconnected, connectErr)
 			return nil, NewBLEError("connect", macAddress, connectErr, true, 1)
 		}
@@ -248,14 +301,90 @@ func (cm *ConnectionManager) Connect(ctx context.Context, macAddress string) (*b
 		info.Device = device
 		cm.mutex.Unlock()
 
+		cm.log.Infof("ConnectionManager.Connect: Successfully connected to device %s", macAddress)
 		cm.ChangeState(macAddress, StateConnected, nil)
 		return device, nil
 
 	case <-connectCtx.Done():
 		// Timeout or cancellation
+		cm.log.Errorf("ConnectionManager.Connect: Context timeout/cancellation for device %s: %v", macAddress, connectCtx.Err())
 		cm.ChangeState(macAddress, StateDisconnected, connectCtx.Err())
 		return nil, NewBLEError("connect", macAddress, ErrTimeout, true, 1)
 	}
+}
+
+// ConnectWithOpenGoProSpec connects to a device following OpenGoPro BLE specification
+func (cm *ConnectionManager) ConnectWithOpenGoProSpec(ctx context.Context, macAddress string) (*bluetooth.Device, error) {
+	cm.log.Infof("Starting OpenGoPro-compliant connection sequence for device %s", macAddress)
+
+	// Step 1: Establish basic BLE connection
+	device, err := cm.Connect(ctx, macAddress)
+	if err != nil {
+		return nil, fmt.Errorf("failed to establish BLE connection: %v", err)
+	}
+
+	// Step 2: Wait for connection to stabilize (OpenGoPro recommendation)
+	cm.log.Debugf("Waiting for connection to stabilize...")
+	time.Sleep(500 * time.Millisecond)
+
+	// Step 3: Discover services with timeout
+	cm.log.Debugf("Discovering services...")
+	serviceCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	serviceDiscoveryDone := make(chan struct{})
+	var services []bluetooth.DeviceService
+	var serviceErr error
+
+	go func() {
+		defer close(serviceDiscoveryDone)
+		services, serviceErr = device.DiscoverServices(nil)
+	}()
+
+	select {
+	case <-serviceDiscoveryDone:
+		if serviceErr != nil {
+			cm.ChangeState(macAddress, StateError, serviceErr)
+			return nil, fmt.Errorf("service discovery failed: %v", serviceErr)
+		}
+	case <-serviceCtx.Done():
+		cm.ChangeState(macAddress, StateError, serviceCtx.Err())
+		return nil, fmt.Errorf("service discovery timeout: %v", serviceCtx.Err())
+	}
+
+	cm.log.Debugf("Discovered %d services for device %s", len(services), macAddress)
+
+	// Step 4: Verify OpenGoPro Control & Query service is present
+	var hasOpenGoProService bool
+	for _, svc := range services {
+		if svc.UUID().String() == GoProControlServiceUUID {
+			hasOpenGoProService = true
+			break
+		}
+	}
+
+	if !hasOpenGoProService {
+		err := fmt.Errorf("OpenGoPro Control & Query service not found")
+		cm.ChangeState(macAddress, StateError, err)
+		return nil, err
+	}
+
+	// Step 5: Mark as ready for OpenGoPro operations
+	cm.ChangeState(macAddress, StateReady, nil)
+	cm.log.Infof("OpenGoPro BLE connection established successfully for device %s", macAddress)
+
+	// Store services in connection info
+	cm.mutex.Lock()
+	if info, exists := cm.connections[macAddress]; exists {
+		if info.Metadata == nil {
+			info.Metadata = make(map[string]interface{})
+		}
+		info.Metadata["services"] = services
+		info.Metadata["opengopro_ready"] = true
+	}
+	cm.mutex.Unlock()
+
+	return device, nil
 }
 
 // Disconnect properly disconnects from a device

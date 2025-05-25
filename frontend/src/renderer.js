@@ -900,10 +900,10 @@ function setupIpcListeners() {
     // Parse log level from the log message
     const { level, style, prefix } = parseGoLogLevel(log);
     
-    // Log to our debug system
-    debugLog(`${prefix} ${log}`, level);
+    // Log to file only (avoid duplication with addLogEntry)
+    logToFile(`${prefix} ${log}`, level);
     
-    // Add to UI logs with 'go' source
+    // Add to UI logs with 'go' source only (debugLog would duplicate this)
     addLogEntry(`${prefix} ${log}`, style, 'go');
   });
   
@@ -1229,13 +1229,16 @@ function addOrUpdateDevice(device) {
   // Update or add the device
   allDevices[device.macAddress] = device;
   
-  // Log which pools the device will show in
+  // Log which pools the device will show in (only for new devices or significant changes)
   const inDiscovered = shouldShowInDiscoveredPool(device);
   const inManaged = shouldShowInManagedPool(device);
   const inSyncQueue = shouldShowInSyncQueue(device);
   
-  debugLog(`Device ${device.name} pool memberships: Discovered=${inDiscovered}, Managed=${inManaged}, SyncQueue=${inSyncQueue}`, LOG_LEVELS.DEBUG);
-  debugLog(`Device ${device.name} flags: isReachable=${device.isReachable}, isPaired=${device.isPaired}, isManaged=${device.isManaged}, isSynced=${device.isSynced}`, LOG_LEVELS.DEBUG);
+  // Only log detailed pool membership info for new devices or when explicitly debugging
+  if (isNewDevice) {
+    debugLog(`Device ${device.name} pool memberships: Discovered=${inDiscovered}, Managed=${inManaged}, SyncQueue=${inSyncQueue}`, LOG_LEVELS.DEBUG);
+    debugLog(`Device ${device.name} flags: isReachable=${device.isReachable}, isPaired=${device.isPaired}, isManaged=${device.isManaged}, isSynced=${device.isSynced}`, LOG_LEVELS.DEBUG);
+  }
   
   // Update UI immediately for this device
   updateDeviceLists();
@@ -1267,19 +1270,30 @@ function updateDeviceStatus(macAddress, status) {
 
 // Update all device lists in the UI
 function updateDeviceLists() {
-  debugLog("Updating device lists. Total devices: " + Object.keys(allDevices).length, LOG_LEVELS.DEBUG);
-  
-  // Log detailed device information for debugging
-  Object.values(allDevices).forEach(device => {
-    debugLog(`Device: ${device.name}, MAC: ${device.macAddress}, isPaired: ${device.isPaired}, isManaged: ${device.isManaged}, isReachable: ${device.isReachable}, isSynced: ${device.isSynced}`, LOG_LEVELS.TRACE);
-  });
-  
-  // Log how many devices should appear in each pool
+  // Only log on significant changes, not every update
+  const totalDevices = Object.keys(allDevices).length;
   const discoveredCount = Object.values(allDevices).filter(device => shouldShowInDiscoveredPool(device)).length;
   const managedCount = Object.values(allDevices).filter(device => shouldShowInManagedPool(device)).length;
   const syncCount = Object.values(allDevices).filter(device => shouldShowInSyncQueue(device)).length;
   
-  debugLog(`Pool counts - Discovered: ${discoveredCount}, Managed: ${managedCount}, Sync: ${syncCount}`, LOG_LEVELS.DEBUG);
+  // Only log if this is a significant change (new devices, status changes, etc.)
+  // We track the previous counts to avoid excessive logging
+  if (!updateDeviceLists.lastCounts || 
+      updateDeviceLists.lastCounts.total !== totalDevices ||
+      updateDeviceLists.lastCounts.discovered !== discoveredCount ||
+      updateDeviceLists.lastCounts.managed !== managedCount ||
+      updateDeviceLists.lastCounts.sync !== syncCount) {
+    
+    debugLog(`Device lists updated - Total: ${totalDevices}, Discovered: ${discoveredCount}, Managed: ${managedCount}, Sync: ${syncCount}`, LOG_LEVELS.TRACE);
+    
+    // Store current counts for next comparison
+    updateDeviceLists.lastCounts = {
+      total: totalDevices,
+      discovered: discoveredCount,
+      managed: managedCount,
+      sync: syncCount
+    };
+  }
   
   // Update UI for each list
   updatePairQueueUI();
@@ -1335,12 +1349,12 @@ function updatePairQueueUI() {
     (!device.isPaired || !device.isManaged)
   );
   
-  // Add debugging to see which devices are being considered and why
-  debugLog(`Discovered pool filtering - Total devices: ${Object.values(allDevices).length}, Shown: ${discoveredDevices.length}`, LOG_LEVELS.DEBUG);
-  Object.values(allDevices).forEach(device => {
-    const shouldShow = device.isReachable && (!device.isPaired || !device.isManaged);
-    debugLog(`Device ${device.name} (${device.macAddress}): isReachable=${device.isReachable}, isPaired=${device.isPaired}, isManaged=${device.isManaged}, shouldShow=${shouldShow}`, LOG_LEVELS.TRACE);
-  });
+  // Add debugging to see which devices are being considered and why (only log when filter changes)
+  const filterKey = `discovered-${discoveredDevices.length}-${Object.values(allDevices).length}`;
+  if (updatePairQueueUI.lastFilterKey !== filterKey) {
+    debugLog(`Discovered pool filtering - Total devices: ${Object.values(allDevices).length}, Shown: ${discoveredDevices.length}`, LOG_LEVELS.DEBUG);
+    updatePairQueueUI.lastFilterKey = filterKey;
+  }
   
   // Sort by signal strength
   discoveredDevices.sort((a, b) => (b.rssi || -100) - (a.rssi || -100));

@@ -177,12 +177,20 @@ const (
 	StatusTotalSDSpace            = 117 // TOTAL_SD_SPACE_KB
 	StatusPhotosCount             = 118 // NUM_PHOTOS
 
-	// Pairing State constants (Status ID 19)
-	PairingStateNeverStarted = 0 // Never started
-	PairingStateStarted      = 1 // Started
-	PairingStateAborted      = 2 // Aborted
-	PairingStateCancelled    = 3 // Cancelled
-	PairingStateCompleted    = 4 // Completed
+	// Pairing State constants (Status ID 19) - Updated per OpenGoPro BLE spec
+	PairingStateNotPaired  = 0 // Not paired
+	PairingStateInProgress = 1 // Pairing started
+	PairingStateFailed     = 2 // Pairing aborted
+	PairingStateCancelled  = 3 // Pairing cancelled
+	PairingStateCompleted  = 4 // Pairing completed
+
+	// Response Status Codes (from OpenGoPro spec)
+	ResponseStatusSuccess            = 0x00 // Success
+	ResponseStatusError              = 0x01 // Error
+	ResponseStatusInvalidParam       = 0x02 // Invalid parameter
+	ResponseStatusOperationCancelled = 0x03 // Operation cancelled
+	ResponseStatusOperationTimeout   = 0x04 // Operation timeout
+	ResponseStatusOperationFailed    = 0x05 // Operation failed
 
 	// BLE packet handling constants (from OpenGoPro spec)
 	GeneralLengthByteMask  = 0x1F   // Bits 0-4 for general length

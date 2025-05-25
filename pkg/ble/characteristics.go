@@ -383,7 +383,8 @@ func (cm *CharacteristicsManager) QueryPairingState() error {
 	}
 
 	// Pairing state query command (status ID 19 using Get Status Values)
-	pairingStateCmd := []byte{QueryGetStatusValues, StatusPairingState}
+	// OpenGoPro TLV format: [Command] [Array Length] [Status ID]
+	pairingStateCmd := []byte{QueryGetStatusValues, 0x01, StatusPairingState}
 
 	if err := cm.WriteCommand(queryChar, pairingStateCmd, false); err != nil {
 		return fmt.Errorf("failed to write pairing state query: %v", err)
@@ -402,7 +403,8 @@ func (cm *CharacteristicsManager) QueryBatteryLevel() error {
 	}
 
 	// Battery level query command (status ID 2 using Get Status Values)
-	batteryCmd := []byte{QueryGetStatusValues, StatusBatteryLevel}
+	// OpenGoPro TLV format: [Command] [Array Length] [Status ID]
+	batteryCmd := []byte{QueryGetStatusValues, 0x01, StatusBatteryLevel}
 
 	if err := cm.WriteCommand(queryChar, batteryCmd, false); err != nil {
 		return fmt.Errorf("failed to write battery level query: %v", err)
@@ -436,13 +438,13 @@ func (cm *CharacteristicsManager) createPackets(payload []byte) [][]byte {
 		packets[0] = packet
 	} else {
 		// Multiple packets: first packet has start bit, others have continuation bit
-		
+
 		// First packet
 		firstPacketDataSize := maxDataPerPacket
 		if firstPacketDataSize > totalDataSize {
 			firstPacketDataSize = totalDataSize
 		}
-		
+
 		firstPacket := make([]byte, 0, maxPacketSize)
 		header := GeneralStartBit | byte(firstPacketDataSize&GeneralLengthByteMask)
 		firstPacket = append(firstPacket, header)

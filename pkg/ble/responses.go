@@ -180,9 +180,11 @@ func (rh *ResponseHandler) handleSpecificResponse(macAddress string, queryID, st
 	case QueryGetStatusValues:
 		if len(data) >= 2 {
 			statusID := data[0]
-			if statusID == 19 { // Pairing State
-				if len(data) >= 3 {
-					pairingState := data[2]
+			rh.log.Debug("Processing status response", "mac_address", macAddress, "status_id", statusID, "data_length", len(data))
+
+			if statusID == StatusPairingState { // Pairing State (19)
+				if len(data) >= 2 {
+					pairingState := data[1] // OpenGoPro format: [Status ID] [Value]
 					rh.log.Info("Pairing state received", "mac_address", macAddress, "pairing_state", pairingState)
 
 					// Store pairing state in tracker for future reference
@@ -206,9 +208,9 @@ func (rh *ResponseHandler) handleSpecificResponse(macAddress string, queryID, st
 						rh.log.Trace("Pairing state change event emitted", "mac_address", macAddress, "pairing_state", pairingState)
 					}
 				} else {
-					rh.log.Error("Insufficient data for pairing state", "mac_address", macAddress, "data_length", len(data), "required_min", 3)
+					rh.log.Error("Insufficient data for pairing state", "mac_address", macAddress, "data_length", len(data), "required_min", 2)
 				}
-			} else if statusID == 2 { // Battery Level
+			} else if statusID == StatusBatteryLevel { // Battery Level (2)
 				if len(data) >= 2 {
 					batteryLevel := data[1]
 					rh.log.Debug("Battery level received", "mac_address", macAddress, "battery_level", batteryLevel)
@@ -227,6 +229,23 @@ func (rh *ResponseHandler) handleSpecificResponse(macAddress string, queryID, st
 					}
 				} else {
 					rh.log.Error("Insufficient data for battery level", "mac_address", macAddress, "data_length", len(data), "required_min", 2)
+				}
+			} else if statusID == StatusSystemReady { // System Ready (82)
+				if len(data) >= 2 {
+					systemReady := data[1]
+					rh.log.Info("System ready status received", "mac_address", macAddress, "system_ready", systemReady)
+
+					// Emit system ready event
+					if rh.eventEmitter != nil {
+						rh.eventEmitter.EmitEvent(events.BLEEvent{
+							Type: events.EventSystemReady,
+							Device: map[string]string{
+								"mac_address":  macAddress,
+								"system_ready": string(rune(systemReady)),
+							},
+							Timestamp: time.Now(),
+						})
+					}
 				}
 			} else {
 				rh.log.Trace("Unknown status ID received", "mac_address", macAddress, "status_id", statusID, "data_length", len(data))

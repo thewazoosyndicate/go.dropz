@@ -35,7 +35,6 @@ type Manager struct {
 
 	// Event handling
 	eventHandlers map[events.EventType][]events.EventHandler
-	eventMutex    sync.RWMutex
 
 	// Keep-alive goroutine cancellation map
 	keepAliveCancels map[string]context.CancelFunc
@@ -190,17 +189,80 @@ func (m *Manager) GetDiscoveredDevices() []Device {
 }
 
 func (m *Manager) Connect(macAddress string) error {
-	device, err := m.connManager.Connect(context.Background(), macAddress)
+	m.log.Infof("Connecting to device %s using OpenGoPro BLE specification", macAddress)
+
+	// Phase 0: Verify device is discovered before attempting connection
+	m.log.Debugf("Verifying device %s is in discovered devices list", macAddress)
+	discoveredDevices := m.discoveryMgr.GetDiscoveredDevices()
+	var targetDevice *Device
+	for i := range discoveredDevices {
+		if discoveredDevices[i].MACAddress == macAddress {
+			targetDevice = &discoveredDevices[i]
+			break
+		}
+	}
+
+	if targetDevice == nil {
+		m.log.Errorf("Device %s not found in discovered devices, cannot connect", macAddress)
+		return fmt.Errorf("device %s not discovered, cannot connect", macAddress)
+	}
+
+	m.log.Debugf("Device %s found in discovered devices: %s (RSSI: %d)", macAddress, targetDevice.Name, targetDevice.RSSI)
+
+	// Phase 1: Establish basic BLE connection first
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	m.log.Infof("Phase 1: Establishing BLE connection to device %s", macAddress)
+	// Use connection manager to establish the connection with proper state management
+	device, err := m.connManager.Connect(ctx, macAddress)
 	if err != nil {
-		return err
+		m.log.Errorf("Failed to establish basic connection for device %s: %v", macAddress, err)
+		return fmt.Errorf("connection failed: %v", err)
 	}
 
 	m.addConnection(macAddress, device)
+	m.log.Infof("Phase 1 complete: Basic BLE connection established for device %s", macAddress)
+
+	// Phase 2: Discover services AFTER connection is established
+	m.log.Infof("Phase 2: Discovering services for device %s", macAddress)
+	discoveredServices, err := device.DiscoverServices(nil)
+	if err != nil {
+		m.log.Errorf("Failed to discover services for device %s: %v", macAddress, err)
+		// Clean up the connection on service discovery failure
+		m.removeConnection(macAddress)
+		_ = m.connManager.Disconnect(macAddress)
+		return fmt.Errorf("service discovery failed: %v", err)
+	}
+	m.log.Infof("Phase 2 complete: Discovered %d services for device %s", len(discoveredServices), macAddress)
+
+	// Phase 3: Cache the discovered services in characteristics manager
+	m.log.Infof("Phase 3: Caching services and characteristics for device %s", macAddress)
+	if err := m.characteristicsMgr.DiscoverAndCacheCharacteristics(discoveredServices); err != nil {
+		m.log.Errorf("Failed to cache services for device %s: %v", macAddress, err)
+		// Clean up the connection on caching failure
+		m.removeConnection(macAddress)
+		_ = m.connManager.Disconnect(macAddress)
+		return fmt.Errorf("failed to cache services: %v", err)
+	}
+	m.log.Infof("Phase 3 complete: Services and characteristics cached for device %s", macAddress)
+
+	// Phase 4: Update connection state to ready
+	m.log.Infof("Phase 4: Setting device %s state to ready", macAddress)
+	m.connManager.ChangeState(macAddress, StateReady, nil)
+
+	m.log.Infof("Successfully connected to device %s with %d services discovered and cached", macAddress, len(discoveredServices))
 	return nil
 }
 
 func (m *Manager) Disconnect(macAddress string) error {
 	m.removeConnection(macAddress)
+
+	// Clear the characteristics cache when disconnecting
+	// Note: The current design supports one device connection at a time
+	m.characteristicsMgr.Clear()
+	m.log.Debugf("Cleared characteristics cache after disconnecting device %s", macAddress)
+
 	return m.connManager.Disconnect(macAddress)
 }
 
@@ -384,9 +446,8 @@ func (m *Manager) GetMetadata(macAddress string) (map[string]string, error) {
 	}
 
 	metadata := make(map[string]string)
-	var metadataErr error
 
-	metadataErr = m.withRetry("get metadata", macAddress, 3, func() error {
+	metadataErr := m.withRetry("get metadata", macAddress, 3, func() error {
 		// Get control service characteristics
 		chars, err := m.characteristicsMgr.GetControlServiceCharacteristics()
 		if err != nil {
@@ -459,9 +520,8 @@ func (m *Manager) GetBatteryLevel(macAddress string) (int, error) {
 	}
 
 	var batteryLevel int
-	var batteryErr error
 
-	batteryErr = m.withRetry("get battery level", macAddress, 3, func() error {
+	batteryErr := m.withRetry("get battery level", macAddress, 3, func() error {
 		// Get control service characteristics
 		chars, err := m.characteristicsMgr.GetControlServiceCharacteristics()
 		if err != nil {
@@ -484,7 +544,8 @@ func (m *Manager) GetBatteryLevel(macAddress string) (int, error) {
 		}
 
 		// Query battery level (status ID 70 = Internal Battery Percentage)
-		batteryQuery := []byte{QueryGetStatusValues, 70}
+		// OpenGoPro TLV format: [Command] [Array Length] [Status ID]
+		batteryQuery := []byte{QueryGetStatusValues, 0x01, 70}
 		if _, err := queryChar.WriteWithoutResponse(batteryQuery); err != nil {
 			return fmt.Errorf("failed to query battery level: %v", err)
 		}

@@ -16,6 +16,7 @@ const (
 	EventPairingStateChanged  EventType = "pairing_state_changed"
 	EventModelDetected        EventType = "model_detected"
 	EventBatteryLevel         EventType = "battery_level"
+	EventSystemReady          EventType = "system_ready"
 	EventWifiSSID             EventType = "wifi_ssid"
 	EventWifiPassword         EventType = "wifi_password"
 	EventCommandResponse      EventType = "command_response"

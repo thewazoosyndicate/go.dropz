@@ -31,7 +31,7 @@ func NewPairingManager(connMgr *ConnectionManager, charMgr *CharacteristicsManag
 
 // ConnectWithEnhancedPairing attempts to connect with enhanced model-specific pairing logic
 func (p *PairingManager) ConnectWithEnhancedPairing(macAddress string) error {
-	p.log.Infof("Starting enhanced pairing for device: %s", macAddress)
+	p.log.Infof("BLE pairing started: device=%s mode=enhanced", macAddress)
 
 	// Emit pairing started event
 	p.eventEmitter.EmitEvent(events.BLEEvent{
@@ -51,10 +51,11 @@ func (p *PairingManager) ConnectWithEnhancedPairing(macAddress string) error {
 	// Detect model for enhanced pairing
 	modelID, err := p.detectGoProModel(macAddress)
 	if err != nil {
-		p.log.Warnf("Failed to detect GoPro model: %v, proceeding with default behavior", err)
+		p.log.Warnf("Model detection failed: device=%s error=%v fallback=default", macAddress, err)
 		modelID = 0 // Use 0 to indicate unknown model
 	} else {
-		p.log.Infof("Detected GoPro model: %s (ID: %d)", models.GetModelName(modelID), modelID)
+		p.log.Infof("Model detected: device=%s model=%s model_id=%d",
+			macAddress, models.GetModelName(modelID), modelID)
 	}
 
 	// Perform model-specific pairing procedures
@@ -76,14 +77,14 @@ func (p *PairingManager) ConnectWithEnhancedPairing(macAddress string) error {
 		Timestamp: time.Now(),
 	})
 
-	p.log.Infof("Enhanced pairing completed successfully for device: %s", macAddress)
+	p.log.Infof("BLE pairing completed: device=%s model_id=%d status=success", macAddress, modelID)
 	return nil
 }
 
 // performModelSpecificPairing handles model-specific pairing requirements
 func (p *PairingManager) performModelSpecificPairing(macAddress string, modelID int) error {
 	modelName := models.GetModelName(modelID)
-	p.log.Debugf("Performing model-specific pairing for %s (ID: %d)", modelName, modelID)
+	p.log.Debugf("Executing pairing sequence: device=%s model=%s model_id=%d", macAddress, modelName, modelID)
 
 	// Create model handler
 	handler := models.CreateHandler(modelID)
@@ -139,7 +140,7 @@ func (p *PairingManager) performModelSpecificPairing(macAddress string, modelID 
 
 // verifyPairingState checks the current pairing state and handles it appropriately
 func (p *PairingManager) verifyPairingState(macAddress string) error {
-	p.log.Debug("Verifying pairing state")
+	p.log.Tracef("Verifying pairing state: device=%s", macAddress)
 
 	pairingState, err := p.GetPairingState(macAddress)
 	if err != nil {
@@ -148,13 +149,13 @@ func (p *PairingManager) verifyPairingState(macAddress string) error {
 
 	switch pairingState {
 	case PairingStateCompleted:
-		p.log.Debug("Device is already paired")
+		p.log.Debugf("Pairing state: device=%s state=completed", macAddress)
 		return nil
 	case PairingStateNeverStarted:
-		p.log.Debug("Device pairing never started - this is normal for new pairing")
+		p.log.Debugf("Pairing state: device=%s state=never_started note=normal_for_new_pairing", macAddress)
 		return nil
 	case PairingStateStarted:
-		p.log.Debug("Device pairing is in progress")
+		p.log.Debugf("Pairing state: device=%s state=in_progress", macAddress)
 		return nil
 	case PairingStateAborted:
 		return fmt.Errorf("device pairing was aborted")
@@ -306,6 +307,7 @@ func (p *PairingManager) setConnectionParameters(macAddress, modelType string) e
 
 // emitPairingFailed emits a pairing failed event
 func (p *PairingManager) emitPairingFailed(macAddress string, err error) {
+	p.log.Errorf("BLE pairing failed: device=%s error=%v", macAddress, err)
 	p.eventEmitter.EmitEvent(events.BLEEvent{
 		Type:      events.EventPairingFailed,
 		Device:    map[string]string{"mac_address": macAddress},

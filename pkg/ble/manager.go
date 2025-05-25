@@ -102,11 +102,21 @@ func (m *Manager) withRetry(operation, macAddress string, maxRetries int, fn fun
 			lastErr = err
 			if attempt < maxRetries-1 {
 				waitTime := time.Duration(attempt+1) * 500 * time.Millisecond
-				m.log.Debugf("Retry %d/%d for %s on %s after %v: %v",
+				// Only log retries at TRACE level to reduce noise
+				m.log.Tracef("BLE retry attempt %d/%d for operation '%s' on device %s (backoff: %v): %v",
 					attempt+1, maxRetries, operation, macAddress, waitTime, err)
 				time.Sleep(waitTime)
+			} else {
+				// Log final failure at ERROR level for critical operations
+				m.log.Errorf("BLE operation failed permanently: operation='%s' device=%s attempts=%d error=%v",
+					operation, macAddress, maxRetries, lastErr)
 			}
 		} else {
+			// Log successful retries at INFO level for visibility
+			if attempt > 0 {
+				m.log.Infof("BLE operation recovered: operation='%s' device=%s attempts=%d",
+					operation, macAddress, attempt+1)
+			}
 			return nil
 		}
 	}
@@ -195,9 +205,11 @@ func (m *Manager) Disconnect(macAddress string) error {
 }
 
 func (m *Manager) DisconnectGoPro(macAddress string) error {
-	// Put the GoPro to sleep before disconnecting
+	// Put the GoPro to sleep before disconnecting for battery conservation
 	if err := m.Sleep(macAddress); err != nil {
-		m.log.Warnf("Failed to put GoPro %s to sleep before disconnect: %v", macAddress, err)
+		m.log.Warnf("Sleep command failed before disconnect: device=%s error=%v", macAddress, err)
+	} else {
+		m.log.Tracef("Sleep command successful before disconnect: device=%s", macAddress)
 	}
 	return m.Disconnect(macAddress)
 }
@@ -228,7 +240,7 @@ func (m *Manager) GetWifiCredentials(macAddress string) (string, string, error) 
 	var ssid, password string
 	var wifiErr error
 
-	m.log.Debugf("GetWifiCredentials: Attempting to retrieve WiFi credentials for device %s", macAddress)
+	m.log.Tracef("Attempting to retrieve WiFi credentials for device %s", macAddress)
 
 	wifiErr = m.withRetry("get WiFi credentials", macAddress, 3, func() error {
 		// Discover WiFi service directly
@@ -300,7 +312,7 @@ func (m *Manager) GetWifiCredentials(macAddress string) (string, string, error) 
 		return "", "", fmt.Errorf("failed to get WiFi credentials: %v", wifiErr)
 	}
 
-	m.log.Debugf("Successfully retrieved WiFi credentials for device %s", macAddress)
+	m.log.Infof("WiFi credentials retrieved: device=%s ssid=%s", macAddress, ssid)
 	return ssid, password, nil
 }
 
@@ -351,7 +363,7 @@ func (m *Manager) EnableWifi(macAddress string) error {
 					return fmt.Errorf("failed to write complete data to enable WiFi")
 				}
 
-				m.log.Debug("Successfully enabled WiFi")
+				m.log.Infof("WiFi enabled successfully: device=%s", macAddress)
 				return nil
 			}
 		}
@@ -528,7 +540,7 @@ func (m *Manager) SetDateTime(macAddress string, t time.Time) error {
 			return fmt.Errorf("failed to set date/time: %v", err)
 		}
 
-		m.log.Debugf("Successfully set date/time to %v", t)
+		m.log.Infof("Date/time synchronized: device=%s time=%v", macAddress, t)
 		return nil
 	})
 }
@@ -571,7 +583,7 @@ func (m *Manager) SetCameraControl(macAddress string, enabled bool) error {
 			}
 		}
 
-		m.log.Debugf("Successfully set camera control to %v", enabled)
+		m.log.Infof("Camera control updated: device=%s enabled=%v", macAddress, enabled)
 		return nil
 	})
 }
@@ -600,7 +612,7 @@ func (m *Manager) KeepAlive(macAddress string) error {
 			return fmt.Errorf("failed to write keep-alive: %v", err)
 		}
 
-		m.log.Debug("Successfully sent keep-alive signal")
+		m.log.Tracef("Keep-alive signal sent: device=%s", macAddress)
 		return nil
 	})
 }
@@ -642,7 +654,7 @@ func (m *Manager) Sleep(macAddress string) error {
 		// Give the camera extra time to process the sleep command
 		time.Sleep(500 * time.Millisecond)
 
-		m.log.Debug("Successfully sent sleep command")
+		m.log.Tracef("Sleep command sent successfully: device=%s", macAddress)
 		return nil
 	})
 }

@@ -8,7 +8,7 @@ import (
 
 // Start starts the GoPro manager service
 func (m *GoProManager) Start() error {
-	m.log.Info("Starting GoPro manager service")
+	m.log.Info("GoPro manager starting: mode=service version=1.0")
 
 	// Start BLE manager
 	m.ble.Start()
@@ -33,7 +33,7 @@ func (m *GoProManager) Start() error {
 	go func() {
 		// Wait a bit for BLE to be fully ready
 		time.Sleep(5 * time.Second)
-		m.log.Info("Performing initial device pairing state synchronization")
+		m.log.Info("Device state synchronization: action=pairing_state_init phase=startup")
 		m.syncDevicePairingStates()
 	}()
 
@@ -42,32 +42,32 @@ func (m *GoProManager) Start() error {
 
 // Stop stops the GoPro manager service
 func (m *GoProManager) Stop() {
-	m.log.Infof("GoProManager.Stop() called. isRunning: %v", m.isRunning)
+	m.log.Infof("GoPro manager stopping: is_running=%t", m.isRunning)
 	if !m.isRunning {
-		m.log.Info("GoProManager.Stop() called but manager was not running.")
+		m.log.Info("GoPro manager stop ignored: reason=not_running")
 		return
 	}
 
-	m.log.Info("Stopping GoPro manager service...")
+	m.log.Info("GoPro manager shutdown: phase=initiated")
 
-	m.log.Debug("Cancelling GoProManager context (for backgroundScanner, deviceManager)...")
+	m.log.Debug("GoPro manager shutdown: phase=cancelling_context")
 	m.cancel() // Signal all internal goroutines to stop
-	m.log.Debug("GoProManager context cancelled.")
+	m.log.Trace("GoPro manager shutdown: phase=context_cancelled")
 
-	m.log.Debug("Attempting to stop task queue...")
+	m.log.Debug("GoPro manager shutdown: phase=stopping_task_queue")
 	m.queue.Stop() // This should be idempotent and handle being called multiple times
-	m.log.Debug("Task queue stop requested/completed.")
+	m.log.Debug("GoPro manager shutdown: phase=task_queue_stopped")
 
-	m.log.Debug("Attempting to stop BLE manager...")
+	m.log.Debug("GoPro manager shutdown: phase=stopping_ble")
 	m.ble.Stop() // This should also be idempotent
-	m.log.Debug("BLE manager stop requested/completed.")
+	m.log.Debug("GoPro manager shutdown: phase=ble_stopped")
 
-	m.log.Debug("Waiting for GoProManager internal goroutines (backgroundScanner, deviceManager) to finish...")
+	m.log.Debug("GoPro manager shutdown: phase=waiting_for_goroutines")
 	m.wg.Wait() // Wait for backgroundScanner and deviceManager
-	m.log.Debug("GoProManager internal goroutines finished.")
+	m.log.Debug("GoPro manager shutdown: phase=goroutines_completed")
 
 	m.isRunning = false
-	m.log.Info("GoPro manager service stopped successfully.")
+	m.log.Info("GoPro manager shutdown: phase=completed status=success")
 }
 
 // deviceManager periodically checks managed devices

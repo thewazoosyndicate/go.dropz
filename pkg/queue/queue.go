@@ -92,7 +92,7 @@ func NewTaskQueue(numWorkers int, retryDelay time.Duration) *TaskQueue {
 
 // Start starts the task queue workers
 func (q *TaskQueue) Start() {
-	q.log.Infof("Starting task queue with %d workers", q.numWorkers)
+	q.log.Infof("Task queue starting: workers=%d channel_capacity=%d", q.numWorkers, cap(q.taskChan))
 
 	for i := 0; i < q.numWorkers; i++ {
 		q.wg.Add(1)
@@ -102,15 +102,16 @@ func (q *TaskQueue) Start() {
 
 // Stop stops the task queue
 func (q *TaskQueue) Stop() {
-	q.log.Info("TaskQueue: Stopping...")
+	q.log.Info("Task queue stopping: status=initiated")
 	q.cancel() // Signal workers to stop
 
-	q.log.Debug("TaskQueue: Waiting for workers to finish...")
+	q.log.Debug("Task queue shutdown: status=waiting_for_workers")
 	q.wg.Wait() // Wait for all workers to complete
 
 	close(q.taskChan) // Close channel after workers are done to avoid panic on send.
 
-	q.log.Info("TaskQueue: Stopped.")
+	taskCount := len(q.tasks)
+	q.log.Info("Task queue stopped: remaining_tasks=%d", taskCount)
 }
 
 // AddTask adds a task to the queue
@@ -118,27 +119,29 @@ func (q *TaskQueue) AddTask(task Task) {
 	q.mutex.Lock()
 	// Check if task already exists
 	if _, exists := q.tasks[task.ID()]; exists {
-		q.log.Warnf("Task %s already exists, skipping", task.ID())
+		q.log.Warnf("Task duplicate detected: task_id=%s type=%s action=skipped", task.ID(), task.Type())
 		q.mutex.Unlock()
 		return
 	}
 
-	q.log.Debugf("Adding task %s (type: %s, priority: %d)", task.ID(), task.Type(), task.Priority())
+	q.log.Debugf("Task queued: task_id=%s type=%s priority=%d max_retries=%d",
+		task.ID(), task.Type(), task.Priority(), task.MaxRetries())
 	q.tasks[task.ID()] = task
 	q.mutex.Unlock() // Unlock before sending to channel to avoid deadlock if channel is full
 
 	// Send task to worker, but respect context cancellation
 	select {
 	case <-q.ctx.Done():
-		q.log.Warnf("TaskQueue: Context done, cannot add task %s", task.ID())
+		q.log.Warnf("Task rejected: task_id=%s type=%s reason=queue_shutdown", task.ID(), task.Type())
 		q.mutex.Lock() // Re-acquire lock to remove task if it was added optimistically
 		delete(q.tasks, task.ID())
 		q.mutex.Unlock()
 		return
 	case q.taskChan <- task:
-		q.log.Debugf("Task %s sent to worker channel", task.ID())
+		q.log.Tracef("Task dispatched: task_id=%s type=%s status=sent_to_worker", task.ID(), task.Type())
 	default:
-		q.log.Warnf("TaskQueue: taskChan is full. Task %s might be delayed or dropped if not handled.", task.ID())
+		q.log.Warnf("Task dispatch delayed: task_id=%s type=%s reason=worker_channel_full capacity=%d",
+			task.ID(), task.Type(), cap(q.taskChan))
 	}
 }
 
@@ -147,32 +150,33 @@ func (q *TaskQueue) RemoveTask(taskID string) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
-	if _, exists := q.tasks[taskID]; exists {
+	if task, exists := q.tasks[taskID]; exists {
 		delete(q.tasks, taskID)
-		q.log.Debugf("Removed task %s", taskID)
+		q.log.Tracef("Task removed: task_id=%s type=%s", taskID, task.Type())
 	}
 }
 
 // worker processes tasks from the queue
 func (q *TaskQueue) worker(workerID int) {
 	defer q.wg.Done()
-	q.log.Debugf("TaskQueue: Worker %d started", workerID)
+	q.log.Tracef("Worker started: id=%d", workerID)
 
 	for {
 		select {
 		case <-q.ctx.Done(): // Prioritize context cancellation
-			q.log.Debugf("TaskQueue: Worker %d stopping due to context cancellation.", workerID)
+			q.log.Debugf("Worker stopping: id=%d reason=context_cancelled", workerID)
 			return
 		case task, ok := <-q.taskChan:
 			if !ok {
 				// taskChan was closed, means queue is shutting down and no more tasks will come.
-				q.log.Debugf("TaskQueue: Worker %d stopping because taskChan was closed.", workerID)
+				q.log.Debugf("Worker stopping: id=%d reason=channel_closed", workerID)
 				return
 			}
 			// Double check context before processing, in case of race condition
 			select {
 			case <-q.ctx.Done():
-				q.log.Debugf("TaskQueue: Worker %d received task but context is done. Discarding task %s.", workerID, task.ID())
+				q.log.Debugf("Worker discarding task: id=%d task_id=%s reason=shutdown_in_progress",
+					workerID, task.ID())
 				// Optionally, re-queue or log discarded task
 				continue // Go back to select to exit via ctx.Done() path
 			default:
@@ -184,7 +188,8 @@ func (q *TaskQueue) worker(workerID int) {
 
 // processTask processes a single task
 func (q *TaskQueue) processTask(task Task, workerID int) {
-	q.log.Debugf("TaskQueue: Worker %d processing task %s (type: %s)", workerID, task.ID(), task.Type())
+	q.log.Debugf("Task processing: worker=%d task_id=%s type=%s priority=%d",
+		workerID, task.ID(), task.Type(), task.Priority())
 
 	// Create a task-specific context that respects the queue's main context.
 	// This allows individual tasks to have timeouts while still being cancellable by the queue's Stop().
@@ -199,17 +204,19 @@ func (q *TaskQueue) processTask(task Task, workerID int) {
 		// Check for queue context cancellation before each attempt
 		select {
 		case <-q.ctx.Done():
-			q.log.Debugf("TaskQueue: Worker %d: Queue context cancelled before executing/retrying task %s. Aborting task.", workerID, task.ID())
+			q.log.Debugf("Task cancelled: worker=%d task_id=%s reason=queue_shutdown", workerID, task.ID())
 			return // Exit processing this task
 		default:
 		}
 
 		if retries > 0 {
-			q.log.Debugf("TaskQueue: Worker %d: Retrying task %s (attempt %d/%d)", workerID, task.ID(), retries, task.MaxRetries())
+			q.log.Debugf("Task retry: worker=%d task_id=%s attempt=%d/%d",
+				workerID, task.ID(), retries, task.MaxRetries())
 			// Wait before retry, but make the wait cancellable by q.ctx
 			select {
 			case <-q.ctx.Done():
-				q.log.Debugf("TaskQueue: Worker %d: Task %s cancelled during retry delay due to queue context.", workerID, task.ID())
+				q.log.Debugf("Task cancelled: worker=%d task_id=%s type=%s status=during_retry_delay",
+					workerID, task.ID(), task.Type())
 				return // Exit processing this task
 			case <-time.After(q.retryDelay):
 				// Continue with retry
@@ -218,23 +225,27 @@ func (q *TaskQueue) processTask(task Task, workerID int) {
 
 		err = task.Execute(taskCtx) // Pass the task-specific, cancellable context
 		if err == nil {
-			q.log.Debugf("TaskQueue: Worker %d: Task %s completed successfully", workerID, task.ID())
+			q.log.Infof("Task completed: worker=%d task_id=%s type=%s status=success",
+				workerID, task.ID(), task.Type())
 			q.RemoveTask(task.ID()) // Remove from the map of active tasks
 			return
 		}
 
 		// If the task execution was cancelled via its own context (taskCtx), or the queue's context (q.ctx)
 		if taskCtx.Err() == context.Canceled || taskCtx.Err() == context.DeadlineExceeded || q.ctx.Err() != nil {
-			q.log.Warnf("TaskQueue: Worker %d: Task %s execution cancelled or timed out: taskCtx.Err()=%v, q.ctx.Err()=%v. Original error: %v", workerID, task.ID(), taskCtx.Err(), q.ctx.Err(), err)
+			q.log.Warnf("Task interrupted: worker=%d task_id=%s type=%s task_ctx_err=%q queue_ctx_err=%q error=%v",
+				workerID, task.ID(), task.Type(), taskCtx.Err(), q.ctx.Err(), err)
 			// Do not retry if context was cancelled, as it's an explicit stop signal.
 			q.RemoveTask(task.ID())
 			return
 		}
 
-		q.log.Warnf("TaskQueue: Worker %d: Task %s failed: %v", workerID, task.ID(), err)
+		q.log.Warnf("Task attempt failed: worker=%d task_id=%s type=%s error=%v will_retry=%t",
+			workerID, task.ID(), task.Type(), err, retries < task.MaxRetries())
 		retries++
 	}
 
-	q.log.Errorf("TaskQueue: Worker %d: Task %s failed after %d retries: %v", workerID, task.ID(), retries-1, err)
+	q.log.Errorf("Task failed permanently: worker=%d task_id=%s type=%s retries=%d error=%v",
+		workerID, task.ID(), task.Type(), retries-1, err)
 	q.RemoveTask(task.ID()) // Remove from the map of active tasks
 }

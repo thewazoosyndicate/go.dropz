@@ -40,13 +40,13 @@ func (d *DiscoveryManager) StartScanning(ctx context.Context) error {
 	d.scanMutex.Lock()
 	if d.isScanning {
 		d.scanMutex.Unlock()
-		d.log.Debug("DiscoveryManager: StartScanning called while a scan is already in progress.")
+		d.log.Tracef("Scan already in progress, skipping duplicate start request")
 		return nil // Return success rather than error to facilitate continuous scanning
 	}
 	d.isScanning = true
 	d.scanMutex.Unlock()
 
-	d.log.Debug("DiscoveryManager: Starting scan specifically for GoPro devices (service 0xFEA6)")
+	d.log.Infof("Starting BLE scan for GoPro devices (service 0xFEA6)")
 
 	// Create a derived context with reasonable timeout if none provided
 	scanCtx := ctx
@@ -80,16 +80,16 @@ func (d *DiscoveryManager) StartScanning(ctx context.Context) error {
 		d.scanMutex.Unlock()
 
 		if scanErr != nil {
-			d.log.Errorf("DiscoveryManager: adapter.Scan() error: %v", scanErr)
+			d.log.Errorf("BLE scan failed: error=%v", scanErr)
 			return fmt.Errorf("adapter scan error: %w", scanErr)
 		}
 
-		d.log.Debug("DiscoveryManager: Scan finished successfully.")
+		d.log.Infof("BLE scan completed: devices_found=%d", len(d.devices))
 		return nil
 
 	case <-scanCtx.Done():
 		// Context timeout or cancellation
-		d.log.Debugf("DiscoveryManager: Scan context done: %v. Stopping scan.", scanCtx.Err())
+		d.log.Tracef("BLE scan terminating: reason=%v", scanCtx.Err())
 		return d.handleScanTimeout(scanCtx, scanDone)
 	}
 }
@@ -107,6 +107,10 @@ func (d *DiscoveryManager) processScanResult(result bluetooth.ScanResult) {
 			MACAddress: result.Address.String(),
 			RSSI:       int32(result.RSSI),
 		}
+
+		isNewDevice := d.devices[device.MACAddress] == nil
+		d.log.Tracef("BLE device found: name=%s mac=%s rssi=%d is_new=%t",
+			device.Name, device.MACAddress, device.RSSI, isNewDevice)
 
 		d.devices[device.MACAddress] = device
 
@@ -130,9 +134,9 @@ func (d *DiscoveryManager) handleScanTimeout(scanCtx context.Context, scanDone c
 	select {
 	case <-scanDone:
 		// Scan has stopped
-		d.log.Debug("DiscoveryManager: Scan stopped after context cancellation")
+		d.log.Tracef("BLE scan stopped gracefully: reason=cancelled")
 	case <-time.After(2 * time.Second):
-		d.log.Warn("DiscoveryManager: Scan didn't stop within timeout after StopScan")
+		d.log.Warnf("BLE scan timeout: action=forced_termination delay=2s")
 
 		// Force reset the scanning state
 		d.scanMutex.Lock()
@@ -146,7 +150,7 @@ func (d *DiscoveryManager) handleScanTimeout(scanCtx context.Context, scanDone c
 
 	// Don't treat deadline exceeded as an error in the continuous scan case
 	if scanCtx.Err() == context.DeadlineExceeded {
-		d.log.Debug("DiscoveryManager: Scan timeout is expected in continuous mode")
+		d.log.Tracef("BLE scan timeout: mode=continuous status=expected")
 		return nil
 	}
 
@@ -164,12 +168,12 @@ func (d *DiscoveryManager) StopScanning() error {
 	}
 
 	if err := d.adapter.StopScan(); err != nil {
-		d.log.Warnf("DiscoveryManager: Failed to stop scan: %v", err)
+		d.log.Warnf("BLE scan termination failed: error=%v", err)
 		return err
 	}
 
 	d.isScanning = false
-	d.log.Debug("DiscoveryManager: Scanning stopped")
+	d.log.Infof("BLE scan stopped: device_count=%d", len(d.devices))
 	return nil
 }
 

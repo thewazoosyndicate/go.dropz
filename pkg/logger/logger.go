@@ -36,6 +36,7 @@ type LogrusLogger struct {
 var instance *LogrusLogger
 var once sync.Once
 var logFilePath string
+var sharedLogger *logrus.Logger // Single shared logger instance
 
 // CustomFormatter is our custom log formatter that ensures consistent formatting
 type CustomFormatter struct {
@@ -95,8 +96,12 @@ func toString(value interface{}) string {
 // GetLogger returns a singleton logger instance
 func GetLogger() Logger {
 	once.Do(func() {
+		// If the shared logger hasn't been initialized yet, use the standard logger
+		if sharedLogger == nil {
+			sharedLogger = logrus.StandardLogger()
+		}
 		instance = &LogrusLogger{
-			logger: logrus.NewEntry(logrus.New()),
+			logger: logrus.NewEntry(sharedLogger),
 		}
 	})
 	return instance
@@ -104,18 +109,21 @@ func GetLogger() Logger {
 
 // Initialize sets up the logger with specified log level and file path
 func Initialize(level, filePath string) error {
+	// Initialize the shared logger instance
+	sharedLogger = logrus.New()
+
 	// Use our custom formatter with level prefixes
 	customFormatter := &CustomFormatter{
 		IncludeLevelPrefix: true,
 	}
-	logrus.SetFormatter(customFormatter)
+	sharedLogger.SetFormatter(customFormatter)
 
 	// Parse the log level
 	logLevel, err := logrus.ParseLevel(level)
 	if err != nil {
 		return err
 	}
-	logrus.SetLevel(logLevel)
+	sharedLogger.SetLevel(logLevel)
 
 	// Create log directory if it doesn't exist
 	if filePath != "" {
@@ -130,23 +138,24 @@ func Initialize(level, filePath string) error {
 			return err
 		}
 
-		// Write to both file and stdout (make sure all logs go to stdout)
-		// This ensures all logs go to stdout and not stderr
+		// Write to both file and stdout
 		writer := io.MultiWriter(os.Stdout, file)
-
-		// Set the output for both the standard logger and our instance
-		logrus.SetOutput(writer)
-		logrus.StandardLogger().SetOutput(writer)
-
-		// Just to be super certain, force any loggers created after this to also use stdout
-		logrus.StandardLogger().Out = writer
+		sharedLogger.SetOutput(writer)
 
 		logFilePath = filePath
 	} else {
 		// Even if no file is specified, ensure logs go to stdout
+		sharedLogger.SetOutput(os.Stdout)
+	}
+
+	// Also configure the standard logger to match our shared logger
+	// This ensures any direct logrus calls use the same configuration
+	logrus.SetFormatter(customFormatter)
+	logrus.SetLevel(logLevel)
+	if filePath != "" {
+		logrus.SetOutput(sharedLogger.Out)
+	} else {
 		logrus.SetOutput(os.Stdout)
-		logrus.StandardLogger().SetOutput(os.Stdout)
-		logrus.StandardLogger().Out = os.Stdout
 	}
 
 	return nil
@@ -229,4 +238,22 @@ func (l *LogrusLogger) WithFields(fields map[string]interface{}) Logger {
 // GetLogFilePath returns the current log file path
 func GetLogFilePath() string {
 	return logFilePath
+}
+
+// UpdateLogLevel dynamically updates the log level for the shared logger
+func UpdateLogLevel(level string) error {
+	logLevel, err := logrus.ParseLevel(level)
+	if err != nil {
+		return fmt.Errorf("invalid log level '%s': %w", level, err)
+	}
+
+	// Update the shared logger instance if it exists
+	if sharedLogger != nil {
+		sharedLogger.SetLevel(logLevel)
+	}
+
+	// Also update the standard logger for consistency
+	logrus.SetLevel(logLevel)
+
+	return nil
 }

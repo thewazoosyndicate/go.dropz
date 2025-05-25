@@ -181,7 +181,9 @@ func (cm *ConnectionManager) RecordActivity(macAddress string) {
 // Connect initiates a connection to a device with proper state management
 func (cm *ConnectionManager) Connect(ctx context.Context, macAddress string) (*bluetooth.Device, error) {
 	// Check current state
+	cm.log.Debugf("ConnectionManager.Connect called for device %s", macAddress)
 	currentState := cm.GetState(macAddress)
+	cm.log.Tracef("ConnectionManager.Connect: Device %s current state: %s", macAddress, currentState)
 	if currentState == StateConnecting || currentState == StateConnected || currentState == StateReady {
 		cm.log.Warnf("Device %s is already in state %s", macAddress, currentState)
 

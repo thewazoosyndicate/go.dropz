@@ -1,0 +1,20 @@
+{
+  "camera_states": {},
+  "sync_queue": [],
+  "groups": [],
+  "videos": [],
+  "logs": [],
+  "config": {
+    "pair_mode_enabled": false,
+    "sync_enabled": true,
+    "scan_interval_seconds": 30,
+    "connect_timeout_seconds": 60,
+    "days_threshold": 1,
+    "destination_folder": "/home/epheo/Videos/dropz",
+    "inactivity_timeout_seconds": 60,
+    "inactivity_sync_interval_seconds": 600,
+    "set_time_enabled": true,
+    "log_level": "info",
+    "last_updated": "2025-05-25T13:04:50.36292016+02:00"
+  }
+}

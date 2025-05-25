@@ -412,47 +412,59 @@ func (cm *CharacteristicsManager) QueryBatteryLevel() error {
 	return nil
 }
 
-// createPackets splits a large payload into BLE packets
+// createPackets splits a large payload into BLE packets according to OpenGoPro spec
 func (cm *CharacteristicsManager) createPackets(payload []byte) [][]byte {
-	// BLE <= v4.2 limits packet size to 20 bytes
+	// BLE limits packet size to 20 bytes
 	maxPacketSize := 20
+	maxDataPerPacket := maxPacketSize - 1 // Reserve 1 byte for header
 
 	// Calculate how many packets we need
-	numPackets := (len(payload) + maxPacketSize - 2) / (maxPacketSize - 1)
-	if numPackets < 1 {
-		numPackets = 1
+	totalDataSize := len(payload)
+	if totalDataSize == 0 {
+		return [][]byte{[]byte{GeneralStartBit}}
 	}
 
+	numPackets := (totalDataSize + maxDataPerPacket - 1) / maxDataPerPacket
 	packets := make([][]byte, numPackets)
 
-	// First packet has the header and can hold up to 19 bytes of data
-	firstPacket := make([]byte, 0, maxPacketSize)
-	firstPacket = append(firstPacket, PacketTypeStart)
-
-	if len(payload) > maxPacketSize-1 {
-		// First packet can hold up to maxPacketSize-1 bytes
-		firstPacket = append(firstPacket, payload[:maxPacketSize-1]...)
+	if numPackets == 1 {
+		// Single packet: start bit + length + data
+		packet := make([]byte, 0, maxPacketSize)
+		header := GeneralStartBit | byte(totalDataSize&GeneralLengthByteMask)
+		packet = append(packet, header)
+		packet = append(packet, payload...)
+		packets[0] = packet
+	} else {
+		// Multiple packets: first packet has start bit, others have continuation bit
+		
+		// First packet
+		firstPacketDataSize := maxDataPerPacket
+		if firstPacketDataSize > totalDataSize {
+			firstPacketDataSize = totalDataSize
+		}
+		
+		firstPacket := make([]byte, 0, maxPacketSize)
+		header := GeneralStartBit | byte(firstPacketDataSize&GeneralLengthByteMask)
+		firstPacket = append(firstPacket, header)
+		firstPacket = append(firstPacket, payload[:firstPacketDataSize]...)
 		packets[0] = firstPacket
 
-		// Distribute the remaining payload across continuation packets
-		remainingPayload := payload[maxPacketSize-1:]
+		// Continuation packets
+		remainingData := payload[firstPacketDataSize:]
 		for i := 1; i < numPackets; i++ {
-			packet := make([]byte, 0, maxPacketSize)
-			packet = append(packet, PacketTypeContinuation)
-
-			start := (i - 1) * (maxPacketSize - 1)
-			end := start + (maxPacketSize - 1)
-			if end > len(remainingPayload) {
-				end = len(remainingPayload)
+			packetDataSize := maxDataPerPacket
+			if len(remainingData) < packetDataSize {
+				packetDataSize = len(remainingData)
 			}
 
-			packet = append(packet, remainingPayload[start:end]...)
+			packet := make([]byte, 0, maxPacketSize)
+			header := GeneralContinueBit | byte(packetDataSize&GeneralLengthByteMask)
+			packet = append(packet, header)
+			packet = append(packet, remainingData[:packetDataSize]...)
 			packets[i] = packet
+
+			remainingData = remainingData[packetDataSize:]
 		}
-	} else {
-		// Short payload fits in a single packet
-		firstPacket = append(firstPacket, payload...)
-		packets[0] = firstPacket
 	}
 
 	return packets

@@ -1,179 +1,193 @@
 package ble
 
-// GoPro BLE constants
+// GoPro BLE constants - Updated according to OpenGoPro BLE specification
+// Reference: https://gopro.github.io/OpenGoPro/ble/
+
 const (
 	// Service UUIDs
-	GoProWifiServiceUUID      = "b5f90001-aa8d-11e3-9046-0002a5d5c51b"
-	GoProControlServiceUUID   = "0000fea6-0000-1000-8000-00805f9b34fb"
-	GoProCameraManagementUUID = "b5f90090-aa8d-11e3-9046-0002a5d5c51b"
+	GoProWifiServiceUUID    = "b5f90001-aa8d-11e3-9046-0002a5d5c51b" // WiFi Access Point Service
+	GoProControlServiceUUID = "0000fea6-0000-1000-8000-00805f9b34fb" // Control & Query Service
 
-	// Characteristic UUIDs for WiFi
-	WifiSSIDCharUUID     = "b5f90002-aa8d-11e3-9046-0002a5d5c51b"
-	WifiPasswordCharUUID = "b5f90003-aa8d-11e3-9046-0002a5d5c51b"
-	WifiPowerCharUUID    = "b5f90004-aa8d-11e3-9046-0002a5d5c51b"
-	WifiStateCharUUID    = "b5f90005-aa8d-11e3-9046-0002a5d5c51b"
+	// Note: The Camera Management UUID might be deprecated or specific to certain models
+	GoProCameraManagementUUID = "0000fea6-0000-1000-8000-00805f9b34fb" // Using Control Service UUID
 
-	// Network Management Characteristic UUIDs
+	// Characteristic UUIDs for WiFi Access Point Service
+	WifiSSIDCharUUID     = "b5f90002-aa8d-11e3-9046-0002a5d5c51b" // WiFi AP SSID
+	WifiPasswordCharUUID = "b5f90003-aa8d-11e3-9046-0002a5d5c51b" // WiFi AP Password
+	WifiPowerCharUUID    = "b5f90004-aa8d-11e3-9046-0002a5d5c51b" // WiFi AP Power
+	WifiStateCharUUID    = "b5f90005-aa8d-11e3-9046-0002a5d5c51b" // WiFi AP State
+
+	// Network Management Characteristic UUIDs (if using extended services)
 	NetworkMgmtCommandCharUUID  = "b5f90091-aa8d-11e3-9046-0002a5d5c51b"
 	NetworkMgmtResponseCharUUID = "b5f90092-aa8d-11e3-9046-0002a5d5c51b"
 
-	// Characteristic UUIDs for Control & Query
-	CommandCharUUID          = "b5f90072-aa8d-11e3-9046-0002a5d5c51b"
-	CommandResponseCharUUID  = "b5f90073-aa8d-11e3-9046-0002a5d5c51b"
-	SettingsCharUUID         = "b5f90074-aa8d-11e3-9046-0002a5d5c51b"
-	SettingsResponseCharUUID = "b5f90075-aa8d-11e3-9046-0002a5d5c51b"
-	QueryCharUUID            = "b5f90076-aa8d-11e3-9046-0002a5d5c51b"
-	QueryResponseCharUUID    = "b5f90077-aa8d-11e3-9046-0002a5d5c51b"
+	// Characteristic UUIDs for Control & Query Service
+	CommandCharUUID          = "b5f90072-aa8d-11e3-9046-0002a5d5c51b" // Command Request
+	CommandResponseCharUUID  = "b5f90073-aa8d-11e3-9046-0002a5d5c51b" // Command Response
+	SettingsCharUUID         = "b5f90074-aa8d-11e3-9046-0002a5d5c51b" // Settings Request
+	SettingsResponseCharUUID = "b5f90075-aa8d-11e3-9046-0002a5d5c51b" // Settings Response
+	QueryCharUUID            = "b5f90076-aa8d-11e3-9046-0002a5d5c51b" // Query Request
+	QueryResponseCharUUID    = "b5f90077-aa8d-11e3-9046-0002a5d5c51b" // Query Response
 
-	// Command IDs
-	CommandSetShutter       = 0x01
-	CommandSleep            = 0x05
-	CommandSetDateTime      = 0x0D
-	CommandGetDateTime      = 0x0E
-	CommandSetLocalDateTime = 0x0F
-	CommandGetLocalDateTime = 0x10
-	CommandRebootCamera     = 0x11
-	CommandSetAPControl     = 0x17
-	CommandHilightMoment    = 0x18
-	CommandGetHardwareInfo  = 0x3C
-	CommandLoadPresetGroup  = 0x3E
-	CommandLoadPreset       = 0x40
-	CommandSetAnalytics     = 0x50
-	CommandGetOpenGoProVer  = 0x51
-	CommandKeepAlive        = 0x5B
+	// Command IDs (verified against OpenGoPro spec)
+	CommandSetShutter      = 0x01 // SET_SHUTTER
+	CommandSleep           = 0x05 // SLEEP
+	CommandSetDateTime     = 0x0D // SET_DATE_TIME (deprecated, use SET_DATE_TIME_DST)
+	CommandGetDateTime     = 0x0E // GET_DATE_TIME (deprecated, use GET_DATE_TIME_DST)
+	CommandSetDateTimeDST  = 0x0F // SET_DATE_TIME_DST (replaces SET_LOCAL_DATE_TIME)
+	CommandGetDateTimeDST  = 0x10 // GET_DATE_TIME_DST (replaces GET_LOCAL_DATE_TIME)
+	CommandSetAPControl    = 0x17 // SET_AP_CONTROL
+	CommandHilightMoment   = 0x18 // TAG_HILIGHT_MOMENT
+	CommandGetHardwareInfo = 0x3C // GET_HW_INFO
+	CommandLoadPresetGroup = 0x3E // LOAD_PRESET_GROUP
+	CommandLoadPreset      = 0x40 // LOAD_PRESET
+	CommandSetAnalytics    = 0x50 // SET_THIRD_PARTY_CLIENT_INFO
+	CommandGetOpenGoProVer = 0x51 // GET_OPEN_GOPRO_API_VERSION
+	CommandKeepAlive       = 0x5B // KEEP_ALIVE
 
-	// Query IDs (only official ones from OpenGoPro spec)
-	QueryGetSettingValues            = 0x12
-	QueryGetStatusValues             = 0x13
-	QueryGetSettingCapabilities      = 0x32
-	QueryRegisterSettingUpdates      = 0x52
-	QueryRegisterStatusUpdates       = 0x53
-	QueryRegisterCapabilityUpdates   = 0x62
-	QueryUnregisterSettingUpdates    = 0x72
-	QueryUnregisterStatusUpdates     = 0x73
-	QueryUnregisterCapabilityUpdates = 0x82
-	QueryAsyncSettingNotification    = 0x92
-	QueryAsyncStatusNotification     = 0x93
-	QueryAsyncCapabilityNotification = 0xA2
+	// Additional Commands from OpenGoPro spec
+	CommandSetCOHN        = 0x0F // SET_COHN_SETTING
+	CommandClearCOHN      = 0x10 // CLEAR_COHN_CERT
+	CommandCreateCOHNCert = 0x11 // CREATE_COHN_CERT
+	CommandCOHNStatus     = 0x12 // REQUEST_COHN_SETTING
 
-	// Protobuf Command IDs (for complex commands using protobuf)
-	ProtobufCommandSetCameraControl = 0x69 // RequestSetCameraControlStatus
-	ProtobufCommandSetTurboActive   = 0x6B // RequestSetTurboActive
-	ProtobufCommandGetLastMedia     = 0x6D // RequestGetLastCapturedMedia
-	ProtobufCommandGetPresetStatus  = 0x72 // RequestGetPresetStatus
+	// Query IDs (verified against OpenGoPro spec)
+	QueryGetSettingValues            = 0x12 // GET_SETTING_VALUES
+	QueryGetStatusValues             = 0x13 // GET_STATUS_VALUES
+	QueryGetSettingCapabilities      = 0x32 // GET_AVAILABLE_OPTION_IDS
+	QueryRegisterSettingUpdates      = 0x52 // REGISTER_FOR_SETTING_UPDATES
+	QueryRegisterStatusUpdates       = 0x53 // REGISTER_FOR_STATUS_UPDATES
+	QueryRegisterCapabilityUpdates   = 0x62 // REGISTER_FOR_CAPABILITY_UPDATES
+	QueryUnregisterSettingUpdates    = 0x72 // UNREGISTER_FOR_SETTING_UPDATES
+	QueryUnregisterStatusUpdates     = 0x73 // UNREGISTER_FOR_STATUS_UPDATES
+	QueryUnregisterCapabilityUpdates = 0x82 // UNREGISTER_FOR_CAPABILITY_UPDATES
+	QueryAsyncSettingNotification    = 0x92 // ASYNC_SETTING_UPDATE_NOTIFICATION
+	QueryAsyncStatusNotification     = 0x93 // ASYNC_STATUS_UPDATE_NOTIFICATION
+	QueryAsyncCapabilityNotification = 0xA2 // ASYNC_CAPABILITY_UPDATE_NOTIFICATION
 
-	// Settings IDs
-	SettingResolution           = 0x02
-	SettingFrameRate            = 0x03
-	SettingFieldOfView          = 0x79
-	SettingVideoStabilization   = 0x7E
-	SettingVideoMode            = 0x01
-	SettingPhotoMode            = 0x29
-	SettingTimelapseMode        = 0x2A
-	SettingBurstMode            = 0x2B
-	SettingNightlapseMode       = 0x2C
-	SettingVideoPerformanceMode = 0x2D
-	SettingHyperSmooth          = 0x87
-	SettingLinearHorizon        = 0x96
-	SettingMaxLens              = 0x9E
-	SettingHiLight              = 0x5A
-	SettingBeep                 = 0x56
-	SettingLED                  = 0x55
-	SettingAutoOff              = 0x59
-	SettingScreenSaver          = 0x5B
-	SettingBrightness           = 0x57
+	// Protobuf Command IDs (Feature IDs from OpenGoPro spec)
+	ProtobufCommandSetCameraControl = 0x69 // REQUEST_SET_CAMERA_CONTROL_STATUS
+	ProtobufCommandSetTurboActive   = 0x6B // REQUEST_SET_TURBO_ACTIVE
+	ProtobufCommandGetLastMedia     = 0x6D // REQUEST_GET_LAST_CAPTURED_MEDIA
+	ProtobufCommandGetPresetStatus  = 0x72 // REQUEST_GET_PRESET_STATUS
+	ProtobufCommandSetLivestream    = 0x74 // REQUEST_SET_LIVESTREAM_MODE
+	ProtobufCommandGetCOHNStatus    = 0x6E // REQUEST_GET_COHN_STATUS
+	ProtobufCommandSetCOHN          = 0x6F // REQUEST_SET_COHN_SETTING
+	ProtobufCommandClearCOHN        = 0x70 // REQUEST_CLEAR_COHN_CERT
+
+	// Settings IDs (verified against OpenGoPro spec)
+	SettingResolution         = 0x02 // RESOLUTION
+	SettingFrameRate          = 0x03 // FPS
+	SettingFieldOfView        = 0x79 // FOV
+	SettingVideoStabilization = 0x7E // STABILIZATION
+	SettingVideoMode          = 0x01 // Not in spec, might be deprecated
+	SettingPhotoMode          = 0x10 // PHOTO_MODE
+	SettingTimelapseMode      = 0x1E // TIMELAPSE_MODE
+	SettingMultiShotMode      = 0x1B // MULTI_SHOT_MODE
+	SettingHyperSmooth        = 0x87 // HYPERSMOOTH
+	SettingHorizonLeveling    = 0x96 // HORIZON_LEVELING
+	SettingMaxLens            = 0xA2 // MAX_LENS_MOD
+	SettingHindsight          = 0xA7 // HINDSIGHT
+	SettingBeep               = 0x56 // BEEP_VOLUME
+	SettingLED                = 0x5B // LED
+	SettingAutoOff            = 0x59 // AUTO_OFF
+	SettingScreenSaver        = 0x5C // SCREEN_SAVER_TIMEOUT
+	SettingBrightness         = 0x58 // LCD_BRIGHTNESS
+	SettingGPS                = 0x53 // GPS
+	SettingVoiceControl       = 0x56 // VOICE_CONTROL
+	SettingWifiMode           = 0x43 // WIFI_BAND
 
 	// Packet constants
 	MaxPacketSize     = 20
 	PacketHeaderCont  = 0x80
-	PacketHeaderStart = 0x40
-	PacketHeaderMask  = 0xC0
-	PacketLengthMask  = 0x3F
+	PacketHeaderStart = 0x20 // Corrected: bit 5 indicates start of packet
+	PacketHeaderMask  = 0xE0 // Corrected: bits 5-7 are header bits
+	PacketLengthMask  = 0x1F // Corrected: bits 0-4 are length bits
 
-	// Status IDs (for QueryGetStatusValues)
-	StatusBatteryPresent             = 1
-	StatusBatteryLevel               = 2
-	StatusSystemOverheating          = 6
-	StatusCameraBusy                 = 8
-	StatusQuickCaptureEnabled        = 9
-	StatusEncodingActive             = 10
-	StatusLCDLockActive              = 11
-	StatusVideoProgressCounter       = 13
-	StatusWirelessEnabled            = 17
-	StatusPairingState               = 19 // Primary pairing state
-	StatusPairingType                = 20
-	StatusPairingTime                = 21
-	StatusWifiScanState              = 22
-	StatusWifiScanTime               = 23
-	StatusWifiProvisioningState      = 24
-	StatusWirelessRemoteVersion      = 26
-	StatusWirelessRemoteConnected    = 27
-	StatusWirelessPairingFlags       = 28
-	StatusWirelessClientSSID         = 29
-	StatusWirelessAPSSID             = 30
-	StatusWirelessConnectedDevices   = 31
-	StatusPreviewStreamEnabled       = 32
-	StatusPhotosRemaining            = 34
-	StatusVideoTimeRemaining         = 35
-	StatusTotalPhotos                = 38
-	StatusTotalVideos                = 39
-	StatusOTAStatus                  = 41
-	StatusOTACancelRequest           = 42
-	StatusLocateCameraActive         = 45
-	StatusTimelapseCountdown         = 49
-	StatusSDCardSpaceRemaining       = 54
-	StatusPreviewStreamSupported     = 55
-	StatusWifiSignalStrength         = 56
-	StatusHilightsCount              = 58
-	StatusHilightsTime               = 59
-	StatusMinStatusUpdateTime        = 60
-	StatusGPSLock                    = 68
-	StatusAPModeEnabled              = 69
-	StatusBatteryPercentage          = 70
-	StatusDigitalZoomLevel           = 75
-	StatusDigitalZoomAvailable       = 77
-	StatusMobileFriendlyVideo        = 78
-	StatusFirstTimeUseFlow           = 79
-	StatusWifi5GHzAvailable          = 81
-	StatusSystemReady                = 82
-	StatusBatteryOKForOTA            = 83
-	StatusSystemTooHot               = 85
-	StatusCameraOrientation          = 86
-	StatusZoomWhileEncoding          = 88
-	StatusCurrentFlatmode            = 89
-	StatusCurrentVideoPreset         = 93
-	StatusCurrentPhotoPreset         = 94
-	StatusCurrentTimelapsePreset     = 95
-	StatusCurrentPresetGroup         = 96
-	StatusCurrentPreset              = 97
-	StatusPresetModified             = 98
-	StatusLiveBurstsRemaining        = 99
-	StatusTotalLiveBursts            = 100
-	StatusCaptureDelayActive         = 101
-	StatusLinuxCoreActive            = 104
-	StatusCameraLensType             = 105
-	StatusVideoHindsightActive       = 106
-	StatusScheduledCaptureSet        = 108
-	StatusBandwidthTest              = 110
-	StatusSDCardWriteSpeedError      = 111
-	StatusSDCardWriteSpeedErrorCount = 112
-	StatusTurboTransferActive        = 113
-	StatusCameraControlStatus        = 114
-	StatusUSBConnected               = 115
-	StatusCameraControlUSB           = 116
-	StatusSDCardCapacity             = 117
+	// Status IDs (verified against OpenGoPro spec)
+	StatusBatteryPresent          = 1   // BATTERY_PRESENT
+	StatusBatteryLevel            = 2   // BATTERY_LEVEL
+	StatusSystemOverheating       = 6   // SYSTEM_HOT
+	StatusCameraBusy              = 8   // SYSTEM_BUSY
+	StatusQuickCaptureEnabled     = 9   // QUICK_CAPTURE
+	StatusEncodingActive          = 10  // ENCODING_ACTIVE
+	StatusLCDLockActive           = 11  // LCD_LOCK_ACTIVE
+	StatusVideoProgressCounter    = 13  // VIDEO_PROGRESS_COUNTER
+	StatusWirelessEnabled         = 17  // ENABLE_WIFI
+	StatusPairingState            = 19  // PAIR_STATE
+	StatusPairingType             = 20  // PAIR_TYPE
+	StatusPairingTime             = 21  // PAIR_TIME
+	StatusWifiScanState           = 22  // SCAN_WIFI_STATE
+	StatusWifiScanTime            = 23  // SCAN_TIME_MSEC
+	StatusWifiProvisioningState   = 24  // WIFI_PROVISION_STATE
+	StatusWirelessRemoteVersion   = 26  // REMOTE_CTRL_VERSION
+	StatusWirelessRemoteConnected = 27  // REMOTE_CTRL_CONNECTED
+	StatusWifiSSID                = 29  // WIFI_SSID
+	StatusAPSSID                  = 30  // AP_SSID
+	StatusAPClients               = 31  // AP_CLIENT_COUNT
+	StatusPreviewStreamEnabled    = 32  // PREVIEW_ENABLED
+	StatusPhotosRemaining         = 34  // PHOTOS_REM
+	StatusVideoTimeRemaining      = 35  // VIDEO_REM
+	StatusTotalPhotos             = 38  // NUM_GROUP_PHOTOS
+	StatusTotalVideos             = 39  // NUM_GROUP_VIDEOS
+	StatusOTAStatus               = 41  // OTA_STATUS
+	StatusOTADownloadCancelled    = 42  // DOWNLOAD_CANCEL_REQUEST_PENDING
+	StatusLocateActive            = 45  // LOCATE_ACTIVE
+	StatusTimelapseRemaining      = 49  // TIMELAPSE_REM
+	StatusExposureType            = 65  // EXPOSURE_TYPE
+	StatusExposureX               = 66  // EXPOSURE_X
+	StatusExposureY               = 67  // EXPOSURE_Y
+	StatusGPSStatus               = 68  // GPS_STATUS
+	StatusAPState                 = 69  // AP_STATE
+	StatusBatteryPercentage       = 70  // INT_BATT_PER
+	StatusDigitalZoom             = 75  // DIGITAL_ZOOM
+	StatusDigitalZoomActive       = 77  // DIGITAL_ZOOM_ACTIVE
+	StatusMobileFriendlyVideo     = 78  // MOBILE_FRIENDLY_VIDEO
+	StatusFirstTimeUse            = 79  // FIRST_TIME_USE
+	StatusBandwidth5GHz           = 81  // BAND_5GHZ_AVAIL
+	StatusSystemReady             = 82  // SYSTEM_READY
+	StatusBatteryOKForOTA         = 83  // BATT_OK_FOR_OTA
+	StatusVideoLowTemp            = 85  // VIDEO_LOW_TEMP_ALERT
+	StatusOrientation             = 86  // ORIENTATION
+	StatusZoomWhileEncoding       = 88  // ZOOM_WHILE_ENCODING
+	StatusFlatmodeID              = 89  // FLATMODE_ID
+	StatusVideoPresetID           = 93  // VIDEO_PRESET_ID
+	StatusPhotoPresetID           = 94  // PHOTO_PRESET_ID
+	StatusTimelapsePresetID       = 95  // TIMELAPSE_PRESET_ID
+	StatusPresetGroupID           = 96  // PRESET_GROUP_ID
+	StatusActivePresetID          = 97  // ACTIVE_PRESET_ID
+	StatusPresetModified          = 98  // PRESET_MODIFIED_NOTIFICATION
+	StatusLiveBurstRemaining      = 99  // LIVE_BURST_REM
+	StatusLiveBurstTotal          = 100 // LIVE_BURST_TOTAL
+	StatusCaptureDelayActive      = 101 // CAPTURE_DELAY_ACTIVE
+	StatusMediaModMicStatus       = 102 // MEDIA_MOD_MIC_STATUS
+	StatusTimewarpSpeedRamp       = 103 // TIMEWARP_SPEED_RAMP_ACTIVE
+	StatusLinuxCoreActive         = 104 // LINUX_CORE_ACTIVE
+	StatusCameraLensType          = 105 // CAMERA_LENS_TYPE
+	StatusVideoHindsight          = 106 // VIDEO_HINDSIGHT_CAPTURE_ACTIVE
+	StatusScheduledCaptured       = 107 // SCHEDULED_CAPTURED
+	StatusScheduledCaptureID      = 108 // SCHEDULED_CAPTURE_PRESET_ID
+	StatusCreatingPresetGroup     = 109 // CREATING_PRESET
+	StatusMediaModStatus          = 110 // MEDIA_MOD_STAT
+	StatusSDCardWriteSpeed        = 111 // SD_WRITE_SPEED_ERROR
+	StatusTurboTransfer           = 113 // TURBO_TRANSFER
+	StatusCameraControl           = 114 // CAMERA_CONTROL
+	StatusUSBConnected            = 115 // USB_CONNECTED
+	StatusControlOverUSB          = 116 // CONTROL_OVER_USB
+	StatusTotalSDSpace            = 117 // TOTAL_SD_SPACE_KB
+	StatusPhotosCount             = 118 // NUM_PHOTOS
 
 	// Pairing State constants (Status ID 19)
-	PairingStateNeverStarted = 0
-	PairingStateStarted      = 1
-	PairingStateAborted      = 2
-	PairingStateCancelled    = 3
-	PairingStateCompleted    = 4
+	PairingStateNeverStarted = 0 // Never started
+	PairingStateStarted      = 1 // Started
+	PairingStateAborted      = 2 // Aborted
+	PairingStateCancelled    = 3 // Cancelled
+	PairingStateCompleted    = 4 // Completed
 
-	// BLE packet handling constants
-	GeneralPurposeCommandHeader = 0x10
-	ExtendedCommandHeader       = 0x90
-	KeepAliveCommandHeader      = 0xA0
-	PacketTypeStart             = 0x10
-	PacketTypeContinuation      = 0x00
+	// BLE packet handling constants (from OpenGoPro spec)
+	GeneralLengthByteMask  = 0x1F   // Bits 0-4 for general length
+	ExtendedLengthByteMask = 0x0FFF // 12 bits for extended length
+	GeneralStartBit        = 0x20   // Bit 5 for start packet
+	GeneralContinueBit     = 0x80   // Bit 7 for continuation packet
+	ExtendedHeaderBit      = 0x40   // Bit 6 for extended header
 )

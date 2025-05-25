@@ -235,48 +235,6 @@ func (rh *ResponseHandler) handleSpecificResponse(macAddress string, queryID, st
 			rh.log.Error("Insufficient data for status values", "mac_address", macAddress, "data_length", len(data), "required_min", 2)
 		}
 
-	case QueryGetWifiSSID:
-		if status == 0 && len(data) > 0 {
-			ssid := string(data)
-			rh.log.Info("WiFi SSID received", "mac_address", macAddress, "ssid", ssid, "ssid_length", len(ssid))
-
-			// Emit WiFi SSID event
-			if rh.eventEmitter != nil {
-				rh.eventEmitter.EmitEvent(events.BLEEvent{
-					Type: events.EventWifiSSID,
-					Device: map[string]string{
-						"mac_address": macAddress,
-						"wifi_ssid":   ssid,
-					},
-					Timestamp: time.Now(),
-				})
-				rh.log.Trace("WiFi SSID event emitted", "mac_address", macAddress)
-			}
-		} else {
-			rh.log.Warn("Failed to get WiFi SSID", "mac_address", macAddress, "status", status, "data_length", len(data))
-		}
-
-	case QueryGetWifiPassword:
-		if status == 0 && len(data) > 0 {
-			password := string(data)
-			rh.log.Info("WiFi password received", "mac_address", macAddress, "password_length", len(password))
-
-			// Emit WiFi password event
-			if rh.eventEmitter != nil {
-				rh.eventEmitter.EmitEvent(events.BLEEvent{
-					Type: events.EventWifiPassword,
-					Device: map[string]string{
-						"mac_address":   macAddress,
-						"wifi_password": password,
-					},
-					Timestamp: time.Now(),
-				})
-				rh.log.Trace("WiFi password event emitted", "mac_address", macAddress)
-			}
-		} else {
-			rh.log.Warn("Failed to get WiFi password", "mac_address", macAddress, "status", status, "data_length", len(data))
-		}
-
 	default:
 		rh.log.Trace("Unhandled query response ID", "mac_address", macAddress, "query_id", queryID, "status", status)
 	}

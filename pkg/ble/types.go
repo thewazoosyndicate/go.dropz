@@ -38,13 +38,34 @@ type BLEEvent struct {
 // EventHandler is a function that handles BLE events
 type EventHandler func(event BLEEvent)
 
-// ResponseTracker tracks the response for a specific query
+// PendingRequest represents a request waiting for a response
+type PendingRequest struct {
+	CommandID    byte
+	ResponseChan chan *QueryResponseData
+	Timeout      time.Duration
+	StartTime    time.Time
+	IsQuery      bool // true for queries, false for commands
+}
+
+// ResponseFragment represents a fragment of a fragmented response
+type ResponseFragment struct {
+	SequenceNumber int
+	Data           []byte
+	IsLast         bool
+}
+
+// ResponseTracker tracks the response for a specific query with request correlation
+// Thread Safety: All fields are protected by RWMutex for concurrent access
+// - lastResponse, ModelID, PairingState: Protected for atomic reads/writes
+// - pendingRequests, fragmentBuffer: Protected for concurrent request management
 type ResponseTracker struct {
-	mutex           sync.RWMutex
-	lastResponse    *QueryResponseData
-	responseChannel chan *QueryResponseData
-	ModelID         int // Stores the last detected model ID (if any)
-	PairingState    int // Stores the last detected pairing state (if any)
+	mutex           sync.RWMutex                 // Protects all fields in this struct
+	lastResponse    *QueryResponseData           // Last response received (legacy compatibility)
+	responseChannel chan *QueryResponseData      // Legacy channel for backward compatibility
+	ModelID         int                          // Stores the last detected model ID (if any)
+	PairingState    int                          // Stores the last detected pairing state (if any)
+	pendingRequests map[byte]*PendingRequest     // CommandID -> PendingRequest (protected by mutex)
+	fragmentBuffer  map[byte][]*ResponseFragment // CommandID -> ordered fragments (protected by mutex)
 }
 
 // QueryResponseData holds the data for a query response
@@ -53,4 +74,6 @@ type QueryResponseData struct {
 	Status       byte
 	Data         []byte
 	ResponseTime time.Time
+	IsFragmented bool
+	TotalSize    int // For fragmented responses
 }

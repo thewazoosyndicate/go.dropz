@@ -1,33 +1,45 @@
 package ble
 
+import "fmt"
+
 // GoPro BLE constants - Updated according to OpenGoPro BLE specification
 // Reference: https://gopro.github.io/OpenGoPro/ble/
+//
+// UUID Format Note:
+// GP-XXXX is shorthand for GoPro's 128-bit UUID: b5f9XXXX-aa8d-11e3-9046-0002a5d5c51b
+// The Control & Query service uses UUID: 0000fea6-0000-1000-8000-00805f9b34fb
 
 const (
-	// Service UUIDs
-	GoProWifiServiceUUID    = "b5f90001-aa8d-11e3-9046-0002a5d5c51b" // WiFi Access Point Service
-	GoProControlServiceUUID = "0000fea6-0000-1000-8000-00805f9b34fb" // Control & Query Service
+	// Service UUIDs (OpenGoPro BLE Specification)
+	GoProWifiServiceUUID    = "b5f90001-aa8d-11e3-9046-0002a5d5c51b" // GP-0001: WiFi Access Point Service
+	GoProControlServiceUUID = "0000fea6-0000-1000-8000-00805f9b34fb" // FEA6: Control & Query Service
+	GoProNetworkMgmtUUID    = "b5f90090-aa8d-11e3-9046-0002a5d5c51b" // GP-0090: Camera Management Service
 
-	// Note: The Camera Management UUID might be deprecated or specific to certain models
-	GoProCameraManagementUUID = "0000fea6-0000-1000-8000-00805f9b34fb" // Using Control Service UUID
+	// Characteristic UUIDs for WiFi Access Point Service (GP-0001)
+	WifiSSIDCharUUID     = "b5f90002-aa8d-11e3-9046-0002a5d5c51b" // GP-0002: WiFi AP SSID
+	WifiPasswordCharUUID = "b5f90003-aa8d-11e3-9046-0002a5d5c51b" // GP-0003: WiFi AP Password
+	WifiPowerCharUUID    = "b5f90004-aa8d-11e3-9046-0002a5d5c51b" // GP-0004: WiFi AP Power
+	WifiStateCharUUID    = "b5f90005-aa8d-11e3-9046-0002a5d5c51b" // GP-0005: WiFi AP State
 
-	// Characteristic UUIDs for WiFi Access Point Service
-	WifiSSIDCharUUID     = "b5f90002-aa8d-11e3-9046-0002a5d5c51b" // WiFi AP SSID
-	WifiPasswordCharUUID = "b5f90003-aa8d-11e3-9046-0002a5d5c51b" // WiFi AP Password
-	WifiPowerCharUUID    = "b5f90004-aa8d-11e3-9046-0002a5d5c51b" // WiFi AP Power
-	WifiStateCharUUID    = "b5f90005-aa8d-11e3-9046-0002a5d5c51b" // WiFi AP State
+	// Characteristic UUIDs for Camera Management Service (GP-0090)
+	NetworkMgmtCommandCharUUID  = "b5f90091-aa8d-11e3-9046-0002a5d5c51b" // GP-0091: Network Management Command
+	NetworkMgmtResponseCharUUID = "b5f90092-aa8d-11e3-9046-0002a5d5c51b" // GP-0092: Network Management Response
 
-	// Network Management Characteristic UUIDs (if using extended services)
-	NetworkMgmtCommandCharUUID  = "b5f90091-aa8d-11e3-9046-0002a5d5c51b"
-	NetworkMgmtResponseCharUUID = "b5f90092-aa8d-11e3-9046-0002a5d5c51b"
+	// Characteristic UUIDs for Control & Query Service (FEA6)
+	CommandCharUUID          = "b5f90072-aa8d-11e3-9046-0002a5d5c51b" // GP-0072: Command Request
+	CommandResponseCharUUID  = "b5f90073-aa8d-11e3-9046-0002a5d5c51b" // GP-0073: Command Response
+	SettingsCharUUID         = "b5f90074-aa8d-11e3-9046-0002a5d5c51b" // GP-0074: Settings Request
+	SettingsResponseCharUUID = "b5f90075-aa8d-11e3-9046-0002a5d5c51b" // GP-0075: Settings Response
+	QueryCharUUID            = "b5f90076-aa8d-11e3-9046-0002a5d5c51b" // GP-0076: Query Request
+	QueryResponseCharUUID    = "b5f90077-aa8d-11e3-9046-0002a5d5c51b" // GP-0077: Query Response
 
-	// Characteristic UUIDs for Control & Query Service
-	CommandCharUUID          = "b5f90072-aa8d-11e3-9046-0002a5d5c51b" // Command Request
-	CommandResponseCharUUID  = "b5f90073-aa8d-11e3-9046-0002a5d5c51b" // Command Response
-	SettingsCharUUID         = "b5f90074-aa8d-11e3-9046-0002a5d5c51b" // Settings Request
-	SettingsResponseCharUUID = "b5f90075-aa8d-11e3-9046-0002a5d5c51b" // Settings Response
-	QueryCharUUID            = "b5f90076-aa8d-11e3-9046-0002a5d5c51b" // Query Request
-	QueryResponseCharUUID    = "b5f90077-aa8d-11e3-9046-0002a5d5c51b" // Query Response
+	// UUID Helper Functions and Validation
+
+	// OpenGoPro Service Advertisement UUID (for discovery)
+	GoProAdvertisementServiceUUID = "0000fea6-0000-1000-8000-00805f9b34fb" // Same as Control Service
+
+	// Legacy support - these are aliases for backwards compatibility
+	GoProCameraManagementUUID = GoProNetworkMgmtUUID // Deprecated: Use GoProNetworkMgmtUUID
 
 	// Command IDs (verified against OpenGoPro spec)
 	CommandSetShutter      = 0x01 // SET_SHUTTER
@@ -199,3 +211,92 @@ const (
 	GeneralContinueBit     = 0x80   // Bit 7 for continuation packet
 	ExtendedHeaderBit      = 0x40   // Bit 6 for extended header
 )
+
+// UUID helper functions for OpenGoPro BLE specification compliance
+
+// IsGoProUUID checks if a UUID follows the GoPro UUID format
+// GoPro UUIDs follow the pattern: b5f9XXXX-aa8d-11e3-9046-0002a5d5c51b
+func IsGoProUUID(uuid string) bool {
+	if len(uuid) != 36 {
+		return false
+	}
+
+	// Check if it matches the GoPro pattern
+	return uuid[:4] == "b5f9" && uuid[8:] == "-aa8d-11e3-9046-0002a5d5c51b"
+}
+
+// IsControlServiceUUID checks if a UUID is the OpenGoPro Control & Query service
+func IsControlServiceUUID(uuid string) bool {
+	return uuid == GoProControlServiceUUID || uuid == "fea6" || uuid == "0xfea6"
+}
+
+// GetCharacteristicName returns the human-readable name for a characteristic UUID
+func GetCharacteristicName(uuid string) string {
+	switch uuid {
+	case CommandCharUUID:
+		return "Command Request (GP-0072)"
+	case CommandResponseCharUUID:
+		return "Command Response (GP-0073)"
+	case SettingsCharUUID:
+		return "Settings Request (GP-0074)"
+	case SettingsResponseCharUUID:
+		return "Settings Response (GP-0075)"
+	case QueryCharUUID:
+		return "Query Request (GP-0076)"
+	case QueryResponseCharUUID:
+		return "Query Response (GP-0077)"
+	case WifiSSIDCharUUID:
+		return "WiFi SSID (GP-0002)"
+	case WifiPasswordCharUUID:
+		return "WiFi Password (GP-0003)"
+	case WifiPowerCharUUID:
+		return "WiFi Power (GP-0004)"
+	case WifiStateCharUUID:
+		return "WiFi State (GP-0005)"
+	case NetworkMgmtCommandCharUUID:
+		return "Network Management Command (GP-0091)"
+	case NetworkMgmtResponseCharUUID:
+		return "Network Management Response (GP-0092)"
+	default:
+		return "Unknown Characteristic"
+	}
+}
+
+// GetServiceName returns the human-readable name for a service UUID
+func GetServiceName(uuid string) string {
+	switch uuid {
+	case GoProWifiServiceUUID:
+		return "WiFi Access Point Service (GP-0001)"
+	case GoProControlServiceUUID:
+		return "Control & Query Service (FEA6)"
+	case GoProNetworkMgmtUUID:
+		return "Camera Management Service (GP-0090)"
+	default:
+		return "Unknown Service"
+	}
+}
+
+// ValidateOpenGoProUUIDs validates that all required UUIDs are properly formatted
+func ValidateOpenGoProUUIDs() error {
+	requiredUUIDs := map[string]string{
+		"Control Service":   GoProControlServiceUUID,
+		"WiFi Service":      GoProWifiServiceUUID,
+		"Command Request":   CommandCharUUID,
+		"Command Response":  CommandResponseCharUUID,
+		"Settings Request":  SettingsCharUUID,
+		"Settings Response": SettingsResponseCharUUID,
+		"Query Request":     QueryCharUUID,
+		"Query Response":    QueryResponseCharUUID,
+	}
+
+	for name, uuid := range requiredUUIDs {
+		if uuid == "" {
+			return fmt.Errorf("UUID for %s is empty", name)
+		}
+		if len(uuid) != 36 {
+			return fmt.Errorf("UUID for %s has invalid length: %d", name, len(uuid))
+		}
+	}
+
+	return nil
+}

@@ -49,7 +49,7 @@ func (c *Coordinator) ProcessSyncQueue(activeSyncTasks map[string]*SyncTask, mut
 		return
 	}
 
-	c.log.Debug("Processing sync queue")
+	c.log.Trace("Processing sync queue")
 	syncQueue := c.db.GetSyncQueue()
 
 	for _, entry := range syncQueue {

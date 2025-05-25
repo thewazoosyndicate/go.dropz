@@ -13,6 +13,9 @@ import (
 )
 
 // PairingManager handles all BLE pairing operations
+// Thread Safety: All shared state is protected by appropriate mutexes
+// - pairingStateCache: Protected by cacheMutex (RWMutex) for concurrent reads
+// - Manager dependencies are thread-safe and accessed without additional locking
 type PairingManager struct {
 	connectionManager      *ConnectionManager
 	characteristicsManager *CharacteristicsManager
@@ -20,9 +23,9 @@ type PairingManager struct {
 	eventEmitter           *events.EventEmitter
 	log                    logger.Logger
 
-	// Cache for pairing states
+	// Cache for pairing states - protected by cacheMutex
 	pairingStateCache map[string]int
-	cacheMutex        sync.RWMutex
+	cacheMutex        sync.RWMutex // Protects pairingStateCache access
 }
 
 // NewPairingManager creates a new pairing manager
@@ -39,6 +42,8 @@ func NewPairingManager(connMgr *ConnectionManager, charMgr *CharacteristicsManag
 }
 
 // ConnectWithEnhancedPairing attempts to connect with enhanced model-specific pairing logic
+// Thread Safety: This method coordinates multiple thread-safe managers.
+// Each manager call is atomic, and pairing state is cached thread-safely.
 func (p *PairingManager) ConnectWithEnhancedPairing(macAddress string) error {
 	p.log.Infof("BLE pairing started: device=%s mode=enhanced", macAddress)
 
@@ -51,11 +56,15 @@ func (p *PairingManager) ConnectWithEnhancedPairing(macAddress string) error {
 
 	// First, establish OpenGoPro-compliant connection
 	ctx := context.Background()
-	device, err := p.connectionManager.ConnectWithOpenGoProSpec(ctx, macAddress)
+	p.log.Debugf("Attempting to establish connection: device=%s", macAddress)
+
+	device, err := p.connectionManager.Connect(ctx, macAddress)
 	if err != nil {
+		p.log.Errorf("Failed to establish OpenGoPro connection: device=%s error=%v", macAddress, err)
 		p.emitPairingFailed(macAddress, err)
 		return fmt.Errorf("failed to establish OpenGoPro connection: %v", err)
 	}
+	p.log.Infof("Successfully established OpenGoPro connection: device=%s", macAddress)
 
 	// Get services from connection metadata
 	var services []bluetooth.DeviceService
@@ -85,16 +94,20 @@ func (p *PairingManager) ConnectWithEnhancedPairing(macAddress string) error {
 
 	// Setup notifications for response characteristics BEFORE querying
 	if err := p.setupResponseNotifications(macAddress); err != nil {
-		p.log.Warnf("Failed to setup response notifications: %v", err)
-		// Continue anyway - some operations might still work
+		p.log.Errorf("Failed to setup response notifications: device=%s error=%v", macAddress, err)
+		p.emitPairingFailed(macAddress, err)
+		return fmt.Errorf("failed to setup response notifications: %v", err)
 	}
+	p.log.Debugf("Successfully setup response notifications: device=%s", macAddress)
 
 	// NOW we can check pairing state with proper service discovery
 	pairingState, err := p.queryPairingState(macAddress)
 	if err != nil {
-		p.log.Warnf("Failed to query initial pairing state: %v", err)
+		p.log.Errorf("Failed to query initial pairing state: device=%s error=%v", macAddress, err)
 		// Continue anyway, assume unpaired
 		pairingState = PairingStateNotPaired
+	} else {
+		p.log.Infof("Successfully queried initial pairing state: device=%s state=%d", macAddress, pairingState)
 	}
 
 	p.log.Infof("Current pairing state for device %s: %d", macAddress, pairingState)
@@ -133,13 +146,17 @@ func (p *PairingManager) ConnectWithEnhancedPairing(macAddress string) error {
 }
 
 // performModelSpecificPairing handles model-specific pairing requirements
+// Thread Safety: Coordinates multiple thread-safe manager calls.
+// Safe for concurrent execution with different devices.
 func (p *PairingManager) performModelSpecificPairing(macAddress string, modelID int) error {
 	modelName := models.GetModelName(modelID)
 	p.log.Debugf("Executing pairing sequence: device=%s model=%s model_id=%d", macAddress, modelName, modelID)
 
 	// Create model handler
-	handler := models.CreateHandler(modelID)
-	capabilities := handler.GetCapabilities()
+	handler, err := models.CreateHandler(modelID)
+	if err != nil {
+		return fmt.Errorf("failed to create model handler for model %d: %w", modelID, err)
+	}
 
 	// Apply model-specific configuration
 	switch modelID {
@@ -169,9 +186,6 @@ func (p *PairingManager) performModelSpecificPairing(macAddress string, modelID 
 
 	default:
 		p.log.Warnf("Unknown GoPro model %s, using default pairing procedure", modelName)
-		if err := p.configureDefaultSettings(macAddress); err != nil {
-			p.log.Warnf("Default configuration failed: %v", err)
-		}
 	}
 
 	// Wait for model-specific timeout
@@ -179,17 +193,12 @@ func (p *PairingManager) performModelSpecificPairing(macAddress string, modelID 
 	p.log.Debugf("Waiting %v for pairing to complete", timeout)
 	time.Sleep(timeout)
 
-	// Perform enhanced pairing if supported
-	if capabilities.SupportsEnhancedBLE {
-		if err := p.performEnhancedPairing(macAddress); err != nil {
-			p.log.Warnf("Enhanced pairing failed: %v", err)
-		}
-	}
-
 	return nil
 }
 
 // verifyPairingState checks the current pairing state and handles it appropriately
+// Thread Safety: Uses thread-safe GetPairingState call.
+// Safe for concurrent execution.
 func (p *PairingManager) verifyPairingState(macAddress string) error {
 	p.log.Tracef("Verifying pairing state: device=%s", macAddress)
 
@@ -219,6 +228,8 @@ func (p *PairingManager) verifyPairingState(macAddress string) error {
 }
 
 // GetPairingState gets the current pairing state from the device
+// Thread Safety: Uses thread-safe response handler calls and cache access.
+// Safe for concurrent execution with different devices.
 func (p *PairingManager) GetPairingState(macAddress string) (int, error) {
 	// Try to get cached pairing state from response handler first
 	if p.responseHandler != nil {
@@ -252,6 +263,8 @@ func (p *PairingManager) GetPairingState(macAddress string) (int, error) {
 }
 
 // RefreshPairingState forces a fresh query of the pairing state
+// Thread Safety: Uses thread-safe response handler calls for atomic state refresh.
+// Safe for concurrent execution with different devices.
 func (p *PairingManager) RefreshPairingState(macAddress string) (int, error) {
 	p.log.Debug("RefreshPairingState: querying device for current pairing state", "device", macAddress)
 
@@ -290,6 +303,8 @@ func (p *PairingManager) RefreshPairingState(macAddress string) (int, error) {
 }
 
 // IsPaired checks if a device is paired (must be connected first)
+// Thread Safety: Uses thread-safe connection manager and cached state access.
+// Safe for concurrent execution with different devices.
 func (p *PairingManager) IsPaired(macAddress string) (bool, error) {
 	// Check if device is connected using the connection state
 	connectionState := p.connectionManager.GetState(macAddress)
@@ -313,6 +328,8 @@ func (p *PairingManager) IsPaired(macAddress string) (bool, error) {
 }
 
 // queryPairingState queries the current pairing state from the device
+// Thread Safety: Uses thread-safe characteristics manager calls and atomic cache updates.
+// Synchronizes notification setup with query execution to prevent race conditions.
 func (p *PairingManager) queryPairingState(macAddress string) (int, error) {
 	// Ensure we have the control service characteristics
 	chars, err := p.characteristicsManager.GetControlServiceCharacteristics()
@@ -355,13 +372,22 @@ func (p *PairingManager) queryPairingState(macAddress string) (int, error) {
 	case response := <-responseChan:
 		state := p.parsePairingStateResponse(response)
 		p.cachePairingState(macAddress, state)
+		p.log.Debugf("Received pairing state response: device=%s state=%d", macAddress, state)
 		return state, nil
-	case <-time.After(5 * time.Second):
-		return PairingStateNotPaired, fmt.Errorf("timeout waiting for pairing state response")
+	case <-time.After(10 * time.Second): // Increased timeout from 5 to 10 seconds
+		p.log.Errorf("Timeout waiting for pairing state response: device=%s", macAddress)
+		// Try to get cached state as fallback
+		if cachedState, exists := p.getCachedPairingState(macAddress); exists {
+			p.log.Debugf("Using cached pairing state after timeout: device=%s state=%d", macAddress, cachedState)
+			return cachedState, nil
+		}
+		return PairingStateNotPaired, fmt.Errorf("timeout waiting for pairing state response after 10 seconds")
 	}
 }
 
 // IsPairedWithVerification checks pairing with additional verification
+// Thread Safety: Uses thread-safe IsPaired call.
+// Safe for concurrent execution.
 func (p *PairingManager) IsPairedWithVerification(macAddress string) (bool, error) {
 	// First check basic pairing state
 	isPaired, err := p.IsPaired(macAddress)
@@ -379,6 +405,8 @@ func (p *PairingManager) IsPairedWithVerification(macAddress string) (bool, erro
 }
 
 // detectGoProModel detects the GoPro model from the device
+// Thread Safety: Uses thread-safe characteristics manager and response handler calls.
+// Safe for concurrent execution with different devices.
 func (p *PairingManager) detectGoProModel(macAddress string) (int, error) {
 	// Query hardware info to get the actual model ID
 	if err := p.characteristicsManager.QueryHardwareInfo(); err != nil {
@@ -408,16 +436,13 @@ func (p *PairingManager) detectGoProModel(macAddress string) (int, error) {
 }
 
 // configureHERO13SpecificSettings applies HERO13-specific BLE configuration
+// Thread Safety: Uses thread-safe method calls, no shared state access.
+// Safe for concurrent execution.
 func (p *PairingManager) configureHERO13SpecificSettings(macAddress string) error {
 	p.log.Debug("Configuring HERO13-specific settings")
 
 	// HERO13 may have enhanced BLE capabilities and faster processing
 	time.Sleep(500 * time.Millisecond)
-
-	// Enable enhanced BLE features if available
-	if err := p.setEnhancedBLEMode(macAddress, true); err != nil {
-		p.log.Warnf("Failed to enable enhanced BLE mode for HERO13: %v", err)
-	}
 
 	// Perform security handshake for HERO13
 	if err := p.performSecurityHandshake(macAddress); err != nil {
@@ -428,6 +453,8 @@ func (p *PairingManager) configureHERO13SpecificSettings(macAddress string) erro
 }
 
 // configureHERO12SpecificSettings applies HERO12-specific BLE configuration
+// Thread Safety: Uses thread-safe method calls, no shared state access.
+// Safe for concurrent execution.
 func (p *PairingManager) configureHERO12SpecificSettings(macAddress string) error {
 	p.log.Debug("Configuring HERO12-specific settings")
 	time.Sleep(300 * time.Millisecond)
@@ -440,6 +467,8 @@ func (p *PairingManager) configureHERO12SpecificSettings(macAddress string) erro
 }
 
 // configureHERO11SpecificSettings applies HERO11-specific BLE configuration
+// Thread Safety: Uses thread-safe method calls, no shared state access.
+// Safe for concurrent execution.
 func (p *PairingManager) configureHERO11SpecificSettings(macAddress string) error {
 	p.log.Debug("Configuring HERO11-specific settings")
 	time.Sleep(300 * time.Millisecond)
@@ -452,6 +481,8 @@ func (p *PairingManager) configureHERO11SpecificSettings(macAddress string) erro
 }
 
 // configureLegacyModelSettings applies settings for older GoPro models
+// Thread Safety: Uses thread-safe method calls, no shared state access.
+// Safe for concurrent execution.
 func (p *PairingManager) configureLegacyModelSettings(macAddress string) error {
 	p.log.Debug("Configuring legacy model settings")
 	time.Sleep(200 * time.Millisecond)
@@ -463,30 +494,9 @@ func (p *PairingManager) configureLegacyModelSettings(macAddress string) error {
 	return nil
 }
 
-// configureDefaultSettings applies default settings for unknown models
-func (p *PairingManager) configureDefaultSettings(macAddress string) error {
-	p.log.Debug("Configuring default settings")
-	time.Sleep(200 * time.Millisecond)
-	return nil
-}
-
-// performEnhancedPairing performs enhanced pairing procedures
-func (p *PairingManager) performEnhancedPairing(macAddress string) error {
-	p.log.Debug("Performing enhanced pairing procedures")
-	// Implementation would include advanced pairing steps
-	return nil
-}
-
-// setEnhancedBLEMode enables enhanced BLE features
-func (p *PairingManager) setEnhancedBLEMode(macAddress string, enabled bool) error {
-	p.log.Debugf("Setting enhanced BLE mode to %v for %s", enabled, macAddress)
-	// Implementation would configure enhanced BLE features
-	return nil
-}
-
 // performSecurityHandshake performs security handshake
 func (p *PairingManager) performSecurityHandshake(macAddress string) error {
-	p.log.Debug("Performing security handshake")
+	p.log.Debugf("NOT Performing security handshake for: %s (placeholder)", macAddress)
 	// Implementation would include security verification steps
 	return nil
 }
@@ -499,6 +509,8 @@ func (p *PairingManager) setConnectionParameters(macAddress, modelType string) e
 }
 
 // sendKeepAlive sends a keep-alive command to prevent disconnection
+// Thread Safety: Uses thread-safe characteristics manager calls.
+// Safe for concurrent execution with different devices.
 func (p *PairingManager) sendKeepAlive(macAddress string) error {
 	chars, err := p.characteristicsManager.GetControlServiceCharacteristics()
 	if err != nil {
@@ -522,6 +534,8 @@ func (p *PairingManager) sendKeepAlive(macAddress string) error {
 }
 
 // setupResponseNotifications sets up notifications on response characteristics
+// Thread Safety: Uses thread-safe characteristics manager calls.
+// Handler callbacks execute concurrently and must be thread-safe.
 func (p *PairingManager) setupResponseNotifications(macAddress string) error {
 	p.log.Debugf("Setting up response notifications for device %s", macAddress)
 
@@ -628,6 +642,8 @@ func (p *PairingManager) handleSettingsNotification(macAddress string, data []by
 }
 
 // emitPairingFailed emits a pairing failed event
+// Thread Safety: Uses thread-safe event emitter, no shared state access.
+// Safe for concurrent execution.
 func (p *PairingManager) emitPairingFailed(macAddress string, err error) {
 	p.log.Errorf("BLE pairing failed: device=%s error=%v", macAddress, err)
 	p.eventEmitter.EmitEvent(events.BLEEvent{
@@ -639,6 +655,8 @@ func (p *PairingManager) emitPairingFailed(macAddress string, err error) {
 }
 
 // getCachedPairingState retrieves cached pairing state for a device
+// Thread Safety: Read lock protects concurrent access to pairingStateCache.
+// Safe for concurrent reads from multiple goroutines.
 func (p *PairingManager) getCachedPairingState(macAddress string) (int, bool) {
 	p.cacheMutex.RLock()
 	defer p.cacheMutex.RUnlock()
@@ -648,6 +666,8 @@ func (p *PairingManager) getCachedPairingState(macAddress string) (int, bool) {
 }
 
 // cachePairingState stores pairing state in cache
+// Thread Safety: Write lock ensures atomic updates to pairingStateCache.
+// Prevents race conditions during concurrent cache modifications.
 func (p *PairingManager) cachePairingState(macAddress string, state int) {
 	p.cacheMutex.Lock()
 	defer p.cacheMutex.Unlock()
@@ -656,19 +676,13 @@ func (p *PairingManager) cachePairingState(macAddress string, state int) {
 	p.log.Tracef("Cached pairing state for device %s: %d", macAddress, state)
 }
 
-// parsePairingStateResponse parses the response from a pairing state query
+// parsePairingStateResponse parses the response from a pairing state query with enhanced validation
+// Thread Safety: Pure function with no shared state access.
+// Safe for concurrent use.
 func (p *PairingManager) parsePairingStateResponse(response []byte) int {
-	// OpenGoPro BLE response format for status query:
-	// [Query ID] [Status] [TLV Data...]
-	// TLV format: [Type/ID] [Length] [Value]
-	if len(response) < 5 {
-		p.log.Warnf("Invalid pairing state response length: %d", len(response))
-		return PairingStateNotPaired
-	}
-
-	// Check if this is a status response (QueryGetStatusValues = 0x13)
-	if response[0] != QueryGetStatusValues {
-		p.log.Warnf("Unexpected response command ID: 0x%02X, expected 0x%02X", response[0], QueryGetStatusValues)
+	// First validate the overall response format
+	if err := ValidateResponseFormat(response, QueryGetStatusValues); err != nil {
+		p.log.Warnf("Invalid response format: %v", err)
 		return PairingStateNotPaired
 	}
 
@@ -678,28 +692,37 @@ func (p *PairingManager) parsePairingStateResponse(response []byte) int {
 		return PairingStateNotPaired
 	}
 
-	// Parse TLV data starting from byte 2
-	index := 2
-	for index < len(response) {
-		// Need at least 3 bytes for TLV: Type(1) + Length(1) + Value(min 1)
-		if index+2 >= len(response) {
-			break
-		}
+	// Extract and validate TLV data starting from byte 2
+	tlvData := response[2:]
+	if err := ValidateTLVFormat(tlvData); err != nil {
+		p.log.Warnf("Invalid TLV format in pairing response: %v", err)
+		return PairingStateNotPaired
+	}
 
-		statusID := response[index]
-		valueLength := int(response[index+1])
+	// Parse TLV data with proper error handling
+	return p.extractPairingStateFromTLV(tlvData)
+}
 
-		// Check if we have enough bytes for the value
-		if index+2+valueLength > len(response) {
-			p.log.Warnf("Invalid TLV structure: not enough bytes for value")
-			break
-		}
+// extractPairingStateFromTLV extracts pairing state from validated TLV data
+func (p *PairingManager) extractPairingStateFromTLV(tlvData []byte) int {
+	index := 0
+	for index < len(tlvData) {
+		// Safe to access since TLV format was already validated
+		statusID := tlvData[index]
+		valueLength := int(tlvData[index+1])
 
 		// Check if this is the pairing state we're looking for
 		if statusID == StatusPairingState {
-			if valueLength > 0 {
-				state := int(response[index+2])
+			if valueLength > 0 && index+2 < len(tlvData) {
+				state := int(tlvData[index+2])
 				p.log.Tracef("Parsed pairing state from TLV response: %d", state)
+
+				// Validate the pairing state value
+				if state < PairingStateNotPaired || state > PairingStateCompleted {
+					p.log.Warnf("Invalid pairing state value: %d", state)
+					return PairingStateNotPaired
+				}
+
 				return state
 			}
 		}

@@ -735,6 +735,14 @@ func (s *DropzServer) ManageCamera(ctx context.Context, req *protocol.ManageCame
 		}, nil
 	}
 
+	if managedCamera == nil {
+		s.log.Error("ManageCamera returned nil managed camera", "camera_id", req.CameraId)
+		return &protocol.ManageCameraResponse{
+			Success: false,
+			Message: "Failed to manage camera: camera not found or not eligible for management",
+		}, nil
+	}
+
 	// Notify about updates
 	s.NotifyUpdate()
 
@@ -782,6 +790,14 @@ func (s *DropzServer) PairCamera(ctx context.Context, req *protocol.PairCameraRe
 		return &protocol.PairCameraResponse{
 			Success: false,
 			Message: err.Error(),
+		}, nil
+	}
+
+	if managedCamera == nil {
+		s.log.Error("PairCamera returned nil managed camera", "camera_id", req.CameraId)
+		return &protocol.PairCameraResponse{
+			Success: false,
+			Message: "Failed to pair camera: camera not found or not eligible for pairing",
 		}, nil
 	}
 

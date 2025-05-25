@@ -29,7 +29,7 @@ func NewProcessor(db *database.Database, log logger.Logger) *Processor {
 
 // ProcessDiscoveredDevices handles the discovered devices from a BLE scan
 func (p *Processor) ProcessDiscoveredDevices(devices []ble.Device, notifier common.UpdateNotifier) {
-	p.log.Debugf("Processing %d discovered devices", len(devices))
+	p.log.Tracef("Processing %d discovered devices", len(devices))
 
 	// Use a wait group to process devices concurrently
 	var wg sync.WaitGroup

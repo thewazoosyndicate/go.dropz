@@ -1,0 +1,81 @@
+{
+  "camera_states": {
+    "EE:F4:03:91:42:20": {
+      "camera": {
+        "id": "c31da443-0d60-46f9-827b-ef867fe35f4d",
+        "name": "GoPro 7115",
+        "alias": "",
+        "mac_address": "EE:F4:03:91:42:20",
+        "wifi_ssid": "",
+        "wifi_password": "",
+        "rssi": -54
+      },
+      "status": {
+        "last_seen": "2025-05-26T00:55:14.135524003+02:00",
+        "last_synced": "0001-01-01T00:00:00Z",
+        "is_pairing": false,
+        "is_paired": false,
+        "is_managed": false,
+        "is_reachable": true,
+        "is_synced": false,
+        "is_syncing": false
+      },
+      "group_id": "",
+      "metadata": {
+        "id": "c048126f-bbbb-4711-9274-f1ad4783f960",
+        "firmware_version": "",
+        "model": "",
+        "serial_number": "",
+        "battery_level": 0,
+        "hardware_version": ""
+      }
+    },
+    "F9:CC:03:B4:73:34": {
+      "camera": {
+        "id": "82628d17-7033-4757-abf1-b356c0866885",
+        "name": "GoPro 8614",
+        "alias": "",
+        "mac_address": "F9:CC:03:B4:73:34",
+        "wifi_ssid": "",
+        "wifi_password": "",
+        "rssi": -44
+      },
+      "status": {
+        "last_seen": "2025-05-26T00:55:14.135526136+02:00",
+        "last_synced": "0001-01-01T00:00:00Z",
+        "is_pairing": false,
+        "is_paired": false,
+        "is_managed": false,
+        "is_reachable": true,
+        "is_synced": false,
+        "is_syncing": false
+      },
+      "group_id": "",
+      "metadata": {
+        "id": "ef648f6a-d044-429a-8cb2-70271b3540e2",
+        "firmware_version": "",
+        "model": "",
+        "serial_number": "",
+        "battery_level": 0,
+        "hardware_version": ""
+      }
+    }
+  },
+  "sync_queue": [],
+  "groups": [],
+  "videos": [],
+  "logs": [],
+  "config": {
+    "pair_mode_enabled": true,
+    "sync_enabled": true,
+    "scan_interval_seconds": 30,
+    "connect_timeout_seconds": 60,
+    "days_threshold": 1,
+    "destination_folder": "/home/epheo/Videos/dropz",
+    "inactivity_timeout_seconds": 60,
+    "inactivity_sync_interval_seconds": 600,
+    "set_time_enabled": true,
+    "log_level": "info",
+    "last_updated": "2025-05-26T00:55:04.111637835+02:00"
+  }
+}

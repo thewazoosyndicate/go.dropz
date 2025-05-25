@@ -63,10 +63,10 @@ func NewManager(cfg ManagerConfig) *Manager {
 
 	// Initialize component managers
 	eventEmitter := events.NewEventEmitter(cfg.Logger)
-	manager.connManager = NewConnectionManager(cfg.Adapter, cfg.Logger)
+	manager.responseMgr = NewResponseHandler(eventEmitter, cfg.Logger)
+	manager.connManager = NewConnectionManager(cfg.Adapter, manager.responseMgr, cfg.Logger)
 	manager.discoveryMgr = NewDiscoveryManager(cfg.Adapter, eventEmitter, cfg.Logger)
 	manager.characteristicsMgr = NewCharacteristicsManager(cfg.Logger)
-	manager.responseMgr = NewResponseHandler(eventEmitter, cfg.Logger)
 	manager.pairingMgr = NewPairingManager(manager.connManager, manager.characteristicsMgr, manager.responseMgr, eventEmitter, cfg.Logger)
 
 	return manager
@@ -120,6 +120,33 @@ func (m *Manager) withRetry(operation, macAddress string, maxRetries int, fn fun
 		}
 	}
 	return fmt.Errorf("operation %s failed after %d retries: %v", operation, maxRetries, lastErr)
+}
+
+// withRetryAndReturn provides retry logic with exponential backoff for functions that return values
+func (m *Manager) withRetryAndReturn(operation, macAddress string, maxRetries int, fn func() (*QueryResponseData, error)) (*QueryResponseData, error) {
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		result, err := fn()
+		if err != nil {
+			lastErr = err
+			if attempt < maxRetries-1 {
+				waitTime := time.Duration(attempt+1) * 500 * time.Millisecond
+				m.log.Tracef("BLE retry attempt %d/%d for operation '%s' on device %s (backoff: %v): %v",
+					attempt+1, maxRetries, operation, macAddress, waitTime, err)
+				time.Sleep(waitTime)
+			} else {
+				m.log.Errorf("BLE operation failed permanently: operation='%s' device=%s attempts=%d error=%v",
+					operation, macAddress, maxRetries, lastErr)
+			}
+		} else {
+			if attempt > 0 {
+				m.log.Infof("BLE operation recovered: operation='%s' device=%s attempts=%d",
+					operation, macAddress, attempt+1)
+			}
+			return result, nil
+		}
+	}
+	return nil, fmt.Errorf("operation %s failed after %d retries: %v", operation, maxRetries, lastErr)
 }
 
 // createPackets breaks large payloads into BLE-compatible packets
@@ -189,6 +216,28 @@ func (m *Manager) GetDiscoveredDevices() []Device {
 }
 
 func (m *Manager) Connect(macAddress string) error {
+	// Validate input parameters
+	if err := ValidateMAC(macAddress); err != nil {
+		return NewConnectionError(macAddress, "connect", err, "Check MAC address format (XX:XX:XX:XX:XX:XX)", time.Now())
+	}
+
+	// Validate manager state
+	if m.adapter == nil {
+		return NewConnectionError(macAddress, "connect", ErrNotReady, "BLE adapter not initialized", time.Now())
+	}
+
+	if m.connManager == nil {
+		return NewConnectionError(macAddress, "connect", ErrNotReady, "Connection manager not initialized", time.Now())
+	}
+
+	if m.discoveryMgr == nil {
+		return NewConnectionError(macAddress, "connect", ErrNotReady, "Discovery manager not initialized", time.Now())
+	}
+
+	if m.characteristicsMgr == nil {
+		return NewConnectionError(macAddress, "connect", ErrNotReady, "Characteristics manager not initialized", time.Now())
+	}
+
 	m.log.Infof("Connecting to device %s using OpenGoPro BLE specification", macAddress)
 
 	// Phase 0: Verify device is discovered before attempting connection
@@ -204,7 +253,8 @@ func (m *Manager) Connect(macAddress string) error {
 
 	if targetDevice == nil {
 		m.log.Errorf("Device %s not found in discovered devices, cannot connect", macAddress)
-		return fmt.Errorf("device %s not discovered, cannot connect", macAddress)
+		return NewConnectionError(macAddress, "connect", ErrDeviceNotFound,
+			"Device not discovered - run scan first to discover devices", time.Now())
 	}
 
 	m.log.Debugf("Device %s found in discovered devices: %s (RSSI: %d)", macAddress, targetDevice.Name, targetDevice.RSSI)
@@ -214,11 +264,19 @@ func (m *Manager) Connect(macAddress string) error {
 	defer cancel()
 
 	m.log.Infof("Phase 1: Establishing BLE connection to device %s", macAddress)
+
 	// Use connection manager to establish the connection with proper state management
 	device, err := m.connManager.Connect(ctx, macAddress)
 	if err != nil {
 		m.log.Errorf("Failed to establish basic connection for device %s: %v", macAddress, err)
-		return fmt.Errorf("connection failed: %v", err)
+		return WrapWithContext(err, "Phase 1 - establish BLE connection", macAddress)
+	}
+
+	// Validate device pointer
+	if device == nil {
+		err := NewConnectionError(macAddress, "connect", ErrConnectionFailed,
+			"Connection returned nil device pointer", time.Now())
+		return err
 	}
 
 	m.addConnection(macAddress, device)
@@ -226,25 +284,50 @@ func (m *Manager) Connect(macAddress string) error {
 
 	// Phase 2: Discover services AFTER connection is established
 	m.log.Infof("Phase 2: Discovering services for device %s", macAddress)
-	discoveredServices, err := device.DiscoverServices(nil)
+
+	// Implement retry logic for service discovery
+	var discoveredServices []bluetooth.DeviceService
+	err = m.withRetry("discover services", macAddress, 3, func() error {
+		var discErr error
+		discoveredServices, discErr = device.DiscoverServices(nil)
+		if discErr != nil {
+			return discErr
+		}
+
+		if len(discoveredServices) == 0 {
+			return fmt.Errorf("no services discovered")
+		}
+
+		return nil
+	})
+
 	if err != nil {
 		m.log.Errorf("Failed to discover services for device %s: %v", macAddress, err)
 		// Clean up the connection on service discovery failure
 		m.removeConnection(macAddress)
 		_ = m.connManager.Disconnect(macAddress)
-		return fmt.Errorf("service discovery failed: %v", err)
+		return NewConnectionError(macAddress, "discover_services", err,
+			"Service discovery failed - ensure device is compatible and in range", time.Now())
 	}
+
 	m.log.Infof("Phase 2 complete: Discovered %d services for device %s", len(discoveredServices), macAddress)
 
 	// Phase 3: Cache the discovered services in characteristics manager
 	m.log.Infof("Phase 3: Caching services and characteristics for device %s", macAddress)
-	if err := m.characteristicsMgr.DiscoverAndCacheCharacteristics(discoveredServices); err != nil {
+
+	err = m.withRetry("cache characteristics", macAddress, 2, func() error {
+		return m.characteristicsMgr.DiscoverAndCacheCharacteristics(discoveredServices)
+	})
+
+	if err != nil {
 		m.log.Errorf("Failed to cache services for device %s: %v", macAddress, err)
 		// Clean up the connection on caching failure
 		m.removeConnection(macAddress)
 		_ = m.connManager.Disconnect(macAddress)
-		return fmt.Errorf("failed to cache services: %v", err)
+		return NewConnectionError(macAddress, "cache_characteristics", err,
+			"Failed to cache characteristics - ensure device supports OpenGoPro", time.Now())
 	}
+
 	m.log.Infof("Phase 3 complete: Services and characteristics cached for device %s", macAddress)
 
 	// Phase 4: Update connection state to ready
@@ -263,7 +346,8 @@ func (m *Manager) Disconnect(macAddress string) error {
 	m.characteristicsMgr.Clear()
 	m.log.Debugf("Cleared characteristics cache after disconnecting device %s", macAddress)
 
-	return m.connManager.Disconnect(macAddress)
+	// Use enhanced disconnect with full resource cleanup
+	return m.connManager.DisconnectAndCleanup(macAddress)
 }
 
 func (m *Manager) DisconnectGoPro(macAddress string) error {
@@ -296,11 +380,17 @@ func (m *Manager) GetPairingState(macAddress string) (int, error) {
 	return m.pairingMgr.GetPairingState(macAddress)
 }
 
-// GetWifiCredentials retrieves WiFi SSID and password from the GoPro
+// GetWifiCredentials retrieves WiFi SSID and password from the GoPro with comprehensive validation
 func (m *Manager) GetWifiCredentials(macAddress string) (string, string, error) {
+	// Validate input parameters
+	if err := ValidateMAC(macAddress); err != nil {
+		return "", "", NewConnectionError(macAddress, "get_wifi_credentials", err, "Check MAC address format", time.Now())
+	}
+
 	bleDevice := m.getConnection(macAddress)
 	if bleDevice == nil {
-		return "", "", fmt.Errorf("no active connection for device %s", macAddress)
+		return "", "", NewConnectionError(macAddress, "get_wifi_credentials", ErrDeviceNotFound,
+			"No active connection - connect to device first", time.Now())
 	}
 
 	var ssid, password string
@@ -309,146 +399,258 @@ func (m *Manager) GetWifiCredentials(macAddress string) (string, string, error) 
 	m.log.Tracef("Attempting to retrieve WiFi credentials for device %s", macAddress)
 
 	wifiErr = m.withRetry("get WiFi credentials", macAddress, 3, func() error {
-		// Discover WiFi service directly
+		// Validate device pointer before use
+		if bleDevice == nil {
+			return fmt.Errorf("device pointer is nil")
+		}
+
+		// Discover WiFi service directly with retry logic
 		svcs, err := bleDevice.DiscoverServices(nil)
 		if err != nil {
 			return fmt.Errorf("failed to discover services: %v", err)
+		}
+
+		if len(svcs) == 0 {
+			return fmt.Errorf("no services discovered")
 		}
 
 		// Find WiFi service
 		var wifiService bluetooth.DeviceService
 		found := false
 		for _, svc := range svcs {
-			if svc.UUID().String() == GoProWifiServiceUUID {
+			svcUUID := svc.UUID().String()
+			if strings.EqualFold(svcUUID, GoProWifiServiceUUID) {
 				wifiService = svc
 				found = true
+				m.log.Debugf("Found WiFi service for device %s", macAddress)
 				break
 			}
 		}
 
 		if !found {
-			return fmt.Errorf("WiFi service not found")
+			return NewConnectionError(macAddress, "get_wifi_credentials", ErrServiceNotFound,
+				"WiFi service not found - ensure device supports WiFi provisioning", time.Now())
 		}
 
-		// Discover characteristics
+		// Discover characteristics with validation
 		chars, err := wifiService.DiscoverCharacteristics(nil)
 		if err != nil {
-			return fmt.Errorf("failed to discover characteristics: %v", err)
+			return fmt.Errorf("failed to discover WiFi characteristics: %v", err)
+		}
+
+		if len(chars) == 0 {
+			return fmt.Errorf("no WiFi characteristics discovered")
 		}
 
 		// Find SSID and Password characteristics
 		var ssidChar, passwordChar *bluetooth.DeviceCharacteristic
 		for i, char := range chars {
-			switch char.UUID().String() {
-			case WifiSSIDCharUUID:
+			charUUID := char.UUID().String()
+			switch {
+			case strings.EqualFold(charUUID, WifiSSIDCharUUID):
 				ssidChar = &chars[i]
-			case WifiPasswordCharUUID:
+				m.log.Debugf("Found WiFi SSID characteristic for device %s", macAddress)
+			case strings.EqualFold(charUUID, WifiPasswordCharUUID):
 				passwordChar = &chars[i]
+				m.log.Debugf("Found WiFi password characteristic for device %s", macAddress)
 			}
 		}
 
-		if ssidChar == nil || passwordChar == nil {
-			return fmt.Errorf("WiFi characteristics not found")
+		if ssidChar == nil {
+			return NewCharacteristicError(GoProWifiServiceUUID, WifiSSIDCharUUID, "read",
+				fmt.Errorf("WiFi SSID characteristic not found for device %s", macAddress))
 		}
 
-		// Read SSID
+		if passwordChar == nil {
+			return NewCharacteristicError(GoProWifiServiceUUID, WifiPasswordCharUUID, "read",
+				fmt.Errorf("WiFi password characteristic not found for device %s", macAddress))
+		}
+
+		// Read SSID with validation
 		ssidData := make([]byte, 32)
 		n, err := ssidChar.Read(ssidData)
 		if err != nil {
-			return fmt.Errorf("failed to read SSID: %v", err)
+			return NewCharacteristicError(GoProWifiServiceUUID, WifiSSIDCharUUID, "read",
+				fmt.Errorf("failed to read SSID: %v", err))
 		}
-		ssid = strings.TrimSpace(string(ssidData[:n]))
 
-		// Read Password
+		if n == 0 {
+			return fmt.Errorf("empty SSID data received")
+		}
+
+		ssid = strings.TrimSpace(string(ssidData[:n]))
+		m.log.Debugf("Successfully read SSID for device %s (length: %d)", macAddress, len(ssid))
+
+		// Read Password with validation
 		passwordData := make([]byte, 64)
 		n, err = passwordChar.Read(passwordData)
 		if err != nil {
-			return fmt.Errorf("failed to read password: %v", err)
+			return NewCharacteristicError(GoProWifiServiceUUID, WifiPasswordCharUUID, "read",
+				fmt.Errorf("failed to read password: %v", err))
 		}
-		password = strings.TrimSpace(string(passwordData[:n]))
 
-		if ssid == "" || password == "" {
-			return fmt.Errorf("empty WiFi credentials received")
+		if n == 0 {
+			return fmt.Errorf("empty password data received")
+		}
+
+		password = strings.TrimSpace(string(passwordData[:n]))
+		m.log.Debugf("Successfully read WiFi password for device %s (length: %d)", macAddress, len(password))
+
+		// Validate credential content
+		if ssid == "" {
+			return fmt.Errorf("empty WiFi SSID received")
+		}
+
+		if password == "" {
+			return fmt.Errorf("empty WiFi password received")
+		}
+
+		// Basic SSID validation (length and printable characters)
+		if len(ssid) > 32 {
+			return fmt.Errorf("invalid SSID length: %d (max 32)", len(ssid))
+		}
+
+		// Basic password validation (minimum length for security)
+		if len(password) < 8 {
+			m.log.Warnf("WiFi password for device %s is shorter than recommended (length: %d)", macAddress, len(password))
 		}
 
 		return nil
 	})
 
 	if wifiErr != nil {
-		return "", "", fmt.Errorf("failed to get WiFi credentials: %v", wifiErr)
+		m.log.Errorf("Failed to retrieve WiFi credentials for device %s: %v", macAddress, wifiErr)
+		return "", "", wifiErr
 	}
 
-	m.log.Infof("WiFi credentials retrieved: device=%s ssid=%s", macAddress, ssid)
+	m.log.Infof("Successfully retrieved WiFi credentials for device %s (SSID: %s)", macAddress, ssid)
 	return ssid, password, nil
 }
 
-// EnableWifi enables WiFi on the GoPro
+// EnableWifi enables WiFi on the GoPro with comprehensive error handling and validation
 func (m *Manager) EnableWifi(macAddress string) error {
-	device := m.getConnection(macAddress)
-	if device == nil {
-		return fmt.Errorf("no active connection for device %s", macAddress)
+	// Validate input parameters
+	if err := ValidateMAC(macAddress); err != nil {
+		return NewConnectionError(macAddress, "enable_wifi", err, "Check MAC address format", time.Now())
 	}
 
+	device := m.getConnection(macAddress)
+	if device == nil {
+		return NewConnectionError(macAddress, "enable_wifi", ErrDeviceNotFound,
+			"No active connection - connect to device first", time.Now())
+	}
+
+	// Validate device pointer
+	if err := ValidateDevicePointer(device); err != nil {
+		return NewConnectionError(macAddress, "enable_wifi", err,
+			"Device pointer validation failed", time.Now())
+	}
+
+	m.log.Infof("Enabling WiFi for device %s", macAddress)
+
 	return m.withRetry("enable WiFi", macAddress, 3, func() error {
-		// Discover WiFi service
+		// Discover WiFi service with validation
 		svcs, err := device.DiscoverServices(nil)
 		if err != nil {
 			return fmt.Errorf("failed to discover services: %v", err)
 		}
 
-		// Find WiFi service
+		if len(svcs) == 0 {
+			return fmt.Errorf("no services discovered on device")
+		}
+
+		// Find WiFi service with proper validation
 		var wifiService bluetooth.DeviceService
 		found := false
 		for _, svc := range svcs {
-			if svc.UUID().String() == GoProWifiServiceUUID {
+			svcUUID := svc.UUID().String()
+			if strings.EqualFold(svcUUID, GoProWifiServiceUUID) {
 				wifiService = svc
 				found = true
+				m.log.Debugf("Found WiFi service for device %s", macAddress)
 				break
 			}
 		}
 
 		if !found {
-			return fmt.Errorf("WiFi service not found")
+			return NewConnectionError(macAddress, "enable_wifi", ErrServiceNotFound,
+				"WiFi service not found - ensure device supports WiFi", time.Now())
 		}
 
-		// Discover characteristics
+		// Discover characteristics with validation
 		chars, err := wifiService.DiscoverCharacteristics(nil)
 		if err != nil {
-			return fmt.Errorf("failed to discover characteristics: %v", err)
+			return fmt.Errorf("failed to discover WiFi characteristics: %v", err)
 		}
 
-		// Find WiFi Power characteristic
-		for _, char := range chars {
-			if char.UUID().String() == WifiPowerCharUUID {
-				// Write the value to enable WiFi (1 = ON)
-				n, err := char.WriteWithoutResponse([]byte{1})
-				if err != nil {
-					return fmt.Errorf("failed to enable WiFi: %v", err)
-				}
-				if n != 1 {
-					return fmt.Errorf("failed to write complete data to enable WiFi")
-				}
+		if len(chars) == 0 {
+			return fmt.Errorf("no WiFi characteristics discovered")
+		}
 
-				m.log.Infof("WiFi enabled successfully: device=%s", macAddress)
-				return nil
+		// Find WiFi Power characteristic with validation
+		var wifiPowerChar *bluetooth.DeviceCharacteristic
+		for i, char := range chars {
+			charUUID := char.UUID().String()
+			if strings.EqualFold(charUUID, WifiPowerCharUUID) {
+				wifiPowerChar = &chars[i]
+				m.log.Debugf("Found WiFi power characteristic for device %s", macAddress)
+				break
 			}
 		}
 
-		return fmt.Errorf("WiFi power characteristic not found")
+		if wifiPowerChar == nil {
+			return NewCharacteristicError(GoProWifiServiceUUID, WifiPowerCharUUID, "write",
+				fmt.Errorf("WiFi power characteristic not found for device %s", macAddress))
+		}
+
+		// Validate characteristic pointer
+		if err := ValidateCharacteristicPointer(wifiPowerChar); err != nil {
+			return NewCharacteristicError(GoProWifiServiceUUID, WifiPowerCharUUID, "write", err)
+		}
+
+		// Write the value to enable WiFi (1 = ON) with validation
+		wifiEnableData := []byte{1}
+		n, err := wifiPowerChar.WriteWithoutResponse(wifiEnableData)
+		if err != nil {
+			return NewCharacteristicError(GoProWifiServiceUUID, WifiPowerCharUUID, "write",
+				fmt.Errorf("failed to enable WiFi: %v", err))
+		}
+
+		if n != len(wifiEnableData) {
+			return NewCharacteristicError(GoProWifiServiceUUID, WifiPowerCharUUID, "write",
+				fmt.Errorf("incomplete write: expected %d bytes, wrote %d", len(wifiEnableData), n))
+		}
+
+		m.log.Infof("WiFi enabled successfully for device %s", macAddress)
+		return nil
 	})
 }
 
-// GetMetadata retrieves metadata from the GoPro such as firmware version, model, etc.
+// GetMetadata retrieves metadata from the GoPro with comprehensive error handling and validation
 func (m *Manager) GetMetadata(macAddress string) (map[string]string, error) {
+	// Validate input parameters
+	if err := ValidateMAC(macAddress); err != nil {
+		return nil, NewConnectionError(macAddress, "get_metadata", err, "Check MAC address format", time.Now())
+	}
+
 	device := m.getConnection(macAddress)
 	if device == nil {
-		return nil, fmt.Errorf("no active connection for device %s", macAddress)
+		return nil, NewConnectionError(macAddress, "get_metadata", ErrDeviceNotFound,
+			"No active connection - connect to device first", time.Now())
+	}
+
+	// Validate device pointer
+	if err := ValidateDevicePointer(device); err != nil {
+		return nil, NewConnectionError(macAddress, "get_metadata", err,
+			"Device pointer validation failed", time.Now())
 	}
 
 	metadata := make(map[string]string)
 
+	m.log.Debugf("Retrieving metadata for device %s", macAddress)
+
 	metadataErr := m.withRetry("get metadata", macAddress, 3, func() error {
-		// Get control service characteristics
+		// Get control service characteristics with validation
 		chars, err := m.characteristicsMgr.GetControlServiceCharacteristics()
 		if err != nil {
 			return fmt.Errorf("failed to get control service characteristics: %v", err)
@@ -457,72 +659,140 @@ func (m *Manager) GetMetadata(macAddress string) (map[string]string, error) {
 		queryChar := chars["query"]
 		queryRespChar := chars["queryResponse"]
 
-		// Set up notification handler for responses
+		// Validate characteristic pointers
+		if err := ValidateCharacteristicPointer(queryChar); err != nil {
+			return NewCharacteristicError(GoProControlServiceUUID, QueryCharUUID, "validate", err)
+		}
+
+		if err := ValidateCharacteristicPointer(queryRespChar); err != nil {
+			return NewCharacteristicError(GoProControlServiceUUID, QueryResponseCharUUID, "validate", err)
+		}
+
+		// Set up notification handler for responses with timeout
 		responseChan := make(chan []byte, 5)
-		if err := queryRespChar.EnableNotifications(func(data []byte) {
+		notificationErr := queryRespChar.EnableNotifications(func(data []byte) {
 			select {
 			case responseChan <- data:
+				// Successfully queued response
 			default:
-				// Channel full, drop response
+				// Channel full, log warning but don't block
+				m.log.Warnf("Response channel full when receiving metadata response for device %s", macAddress)
 			}
-		}); err != nil {
-			return fmt.Errorf("failed to enable notifications: %v", err)
+		})
+
+		if notificationErr != nil {
+			return NewCharacteristicError(GoProControlServiceUUID, QueryResponseCharUUID, "enable_notifications",
+				fmt.Errorf("failed to enable notifications: %v", notificationErr))
 		}
 
-		// Query hardware info (0x3F)
+		// Query hardware info (0x3F) with validation
 		hardwareQuery := []byte{CommandGetHardwareInfo}
-		if _, err := queryChar.WriteWithoutResponse(hardwareQuery); err != nil {
-			return fmt.Errorf("failed to query hardware info: %v", err)
+		n, err := queryChar.WriteWithoutResponse(hardwareQuery)
+		if err != nil {
+			return NewCharacteristicError(GoProControlServiceUUID, QueryCharUUID, "write",
+				fmt.Errorf("failed to query hardware info: %v", err))
 		}
 
-		// Wait for response
+		if n != len(hardwareQuery) {
+			return NewCharacteristicError(GoProControlServiceUUID, QueryCharUUID, "write",
+				fmt.Errorf("incomplete write: expected %d bytes, wrote %d", len(hardwareQuery), n))
+		}
+
+		m.log.Tracef("Hardware info query sent to device %s", macAddress)
+
+		// Wait for response with proper timeout and validation
 		select {
 		case response := <-responseChan:
+			// Validate response format
+			if err := ValidateResponseFormat(response, CommandGetHardwareInfo); err != nil {
+				return NewResponseError(CommandGetHardwareInfo, len(response), err)
+			}
+
 			if len(response) >= 3 && response[0] == CommandGetHardwareInfo && response[1] == 0 {
 				data := response[2:]
+
+				// Parse model ID with validation
 				if len(data) >= 1 {
-					modelID := data[0]
-					metadata["model_id"] = fmt.Sprintf("%d", modelID)
-					metadata["model_name"] = models.GetModelName(int(modelID))
+					modelID := int(data[0])
+					if err := ValidateModelID(modelID); err != nil {
+						m.log.Warnf("Invalid model ID %d for device %s: %v", modelID, macAddress, err)
+						metadata["model_id"] = fmt.Sprintf("%d", modelID)
+						metadata["model_name"] = "Unknown"
+					} else {
+						metadata["model_id"] = fmt.Sprintf("%d", modelID)
+						metadata["model_name"] = models.GetModelName(modelID)
+					}
 				}
+
+				// Parse firmware version with validation
 				if len(data) >= 5 {
 					firmware := fmt.Sprintf("%d.%d.%d", data[1], data[2], data[3])
 					metadata["firmware_version"] = firmware
 				}
+
+				// Parse hardware version with validation
 				if len(data) >= 9 {
 					hardware := fmt.Sprintf("%d.%d.%d.%d", data[5], data[6], data[7], data[8])
 					metadata["hardware_version"] = hardware
 				}
+
+				// Parse serial number with validation
 				if len(data) >= 13 {
-					serial := string(data[9:13])
-					metadata["serial_number"] = serial
+					serial := strings.TrimSpace(string(data[9:13]))
+					if serial != "" {
+						metadata["serial_number"] = serial
+					}
 				}
+
+				m.log.Debugf("Successfully parsed metadata for device %s: model=%s firmware=%s",
+					macAddress, metadata["model_name"], metadata["firmware_version"])
+			} else {
+				return NewResponseError(CommandGetHardwareInfo, len(response),
+					fmt.Errorf("invalid hardware info response format"))
 			}
-		case <-time.After(5 * time.Second):
-			return fmt.Errorf("timeout waiting for hardware info response")
+
+		case <-time.After(10 * time.Second):
+			return NewResponseError(CommandGetHardwareInfo, 0,
+				fmt.Errorf("timeout waiting for hardware info response"))
 		}
 
 		return nil
 	})
 
 	if metadataErr != nil {
-		return nil, fmt.Errorf("failed to get metadata: %v", metadataErr)
+		m.log.Errorf("Failed to retrieve metadata for device %s: %v", macAddress, metadataErr)
+		return nil, metadataErr
 	}
 
+	m.log.Infof("Successfully retrieved metadata for device %s", macAddress)
 	return metadata, nil
 }
 
-// GetBatteryLevel retrieves the battery level from the GoPro
+// GetBatteryLevel retrieves the battery level from the GoPro with comprehensive error handling
 func (m *Manager) GetBatteryLevel(macAddress string) (int, error) {
+	// Validate input parameters
+	if err := ValidateMAC(macAddress); err != nil {
+		return 0, NewConnectionError(macAddress, "get_battery_level", err, "Check MAC address format", time.Now())
+	}
+
 	device := m.getConnection(macAddress)
 	if device == nil {
-		return 0, fmt.Errorf("no active connection for device %s", macAddress)
+		return 0, NewConnectionError(macAddress, "get_battery_level", ErrDeviceNotFound,
+			"No active connection - connect to device first", time.Now())
+	}
+
+	// Validate device pointer
+	if err := ValidateDevicePointer(device); err != nil {
+		return 0, NewConnectionError(macAddress, "get_battery_level", err,
+			"Device pointer validation failed", time.Now())
 	}
 
 	var batteryLevel int
 
+	m.log.Debugf("Retrieving battery level for device %s", macAddress)
+
 	batteryErr := m.withRetry("get battery level", macAddress, 3, func() error {
-		// Get control service characteristics
+		// Get control service characteristics with validation
 		chars, err := m.characteristicsMgr.GetControlServiceCharacteristics()
 		if err != nil {
 			return fmt.Errorf("failed to get control service characteristics: %v", err)
@@ -531,57 +801,128 @@ func (m *Manager) GetBatteryLevel(macAddress string) (int, error) {
 		queryChar := chars["query"]
 		queryRespChar := chars["queryResponse"]
 
-		// Set up notification handler for responses
+		// Validate characteristic pointers
+		if err := ValidateCharacteristicPointer(queryChar); err != nil {
+			return NewCharacteristicError(GoProControlServiceUUID, QueryCharUUID, "validate", err)
+		}
+
+		if err := ValidateCharacteristicPointer(queryRespChar); err != nil {
+			return NewCharacteristicError(GoProControlServiceUUID, QueryResponseCharUUID, "validate", err)
+		}
+
+		// Set up notification handler for responses with proper channel management
 		responseChan := make(chan []byte, 5)
-		if err := queryRespChar.EnableNotifications(func(data []byte) {
+		notificationErr := queryRespChar.EnableNotifications(func(data []byte) {
 			select {
 			case responseChan <- data:
+				// Successfully queued response
 			default:
-				// Channel full, drop response
+				// Channel full, log warning but don't block
+				m.log.Warnf("Response channel full when receiving battery response for device %s", macAddress)
 			}
-		}); err != nil {
-			return fmt.Errorf("failed to enable notifications: %v", err)
+		})
+
+		if notificationErr != nil {
+			return NewCharacteristicError(GoProControlServiceUUID, QueryResponseCharUUID, "enable_notifications",
+				fmt.Errorf("failed to enable notifications: %v", notificationErr))
 		}
 
 		// Query battery level (status ID 70 = Internal Battery Percentage)
 		// OpenGoPro TLV format: [Command] [Array Length] [Status ID]
 		batteryQuery := []byte{QueryGetStatusValues, 0x01, 70}
-		if _, err := queryChar.WriteWithoutResponse(batteryQuery); err != nil {
-			return fmt.Errorf("failed to query battery level: %v", err)
+		n, err := queryChar.WriteWithoutResponse(batteryQuery)
+		if err != nil {
+			return NewCharacteristicError(GoProControlServiceUUID, QueryCharUUID, "write",
+				fmt.Errorf("failed to query battery level: %v", err))
 		}
 
-		// Wait for response
+		if n != len(batteryQuery) {
+			return NewCharacteristicError(GoProControlServiceUUID, QueryCharUUID, "write",
+				fmt.Errorf("incomplete write: expected %d bytes, wrote %d", len(batteryQuery), n))
+		}
+
+		m.log.Tracef("Battery level query sent to device %s", macAddress)
+
+		// Wait for response with proper timeout and validation
 		select {
 		case response := <-responseChan:
+			// Validate response format
+			if err := ValidateResponseFormat(response, QueryGetStatusValues); err != nil {
+				return NewResponseError(QueryGetStatusValues, len(response), err)
+			}
+
 			if len(response) >= 4 && response[0] == QueryGetStatusValues && response[1] == 0 {
 				statusID := response[2]
 				if statusID == 70 && len(response) >= 4 {
 					batteryLevel = int(response[3])
+
+					// Validate battery level range (0-100%)
+					if batteryLevel < 0 || batteryLevel > 100 {
+						return NewResponseError(QueryGetStatusValues, len(response),
+							fmt.Errorf("invalid battery level %d%% (expected 0-100%%)", batteryLevel))
+					}
+
+					m.log.Debugf("Successfully read battery level for device %s: %d%%", macAddress, batteryLevel)
+				} else {
+					return NewResponseError(QueryGetStatusValues, len(response),
+						fmt.Errorf("invalid battery response: statusID=%d, length=%d", statusID, len(response)))
 				}
+			} else {
+				return NewResponseError(QueryGetStatusValues, len(response),
+					fmt.Errorf("invalid battery level response format"))
 			}
-		case <-time.After(5 * time.Second):
-			return fmt.Errorf("timeout waiting for battery level response")
+
+		case <-time.After(8 * time.Second):
+			return NewResponseError(QueryGetStatusValues, 0,
+				fmt.Errorf("timeout waiting for battery level response"))
 		}
 
 		return nil
 	})
 
 	if batteryErr != nil {
-		return 0, fmt.Errorf("failed to get battery level: %v", batteryErr)
+		m.log.Errorf("Failed to retrieve battery level for device %s: %v", macAddress, batteryErr)
+		return 0, batteryErr
 	}
 
+	m.log.Infof("Successfully retrieved battery level for device %s: %d%%", macAddress, batteryLevel)
 	return batteryLevel, nil
 }
 
-// SetDateTime sets the date and time on the GoPro
+// SetDateTime sets the date and time on the GoPro with comprehensive error handling and validation
 func (m *Manager) SetDateTime(macAddress string, t time.Time) error {
-	device := m.getConnection(macAddress)
-	if device == nil {
-		return fmt.Errorf("no active connection for device %s", macAddress)
+	// Validate input parameters
+	if err := ValidateMAC(macAddress); err != nil {
+		return NewConnectionError(macAddress, "set_datetime", err, "Check MAC address format", time.Now())
 	}
 
+	// Validate time parameter
+	if t.IsZero() {
+		return NewValidationError("datetime", t, "datetime cannot be zero value")
+	}
+
+	// Check if time is reasonable (not too far in past or future)
+	now := time.Now()
+	if t.Before(now.AddDate(-10, 0, 0)) || t.After(now.AddDate(10, 0, 0)) {
+		return NewValidationError("datetime", t, "datetime must be within reasonable range (±10 years)")
+	}
+
+	device := m.getConnection(macAddress)
+	if device == nil {
+		return NewConnectionError(macAddress, "set_datetime", ErrDeviceNotFound,
+			"No active connection - connect to device first", time.Now())
+	}
+
+	// Validate device pointer
+	if err := ValidateDevicePointer(device); err != nil {
+		return NewConnectionError(macAddress, "set_datetime", err,
+			"Device pointer validation failed", time.Now())
+	}
+
+	m.log.Infof("Setting date/time for device %s to %v", macAddress, t)
+
 	return m.withRetry("set date time", macAddress, 3, func() error {
-		// Get control service characteristics
+		// Get control service characteristics with validation
 		chars, err := m.characteristicsMgr.GetControlServiceCharacteristics()
 		if err != nil {
 			return fmt.Errorf("failed to get control service characteristics: %v", err)
@@ -589,42 +930,82 @@ func (m *Manager) SetDateTime(macAddress string, t time.Time) error {
 
 		commandChar := chars["command"]
 
-		// Create the date/time command
+		// Validate characteristic pointer
+		if err := ValidateCharacteristicPointer(commandChar); err != nil {
+			return NewCharacteristicError(GoProControlServiceUUID, CommandCharUUID, "validate", err)
+		}
+
+		// Create the date/time command with validation
 		// Format: [CommandSetDateTime] [Year (BE uint16)] [Month] [Day] [Hour] [Minute] [Second] [DSTOffset]
 		cmd := make([]byte, 8)
 		cmd[0] = CommandSetDateTime
-		binary.BigEndian.PutUint16(cmd[1:3], uint16(t.Year()))
+
+		// Validate year range
+		year := t.Year()
+		if year < 1900 || year > 2100 {
+			return NewValidationError("year", year, "year must be between 1900 and 2100")
+		}
+
+		binary.BigEndian.PutUint16(cmd[1:3], uint16(year))
 		cmd[3] = byte(t.Month())
 		cmd[4] = byte(t.Day())
 		cmd[5] = byte(t.Hour())
 		cmd[6] = byte(t.Minute())
 		cmd[7] = byte(t.Second())
 
-		// Write the command
-		if _, err := commandChar.WriteWithoutResponse(cmd); err != nil {
-			return fmt.Errorf("failed to set date/time: %v", err)
+		m.log.Tracef("DateTime command payload for device %s: %02X", macAddress, cmd)
+
+		// Write the command with validation
+		n, err := commandChar.WriteWithoutResponse(cmd)
+		if err != nil {
+			return NewCharacteristicError(GoProControlServiceUUID, CommandCharUUID, "write",
+				fmt.Errorf("failed to set date/time: %v", err))
 		}
 
-		m.log.Infof("Date/time synchronized: device=%s time=%v", macAddress, t)
+		if n != len(cmd) {
+			return NewCharacteristicError(GoProControlServiceUUID, CommandCharUUID, "write",
+				fmt.Errorf("incomplete write: expected %d bytes, wrote %d", len(cmd), n))
+		}
+
+		m.log.Infof("Date/time synchronized successfully for device %s: %v", macAddress, t)
 		return nil
 	})
 }
 
-// SetCameraControl sets the camera control status
+// SetCameraControl sets the camera control status with comprehensive error handling and validation
 func (m *Manager) SetCameraControl(macAddress string, enabled bool) error {
-	device := m.getConnection(macAddress)
-	if device == nil {
-		return fmt.Errorf("no active connection for device %s", macAddress)
+	// Validate input parameters
+	if err := ValidateMAC(macAddress); err != nil {
+		return NewConnectionError(macAddress, "set_camera_control", err, "Check MAC address format", time.Now())
 	}
 
+	device := m.getConnection(macAddress)
+	if device == nil {
+		return NewConnectionError(macAddress, "set_camera_control", ErrDeviceNotFound,
+			"No active connection - connect to device first", time.Now())
+	}
+
+	// Validate device pointer
+	if err := ValidateDevicePointer(device); err != nil {
+		return NewConnectionError(macAddress, "set_camera_control", err,
+			"Device pointer validation failed", time.Now())
+	}
+
+	m.log.Infof("Setting camera control for device %s to enabled=%v", macAddress, enabled)
+
 	return m.withRetry("set camera control", macAddress, 3, func() error {
-		// Get control service characteristics
+		// Get control service characteristics with validation
 		chars, err := m.characteristicsMgr.GetControlServiceCharacteristics()
 		if err != nil {
 			return fmt.Errorf("failed to get control service characteristics: %v", err)
 		}
 
 		commandChar := chars["command"]
+
+		// Validate characteristic pointer
+		if err := ValidateCharacteristicPointer(commandChar); err != nil {
+			return NewCharacteristicError(GoProControlServiceUUID, CommandCharUUID, "validate", err)
+		}
 
 		// Create the camera control command (using protobuf format)
 		cmd := make([]byte, 3)
@@ -636,84 +1017,176 @@ func (m *Manager) SetCameraControl(macAddress string, enabled bool) error {
 			cmd[2] = 0
 		}
 
-		// Create packets for the command
-		packets := m.createPackets(cmd)
+		m.log.Tracef("Camera control command payload for device %s: %02X", macAddress, cmd)
 
-		// Write each packet
+		// Create packets for the command with validation
+		packets := m.createPackets(cmd)
+		if len(packets) == 0 {
+			return fmt.Errorf("failed to create command packets")
+		}
+
+		// Write each packet with validation and retry logic
 		for i, packet := range packets {
-			if _, err := commandChar.WriteWithoutResponse(packet); err != nil {
-				return fmt.Errorf("failed to write camera control packet %d: %v", i, err)
+			if len(packet) == 0 {
+				return fmt.Errorf("empty packet %d generated", i)
 			}
 
-			// Small delay between packets
+			n, err := commandChar.WriteWithoutResponse(packet)
+			if err != nil {
+				return NewCharacteristicError(GoProControlServiceUUID, CommandCharUUID, "write",
+					fmt.Errorf("failed to write camera control packet %d: %v", i, err))
+			}
+
+			if n != len(packet) {
+				return NewCharacteristicError(GoProControlServiceUUID, CommandCharUUID, "write",
+					fmt.Errorf("incomplete write for packet %d: expected %d bytes, wrote %d", i, len(packet), n))
+			}
+
+			m.log.Tracef("Camera control packet %d/%d written to device %s (%d bytes)",
+				i+1, len(packets), macAddress, n)
+
+			// Small delay between packets to avoid overwhelming the device
 			if i < len(packets)-1 {
 				time.Sleep(10 * time.Millisecond)
 			}
 		}
 
-		m.log.Infof("Camera control updated: device=%s enabled=%v", macAddress, enabled)
+		m.log.Infof("Camera control updated successfully for device %s: enabled=%v", macAddress, enabled)
 		return nil
 	})
 }
 
-// KeepAlive sends a keep-alive signal to maintain the connection
+// KeepAlive sends a keep-alive signal to maintain the connection with comprehensive error handling
 func (m *Manager) KeepAlive(macAddress string) error {
+	// Validate input parameters
+	if err := ValidateMAC(macAddress); err != nil {
+		return NewValidationError("keep_alive", err, "Provide a valid MAC address in format XX:XX:XX:XX:XX:XX")
+	}
+
+	m.log.Debug("Sending keep-alive signal", "mac_address", macAddress)
+
+	// Validate device pointer
 	device := m.getConnection(macAddress)
-	if device == nil {
-		return fmt.Errorf("no active connection for device %s", macAddress)
+	if err := ValidateDevicePointer(device); err != nil {
+		return NewConnectionError(macAddress, "keep_alive", err, "Ensure device is connected before sending keep-alive", time.Now())
 	}
 
 	return m.withRetry("keep alive", macAddress, 3, func() error {
-		// Get control service characteristics
+		// Get control service characteristics with validation
 		chars, err := m.characteristicsMgr.GetControlServiceCharacteristics()
 		if err != nil {
-			return fmt.Errorf("failed to get control service characteristics: %v", err)
+			return NewCharacteristicError(GoProControlServiceUUID, "settings", "keep_alive",
+				fmt.Errorf("failed to get control service characteristics: %v", err))
 		}
 
-		settingsChar := chars["settings"]
+		// Validate settings characteristic exists
+		settingsChar, exists := chars["settings"]
+		if !exists {
+			return NewCharacteristicError(GoProControlServiceUUID, SettingsCharUUID, "keep_alive",
+				fmt.Errorf("settings characteristic not found for device %s", macAddress))
+		}
 
-		// The keep-alive command is a TLV command with ID 0x5B and value 0x42
+		// Validate characteristic pointer
+		if err := ValidateCharacteristicPointer(settingsChar); err != nil {
+			return NewCharacteristicError(GoProControlServiceUUID, SettingsCharUUID, "keep_alive", err)
+		}
+
+		// The keep-alive command is a TLV command with ID 0x5B and value 0x42 (according to OpenGoPro spec)
 		cmd := []byte{0x5B, 0x42}
 
-		// Write the keep-alive command
-		if _, err := settingsChar.WriteWithoutResponse(cmd); err != nil {
-			return fmt.Errorf("failed to write keep-alive: %v", err)
+		m.log.Trace("Writing keep-alive command", "mac_address", macAddress, "command", cmd)
+
+		// Write the keep-alive command with validation
+		bytesWritten, err := settingsChar.WriteWithoutResponse(cmd)
+		if err != nil {
+			return NewCharacteristicError(GoProControlServiceUUID, SettingsCharUUID, "keep_alive",
+				fmt.Errorf("failed to write keep-alive command: %v", err))
 		}
 
-		m.log.Tracef("Keep-alive signal sent: device=%s", macAddress)
+		// Validate bytes written
+		if bytesWritten != len(cmd) {
+			return NewCharacteristicError(GoProControlServiceUUID, SettingsCharUUID, "keep_alive",
+				fmt.Errorf("incomplete write: expected %d bytes, wrote %d bytes", len(cmd), bytesWritten))
+		}
+
+		m.log.Info("Keep-alive signal sent successfully", "mac_address", macAddress, "bytes_written", bytesWritten)
 		return nil
 	})
 }
 
-// Sleep puts the GoPro to sleep
+// Sleep puts the GoPro to sleep with comprehensive error handling and validation
 func (m *Manager) Sleep(macAddress string) error {
+	// Validate input parameters
+	if err := ValidateMAC(macAddress); err != nil {
+		return NewValidationError("sleep", err, "Provide a valid MAC address in format XX:XX:XX:XX:XX:XX")
+	}
+
+	m.log.Debug("Sending sleep command", "mac_address", macAddress)
+
+	// Validate device pointer
 	device := m.getConnection(macAddress)
-	if device == nil {
-		return fmt.Errorf("no active connection for device %s", macAddress)
+	if err := ValidateDevicePointer(device); err != nil {
+		return NewConnectionError(macAddress, "sleep", err, "Ensure device is connected before sending sleep command", time.Now())
 	}
 
 	return m.withRetry("sleep", macAddress, 3, func() error {
-		// Get control service characteristics
+		// Get control service characteristics with validation
 		chars, err := m.characteristicsMgr.GetControlServiceCharacteristics()
 		if err != nil {
-			return fmt.Errorf("failed to get control service characteristics: %v", err)
+			return NewCharacteristicError(GoProControlServiceUUID, "command", "sleep",
+				fmt.Errorf("failed to get control service characteristics: %v", err))
 		}
 
-		commandChar := chars["command"]
+		// Validate command characteristic exists
+		commandChar, exists := chars["command"]
+		if !exists {
+			return NewCharacteristicError(GoProControlServiceUUID, CommandCharUUID, "sleep",
+				fmt.Errorf("command characteristic not found for device %s", macAddress))
+		}
 
-		// Create the sleep command
+		// Validate characteristic pointer
+		if err := ValidateCharacteristicPointer(commandChar); err != nil {
+			return NewCharacteristicError(GoProControlServiceUUID, CommandCharUUID, "sleep", err)
+		}
+
+		// Create the sleep command (according to OpenGoPro spec)
 		cmd := []byte{CommandSleep}
+
+		m.log.Trace("Creating sleep command packets", "mac_address", macAddress, "command", cmd)
 
 		// Create packets for the command
 		packets := m.createPackets(cmd)
+		if len(packets) == 0 {
+			return NewValidationError("sleep", fmt.Errorf("no packets created for sleep command"),
+				"Check command data format")
+		}
 
-		// Write each packet
+		m.log.Trace("Sending sleep command packets", "mac_address", macAddress, "packet_count", len(packets))
+
+		// Write each packet with validation
 		for i, packet := range packets {
-			if _, err := commandChar.WriteWithoutResponse(packet); err != nil {
-				return fmt.Errorf("failed to write sleep packet %d: %v", i, err)
+			if len(packet) == 0 {
+				return NewValidationError("sleep", fmt.Errorf("empty packet %d", i),
+					"Check packet creation logic")
 			}
 
-			// Small delay between packets
+			bytesWritten, err := commandChar.WriteWithoutResponse(packet)
+			if err != nil {
+				return NewCharacteristicError(GoProControlServiceUUID, CommandCharUUID, "sleep",
+					fmt.Errorf("failed to write sleep packet %d: %v", i, err))
+			}
+
+			// Validate bytes written
+			if bytesWritten != len(packet) {
+				return NewCharacteristicError(GoProControlServiceUUID, CommandCharUUID, "sleep",
+					fmt.Errorf("incomplete write for packet %d: expected %d bytes, wrote %d bytes",
+						i, len(packet), bytesWritten))
+			}
+
+			m.log.Trace("Sleep packet written successfully", "mac_address", macAddress,
+				"packet_index", i, "bytes_written", bytesWritten)
+
+			// Small delay between packets to ensure proper processing
 			if i < len(packets)-1 {
 				time.Sleep(10 * time.Millisecond)
 			}
@@ -722,7 +1195,207 @@ func (m *Manager) Sleep(macAddress string) error {
 		// Give the camera extra time to process the sleep command
 		time.Sleep(500 * time.Millisecond)
 
-		m.log.Tracef("Sleep command sent successfully: device=%s", macAddress)
+		m.log.Info("Sleep command sent successfully", "mac_address", macAddress,
+			"packets_sent", len(packets))
 		return nil
 	})
+}
+
+// SendCommandWithResponse sends a command and waits for the correlated response using the new correlation system with comprehensive error handling
+func (m *Manager) SendCommandWithResponse(macAddress string, commandID byte, data []byte, timeout time.Duration, isQuery bool) (*QueryResponseData, error) {
+	// Validate input parameters
+	if err := ValidateMAC(macAddress); err != nil {
+		return nil, NewValidationError("send_command_with_response", err, "Provide a valid MAC address in format XX:XX:XX:XX:XX:XX")
+	}
+
+	// Validate timeout
+	if timeout < 0 {
+		return nil, NewValidationError("send_command_with_response",
+			fmt.Errorf("invalid timeout: %v", timeout), "Provide a non-negative timeout duration")
+	}
+
+	// Validate device pointer
+	device := m.getConnection(macAddress)
+	if err := ValidateDevicePointer(device); err != nil {
+		return nil, NewConnectionError(macAddress, "send_command_with_response", err,
+			"Ensure device is connected before sending command", time.Now())
+	}
+
+	// Ensure response tracker is initialized
+	m.responseMgr.InitializeTracker(macAddress)
+
+	// Set default timeout if not provided
+	if timeout == 0 {
+		timeout = DefaultTimeout
+	}
+
+	// Validate timeout range (reasonable limits)
+	if timeout > 60*time.Second {
+		return nil, NewValidationError("send_command_with_response",
+			fmt.Errorf("timeout too large: %v", timeout), "Use a timeout less than 60 seconds")
+	}
+
+	// Build command data with validation
+	var commandData []byte
+	if isQuery {
+		// For queries, build the query command
+		if data == nil {
+			commandData = []byte{commandID}
+		} else {
+			// Validate data length for queries
+			if len(data) > 255 {
+				return nil, NewValidationError("send_command_with_response",
+					fmt.Errorf("query data too large: %d bytes", len(data)),
+					"Query data should be less than 256 bytes")
+			}
+			commandData = append([]byte{commandID}, data...)
+		}
+	} else {
+		// For commands, build the command
+		if data == nil {
+			commandData = []byte{commandID}
+		} else {
+			// Validate data length for commands
+			if len(data) > 1024 {
+				return nil, NewValidationError("send_command_with_response",
+					fmt.Errorf("command data too large: %d bytes", len(data)),
+					"Command data should be less than 1024 bytes")
+			}
+			commandData = append([]byte{commandID}, data...)
+		}
+	}
+
+	m.log.Debug("Sending command with response correlation", "mac_address", macAddress,
+		"command_id", commandID, "is_query", isQuery, "timeout", timeout,
+		"data_length", len(commandData))
+
+	return m.withRetryAndReturn("send command with response", macAddress, 3, func() (*QueryResponseData, error) {
+		// Get appropriate characteristic with validation
+		chars, err := m.characteristicsMgr.GetControlServiceCharacteristics()
+		if err != nil {
+			return nil, NewCharacteristicError(GoProControlServiceUUID, "control", "send_command_with_response",
+				fmt.Errorf("failed to get control service characteristics: %v", err))
+		}
+
+		// Select appropriate characteristic based on command type
+		var targetChar *bluetooth.DeviceCharacteristic
+		var charName, charUUID string
+		if isQuery {
+			targetChar = chars["query"]
+			charName = "query"
+			charUUID = QueryCharUUID
+		} else {
+			targetChar = chars["command"]
+			charName = "command"
+			charUUID = CommandCharUUID
+		}
+
+		// Validate characteristic exists
+		if targetChar == nil {
+			return nil, NewCharacteristicError(GoProControlServiceUUID, charUUID, "send_command_with_response",
+				fmt.Errorf("%s characteristic not found for device %s", charName, macAddress))
+		}
+
+		// Validate characteristic pointer
+		if err := ValidateCharacteristicPointer(targetChar); err != nil {
+			return nil, NewCharacteristicError(GoProControlServiceUUID, charUUID, "send_command_with_response", err)
+		}
+
+		// Start waiting for response before sending command to avoid race condition
+		responseChan := make(chan *QueryResponseData, 1)
+		errorChan := make(chan error, 1)
+
+		// Start response handler goroutine
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					errorChan <- fmt.Errorf("response handler panic: %v", r)
+				}
+			}()
+
+			response, err := m.responseMgr.SendCommandWithResponse(macAddress, commandID, data, timeout, isQuery)
+			if err != nil {
+				errorChan <- err
+			} else {
+				responseChan <- response
+			}
+		}()
+
+		// Give a small delay to ensure the response handler is ready
+		time.Sleep(10 * time.Millisecond)
+
+		// Send the command with validation
+		m.log.Trace("Writing command data", "mac_address", macAddress, "command_id", commandID,
+			"data_length", len(commandData))
+
+		bytesWritten, err := targetChar.WriteWithoutResponse(commandData)
+		if err != nil {
+			return nil, NewCharacteristicError(GoProControlServiceUUID, charUUID, "send_command_with_response",
+				fmt.Errorf("failed to write command: %v", err))
+		}
+
+		// Validate bytes written
+		if bytesWritten != len(commandData) {
+			return nil, NewCharacteristicError(GoProControlServiceUUID, charUUID, "send_command_with_response",
+				fmt.Errorf("incomplete write: expected %d bytes, wrote %d bytes", len(commandData), bytesWritten))
+		}
+
+		m.log.Debug("Command sent, waiting for response", "mac_address", macAddress,
+			"command_id", commandID, "bytes_written", bytesWritten)
+
+		// Wait for response with proper timeout handling
+		select {
+		case response := <-responseChan:
+			if response == nil {
+				return nil, NewResponseError(commandID, 0,
+					fmt.Errorf("received nil response"))
+			}
+			m.log.Debug("Command response received successfully", "mac_address", macAddress,
+				"command_id", commandID, "status", response.Status)
+			return response, nil
+
+		case err := <-errorChan:
+			return nil, NewResponseError(commandID, 0, err)
+
+		case <-time.After(timeout + 1*time.Second): // Add buffer to timeout
+			return nil, NewResponseError(commandID, 0,
+				fmt.Errorf("timeout waiting for command response after %v", timeout))
+		}
+	})
+}
+
+// SendQuery sends a query and waits for response using the new correlation system with comprehensive error handling
+func (m *Manager) SendQuery(macAddress string, queryID byte, data []byte, timeout time.Duration) (*QueryResponseData, error) {
+	// Enhanced logging for query operations
+	m.log.Debug("Sending query with correlation", "mac_address", macAddress, "query_id", queryID,
+		"data_length", len(data), "timeout", timeout)
+
+	// Use the enhanced SendCommandWithResponse method
+	response, err := m.SendCommandWithResponse(macAddress, queryID, data, timeout, true)
+	if err != nil {
+		m.log.Error("Query failed", "mac_address", macAddress, "query_id", queryID, "error", err)
+		return nil, err
+	}
+
+	m.log.Debug("Query completed successfully", "mac_address", macAddress, "query_id", queryID,
+		"status", response.Status)
+	return response, nil
+}
+
+// SendCommand sends a command and waits for response using the new correlation system with comprehensive error handling
+func (m *Manager) SendCommand(macAddress string, commandID byte, data []byte, timeout time.Duration) (*QueryResponseData, error) {
+	// Enhanced logging for command operations
+	m.log.Debug("Sending command with correlation", "mac_address", macAddress, "command_id", commandID,
+		"data_length", len(data), "timeout", timeout)
+
+	// Use the enhanced SendCommandWithResponse method
+	response, err := m.SendCommandWithResponse(macAddress, commandID, data, timeout, false)
+	if err != nil {
+		m.log.Error("Command failed", "mac_address", macAddress, "command_id", commandID, "error", err)
+		return nil, err
+	}
+
+	m.log.Debug("Command completed successfully", "mac_address", macAddress, "command_id", commandID,
+		"status", response.Status)
+	return response, nil
 }

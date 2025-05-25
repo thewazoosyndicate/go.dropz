@@ -148,3 +148,39 @@ func GetMaxRetries(modelID int) int {
 	capabilities := GetCapabilities(modelID)
 	return capabilities.MaxConnectionRetries
 }
+
+// ValidateModelCapabilities validates that model capabilities are reasonable
+func ValidateModelCapabilities(caps ModelCapabilities) error {
+	if caps.MaxConnectionRetries < 1 {
+		return fmt.Errorf("invalid MaxConnectionRetries: %d (must be at least 1)", caps.MaxConnectionRetries)
+	}
+
+	if caps.MaxConnectionRetries > 10 {
+		return fmt.Errorf("invalid MaxConnectionRetries: %d (should not exceed 10)", caps.MaxConnectionRetries)
+	}
+
+	if caps.PairingTimeoutMs < 1000 {
+		return fmt.Errorf("invalid PairingTimeoutMs: %d (must be at least 1000ms)", caps.PairingTimeoutMs)
+	}
+
+	if caps.PairingTimeoutMs > 30000 {
+		return fmt.Errorf("invalid PairingTimeoutMs: %d (should not exceed 30000ms)", caps.PairingTimeoutMs)
+	}
+
+	return nil
+}
+
+// GetCapabilitiesSafe returns validated capabilities for a model ID
+func GetCapabilitiesSafe(modelID int) (ModelCapabilities, error) {
+	caps := GetCapabilities(modelID)
+
+	if err := ValidateModelCapabilities(caps); err != nil {
+		return ModelCapabilities{}, fmt.Errorf("invalid capabilities for model %d: %v", modelID, err)
+	}
+
+	if !IsSupported(modelID) {
+		return caps, fmt.Errorf("model %d is not officially supported", modelID)
+	}
+
+	return caps, nil
+}

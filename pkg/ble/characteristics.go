@@ -10,9 +10,13 @@ import (
 )
 
 // CharacteristicsManager handles BLE characteristic operations
+// Thread Safety: All operations are protected by RWMutex
+// - Read operations (Get*, List*) use RLock() for concurrent access
+// - Write operations (Discover*, Cache*, Clear) use Lock() for exclusive access
+// - ServiceMap is the primary shared state requiring protection
 type CharacteristicsManager struct {
 	serviceMap map[string]map[string]*bluetooth.DeviceCharacteristic // serviceUUID -> (charUUID -> characteristic)
-	mutex      sync.RWMutex
+	mutex      sync.RWMutex                                          // Protects serviceMap access
 	log        logger.Logger
 }
 
@@ -25,11 +29,13 @@ func NewCharacteristicsManager(log logger.Logger) *CharacteristicsManager {
 }
 
 // DiscoverAndCacheCharacteristics discovers all characteristics for all services and caches them
+// Thread Safety: Write lock protects serviceMap during discovery and caching operation
+// Ensures atomic update of entire service map
 func (cm *CharacteristicsManager) DiscoverAndCacheCharacteristics(services []bluetooth.DeviceService) error {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
 
-	// Initialize service map
+	// Initialize service map with proper cleanup of previous state
 	cm.serviceMap = make(map[string]map[string]*bluetooth.DeviceCharacteristic)
 
 	cm.log.Info("Starting characteristic discovery", "service_count", len(services))
@@ -68,6 +74,8 @@ func (cm *CharacteristicsManager) DiscoverAndCacheCharacteristics(services []blu
 }
 
 // GetCharacteristic retrieves a characteristic from the service map cache
+// Thread Safety: Read lock allows concurrent access to serviceMap
+// Safe for concurrent calls from multiple goroutines
 func (cm *CharacteristicsManager) GetCharacteristic(serviceUUID, charUUID string) (*bluetooth.DeviceCharacteristic, error) {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
@@ -91,6 +99,8 @@ func (cm *CharacteristicsManager) GetCharacteristic(serviceUUID, charUUID string
 }
 
 // GetControlServiceCharacteristics returns commonly used control service characteristics
+// Thread Safety: Read lock protects access to serviceMap during lookup
+// Returns map copy to prevent external modification of internal state
 func (cm *CharacteristicsManager) GetControlServiceCharacteristics() (map[string]*bluetooth.DeviceCharacteristic, error) {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
@@ -128,6 +138,9 @@ func (cm *CharacteristicsManager) GetControlServiceCharacteristics() (map[string
 }
 
 // EnableNotifications enables notifications for multiple characteristics
+// Thread Safety: This method doesn't access serviceMap directly, but the characteristics
+// passed in should be obtained through thread-safe GetCharacteristic calls.
+// Handler callbacks execute concurrently and must be thread-safe themselves.
 func (cm *CharacteristicsManager) EnableNotifications(characteristics map[string]*bluetooth.DeviceCharacteristic, handlers map[string]func([]byte)) error {
 	cm.log.Info("Enabling notifications", "characteristic_count", len(characteristics), "handler_count", len(handlers))
 
@@ -148,6 +161,9 @@ func (cm *CharacteristicsManager) EnableNotifications(characteristics map[string
 }
 
 // WriteCommand writes a command to a characteristic with optional packetization
+// Thread Safety: This method operates on characteristic pointers obtained through
+// thread-safe GetCharacteristic calls. No shared state accessed.
+// Safe for concurrent use with different characteristics.
 func (cm *CharacteristicsManager) WriteCommand(char *bluetooth.DeviceCharacteristic, command []byte, usePackets bool) error {
 	if usePackets {
 		packets := cm.createPackets(command)
@@ -189,6 +205,8 @@ func (cm *CharacteristicsManager) WriteCommand(char *bluetooth.DeviceCharacteris
 }
 
 // SetEnhancedBLEMode enables or disables enhanced BLE features for newer GoPro models
+// Thread Safety: Uses thread-safe GetCharacteristic call for serviceMap access.
+// Safe for concurrent execution.
 func (cm *CharacteristicsManager) SetEnhancedBLEMode(enabled bool) error {
 	cm.log.Info("Setting enhanced BLE mode", "enabled", enabled)
 
@@ -220,6 +238,8 @@ func (cm *CharacteristicsManager) SetEnhancedBLEMode(enabled bool) error {
 }
 
 // PerformSecurityHandshake performs additional security verification for HERO13 and newer models
+// Thread Safety: Uses thread-safe GetCharacteristic call for serviceMap access.
+// Safe for concurrent execution.
 func (cm *CharacteristicsManager) PerformSecurityHandshake() error {
 	cm.log.Info("Starting security handshake")
 
@@ -246,6 +266,8 @@ func (cm *CharacteristicsManager) PerformSecurityHandshake() error {
 }
 
 // SetConnectionParameters sets optimal BLE connection parameters based on model type
+// Thread Safety: Uses thread-safe GetCharacteristic call for serviceMap access.
+// Safe for concurrent execution with different model types.
 func (cm *CharacteristicsManager) SetConnectionParameters(modelType string) error {
 	cm.log.Debugf("Setting connection parameters for model type %s", modelType)
 
@@ -310,6 +332,8 @@ func (cm *CharacteristicsManager) SetConnectionParameters(modelType string) erro
 }
 
 // SendKeepAlive sends a keep-alive signal to maintain the connection
+// Thread Safety: Uses thread-safe GetCharacteristic call for serviceMap access.
+// Safe for concurrent execution.
 func (cm *CharacteristicsManager) SendKeepAlive() error {
 	// Get the command characteristic for keep-alive
 	cmdChar, err := cm.GetCharacteristic(GoProControlServiceUUID, CommandCharUUID)
@@ -329,6 +353,8 @@ func (cm *CharacteristicsManager) SendKeepAlive() error {
 }
 
 // SetCameraControl sets the camera control status using protobuf commands
+// Thread Safety: Uses thread-safe GetCharacteristic call for serviceMap access.
+// Safe for concurrent execution.
 func (cm *CharacteristicsManager) SetCameraControl(enabled bool) error {
 	// Get the command characteristic
 	cmdChar, err := cm.GetCharacteristic(GoProControlServiceUUID, CommandCharUUID)
@@ -356,6 +382,8 @@ func (cm *CharacteristicsManager) SetCameraControl(enabled bool) error {
 }
 
 // QueryHardwareInfo queries the device for hardware information
+// Thread Safety: Uses thread-safe GetCharacteristic call for serviceMap access.
+// Safe for concurrent execution.
 func (cm *CharacteristicsManager) QueryHardwareInfo() error {
 	// Get the command characteristic (hardware info is a command, not a query)
 	cmdChar, err := cm.GetCharacteristic(GoProControlServiceUUID, CommandCharUUID)
@@ -375,6 +403,8 @@ func (cm *CharacteristicsManager) QueryHardwareInfo() error {
 }
 
 // QueryPairingState queries the device for current pairing state
+// Thread Safety: Uses thread-safe GetCharacteristic call for serviceMap access.
+// Safe for concurrent execution.
 func (cm *CharacteristicsManager) QueryPairingState() error {
 	// Get the query characteristic
 	queryChar, err := cm.GetCharacteristic(GoProControlServiceUUID, QueryCharUUID)
@@ -395,6 +425,8 @@ func (cm *CharacteristicsManager) QueryPairingState() error {
 }
 
 // QueryBatteryLevel queries the device for battery level
+// Thread Safety: Uses thread-safe GetCharacteristic call for serviceMap access.
+// Safe for concurrent execution.
 func (cm *CharacteristicsManager) QueryBatteryLevel() error {
 	// Get the query characteristic
 	queryChar, err := cm.GetCharacteristic(GoProControlServiceUUID, QueryCharUUID)
@@ -415,6 +447,7 @@ func (cm *CharacteristicsManager) QueryBatteryLevel() error {
 }
 
 // createPackets splits a large payload into BLE packets according to OpenGoPro spec
+// Thread Safety: Pure function with no shared state access. Safe for concurrent use.
 func (cm *CharacteristicsManager) createPackets(payload []byte) [][]byte {
 	// BLE limits packet size to 20 bytes
 	maxPacketSize := 20
@@ -423,7 +456,7 @@ func (cm *CharacteristicsManager) createPackets(payload []byte) [][]byte {
 	// Calculate how many packets we need
 	totalDataSize := len(payload)
 	if totalDataSize == 0 {
-		return [][]byte{[]byte{GeneralStartBit}}
+		return [][]byte{{GeneralStartBit}}
 	}
 
 	numPackets := (totalDataSize + maxDataPerPacket - 1) / maxDataPerPacket
@@ -473,8 +506,134 @@ func (cm *CharacteristicsManager) createPackets(payload []byte) [][]byte {
 }
 
 // Clear clears the characteristic cache
+// Thread Safety: Write lock ensures atomic clearing of serviceMap.
+// Blocks all other operations during cache reset.
 func (cm *CharacteristicsManager) Clear() {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
 	cm.serviceMap = make(map[string]map[string]*bluetooth.DeviceCharacteristic)
+}
+
+// ValidateRequiredCharacteristics validates that all required OpenGoPro characteristics are present
+// Thread Safety: Read lock protects access to serviceMap during validation
+// Returns descriptive errors for missing characteristics
+func (cm *CharacteristicsManager) ValidateRequiredCharacteristics() error {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+
+	// Check if we have the Control & Query service
+	controlService, ok := cm.serviceMap[GoProControlServiceUUID]
+	if !ok {
+		return NewCharacteristicError(GoProControlServiceUUID, "", "service_discovery",
+			fmt.Errorf("OpenGoPro Control & Query service not found"))
+	}
+
+	// Define required characteristics per OpenGoPro spec
+	requiredCharacteristics := map[string]string{
+		"Command Request":   CommandCharUUID,
+		"Command Response":  CommandResponseCharUUID,
+		"Query Request":     QueryCharUUID,
+		"Query Response":    QueryResponseCharUUID,
+		"Settings Request":  SettingsCharUUID,
+		"Settings Response": SettingsResponseCharUUID,
+	}
+
+	var missingChars []string
+	for name, uuid := range requiredCharacteristics {
+		if _, exists := controlService[uuid]; !exists {
+			missingChars = append(missingChars, fmt.Sprintf("%s (%s)", name, uuid))
+			cm.log.Error("Required characteristic missing",
+				"characteristic_name", name,
+				"characteristic_uuid", uuid,
+				"service_uuid", GoProControlServiceUUID)
+		} else {
+			cm.log.Debug("Required characteristic found",
+				"characteristic_name", name,
+				"characteristic_uuid", uuid)
+		}
+	}
+
+	if len(missingChars) > 0 {
+		return NewCharacteristicError(GoProControlServiceUUID, "", "validation",
+			fmt.Errorf("missing required characteristics: %v", missingChars))
+	}
+
+	// Check WiFi service characteristics (optional but warn if missing)
+	wifiService, hasWifiService := cm.serviceMap[GoProWifiServiceUUID]
+	if hasWifiService {
+		wifiChars := map[string]string{
+			"WiFi SSID":     WifiSSIDCharUUID,
+			"WiFi Password": WifiPasswordCharUUID,
+		}
+
+		for name, uuid := range wifiChars {
+			if _, exists := wifiService[uuid]; !exists {
+				cm.log.Warn("WiFi characteristic missing",
+					"characteristic_name", name,
+					"characteristic_uuid", uuid)
+			}
+		}
+	} else {
+		cm.log.Warn("WiFi service not found - WiFi operations will not be available",
+			"service_uuid", GoProWifiServiceUUID)
+	}
+
+	cm.log.Info("Required characteristic validation completed",
+		"control_characteristics", len(controlService),
+		"wifi_service_present", hasWifiService)
+
+	return nil
+}
+
+// GetAvailableCharacteristics returns a list of all cached characteristics for debugging
+// Thread Safety: Read lock protects access to serviceMap during enumeration
+// Returns copy of data to prevent external modification
+func (cm *CharacteristicsManager) GetAvailableCharacteristics() map[string][]string {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+
+	result := make(map[string][]string)
+	for serviceUUID, characteristics := range cm.serviceMap {
+		charList := make([]string, 0, len(characteristics))
+		for charUUID := range characteristics {
+			charList = append(charList, charUUID)
+		}
+		result[serviceUUID] = charList
+	}
+
+	return result
+}
+
+// ValidateCharacteristicAccess validates that a characteristic can be accessed safely
+// Thread Safety: Read lock protects access to serviceMap during validation
+// Checks for nil pointers and validates UUIDs
+func (cm *CharacteristicsManager) ValidateCharacteristicAccess(serviceUUID, charUUID string) error {
+	if serviceUUID == "" {
+		return NewValidationError("service_uuid", serviceUUID, "empty service UUID")
+	}
+	if charUUID == "" {
+		return NewValidationError("characteristic_uuid", charUUID, "empty characteristic UUID")
+	}
+
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+
+	service, ok := cm.serviceMap[serviceUUID]
+	if !ok {
+		return NewCharacteristicError(serviceUUID, charUUID, "access_validation",
+			fmt.Errorf("service not found in cache"))
+	}
+
+	char, ok := service[charUUID]
+	if !ok {
+		return NewCharacteristicError(serviceUUID, charUUID, "access_validation",
+			fmt.Errorf("characteristic not found in service"))
+	}
+
+	if char == nil {
+		return NewCharacteristicError(serviceUUID, charUUID, "access_validation",
+			fmt.Errorf("characteristic pointer is nil"))
+	}
+
+	return nil
 }

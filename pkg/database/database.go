@@ -179,7 +179,7 @@ func (db *Database) Initialize(filePath string) error {
 		if err := db.saveToFile(); err != nil {
 			return fmt.Errorf("failed to create database file: %v", err)
 		}
-		db.log.Info("Created new database file")
+		db.log.Info("Created new database file", "path", filePath)
 		return nil
 	}
 
@@ -189,7 +189,7 @@ func (db *Database) Initialize(filePath string) error {
 
 // loadFromFile loads the database from the JSON file
 func (db *Database) loadFromFile() error {
-	data, err := ioutil.ReadFile(db.filePath)
+	data, err := os.ReadFile(db.filePath)
 	if err != nil {
 		return fmt.Errorf("failed to read database file: %v", err)
 	}
@@ -198,7 +198,7 @@ func (db *Database) loadFromFile() error {
 		return fmt.Errorf("failed to unmarshal database: %v", err)
 	}
 
-	db.log.Info("Loaded database from file")
+	db.log.Info("Loaded database from file", "path", db.filePath, "cameras_count", len(db.CameraStates), "groups_count", len(db.Groups), "videos_count", len(db.Videos))
 	return nil
 }
 
@@ -221,15 +221,15 @@ func (db *Database) SaveChanges() error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
-	db.log.Tracef("Saving database changes to %s", db.filePath)
+	db.log.Trace("Saving database changes", "path", db.filePath)
 
 	startTime := time.Now()
 	err := db.saveToFile()
 
 	if err != nil {
-		db.log.Errorf("Failed to save database: %v", err)
+		db.log.Error("Failed to save database", "error", err, "path", db.filePath)
 	} else {
-		db.log.Debugf("Database saved to %s in %s", db.filePath, time.Since(startTime))
+		db.log.Debug("Database saved successfully", "path", db.filePath, "duration", time.Since(startTime))
 	}
 
 	return err
@@ -251,8 +251,7 @@ func (db *Database) AddOrUpdateDiscoveredCamera(camera *DiscoveredCamera) error 
 		existingCam.Status.IsManaged != camera.CameraState.Status.IsManaged ||
 		existingCam.Status.IsPaired != camera.CameraState.Status.IsPaired {
 		db.changeCounters.discovered++
-		db.log.Debugf("Incremented discovered change counter to %d for camera %s",
-			db.changeCounters.discovered, camera.CameraState.Camera.Name)
+		db.log.Trace("Discovered camera updated", "camera_name", camera.CameraState.Camera.Name, "mac_address", camera.CameraState.Camera.MACAddress, "change_counter", db.changeCounters.discovered, "is_new", !exists)
 	}
 
 	// Store the camera in the database
@@ -302,6 +301,7 @@ func (db *Database) AddOrUpdateManagedCamera(camera *ManagedCamera) error {
 
 	db.CameraStates[camera.CameraState.Camera.MACAddress] = camera.CameraState
 	db.changeCounters.managed++
+	db.log.Info("Managed camera added/updated", "camera_name", camera.CameraState.Camera.Name, "mac_address", camera.CameraState.Camera.MACAddress, "change_counter", db.changeCounters.managed)
 	return db.saveToFile()
 }
 
@@ -366,8 +366,10 @@ func (db *Database) RemoveManagedCamera(macAddress string) error {
 		// Just update the camera status, don't remove it from the database
 		cameraState.Status.IsManaged = false
 		db.changeCounters.managed++
+		db.log.Info("Camera removed from managed pool", "mac_address", macAddress, "camera_name", cameraState.Camera.Name, "change_counter", db.changeCounters.managed)
 		return db.saveToFile()
 	}
+	db.log.Warn("Attempted to remove non-existent managed camera", "mac_address", macAddress)
 	return fmt.Errorf("camera with MAC address %s not found", macAddress)
 }
 
@@ -382,6 +384,7 @@ func (db *Database) AddSyncQueueEntry(entry *SyncQueueEntry) error {
 			// Already in queue, update it
 			*existing = *entry
 			db.changeCounters.syncQueue++
+			db.log.Debug("Sync queue entry updated", "camera_id", entry.CameraID, "operation", entry.CurrentOperation, "progress", entry.ProgressPercent, "change_counter", db.changeCounters.syncQueue)
 			return db.saveToFile()
 		}
 	}
@@ -389,6 +392,7 @@ func (db *Database) AddSyncQueueEntry(entry *SyncQueueEntry) error {
 	// Add to queue
 	db.SyncQueue = append(db.SyncQueue, entry)
 	db.changeCounters.syncQueue++
+	db.log.Info("Camera added to sync queue", "camera_id", entry.CameraID, "operation", entry.CurrentOperation, "queue_length", len(db.SyncQueue), "change_counter", db.changeCounters.syncQueue)
 	return db.saveToFile()
 }
 
@@ -418,9 +422,11 @@ func (db *Database) UpdateSyncQueueEntry(entry *SyncQueueEntry) error {
 		if existing.CameraID == entry.CameraID {
 			db.SyncQueue[i] = entry
 			db.changeCounters.syncQueue++
+			db.log.Debug("Sync queue entry progress updated", "camera_id", entry.CameraID, "operation", entry.CurrentOperation, "progress", entry.ProgressPercent, "change_counter", db.changeCounters.syncQueue)
 			return db.saveToFile()
 		}
 	}
+	db.log.Warn("Attempted to update non-existent sync queue entry", "camera_id", entry.CameraID)
 	return fmt.Errorf("sync queue entry for camera %s not found", entry.CameraID)
 }
 
@@ -435,9 +441,11 @@ func (db *Database) RemoveSyncQueueEntry(cameraID string) error {
 			db.SyncQueue[i] = db.SyncQueue[len(db.SyncQueue)-1]
 			db.SyncQueue = db.SyncQueue[:len(db.SyncQueue)-1]
 			db.changeCounters.syncQueue++
+			db.log.Info("Camera removed from sync queue", "camera_id", cameraID, "queue_length", len(db.SyncQueue), "change_counter", db.changeCounters.syncQueue)
 			return db.saveToFile()
 		}
 	}
+	db.log.Trace("Camera not found in sync queue for removal", "camera_id", cameraID)
 	return nil // Not found, not an error
 }
 
@@ -449,12 +457,14 @@ func (db *Database) AddOrUpdateGroup(group *Group) error {
 	for i, existing := range db.Groups {
 		if existing.ID == group.ID {
 			db.Groups[i] = group
+			db.log.Info("Group updated", "group_id", group.ID, "group_name", group.Name, "camera_count", len(group.CameraIDs))
 			return db.saveToFile()
 		}
 	}
 
 	// Add new group
 	db.Groups = append(db.Groups, group)
+	db.log.Info("Group created", "group_id", group.ID, "group_name", group.Name, "camera_count", len(group.CameraIDs), "total_groups", len(db.Groups))
 	return db.saveToFile()
 }
 
@@ -492,9 +502,11 @@ func (db *Database) RemoveGroup(id string) error {
 			// Remove group by replacing it with the last one and truncating
 			db.Groups[i] = db.Groups[len(db.Groups)-1]
 			db.Groups = db.Groups[:len(db.Groups)-1]
+			db.log.Info("Group removed", "group_id", id, "group_name", group.Name, "remaining_groups", len(db.Groups))
 			return db.saveToFile()
 		}
 	}
+	db.log.Warn("Attempted to remove non-existent group", "group_id", id)
 	return fmt.Errorf("group with ID %s not found", id)
 }
 
@@ -504,6 +516,7 @@ func (db *Database) AddVideo(video *VideoFile) error {
 	defer db.mutex.Unlock()
 
 	db.Videos = append(db.Videos, video)
+	db.log.Info("Video file added", "video_name", video.Name, "camera_id", video.CameraID, "size_bytes", video.SizeBytes, "duration_seconds", video.DurationSeconds, "total_videos", len(db.Videos))
 	return db.saveToFile()
 }
 
@@ -542,6 +555,7 @@ func (db *Database) AddLogEntry(entry *LogEntry) error {
 	// Limit log entries to avoid excessive memory usage
 	if len(db.Logs) > 10000 {
 		db.Logs = db.Logs[len(db.Logs)-10000:]
+		db.log.Trace("Log entries trimmed to limit memory usage", "max_entries", 10000, "current_entries", len(db.Logs))
 	}
 
 	return nil // Don't save to file for every log entry

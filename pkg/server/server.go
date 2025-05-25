@@ -83,34 +83,34 @@ func NewDropzServer(manager Manager) *DropzServer {
 
 // Start starts the gRPC server
 func (s *DropzServer) Start(address string) error {
-	s.log.Debugf("DropzServer.Start called with address: %s", address)
+	s.log.Debug("Starting DropzServer", "address", address)
 
 	// Register as the update notifier for the manager
 	s.manager.SetNotifier(s)
 
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
-		s.log.Errorf("Failed to listen on %s: %v", address, err)
+		s.log.Error("Failed to listen on address", "address", address, "error", err)
 		return fmt.Errorf("failed to listen on %s: %v", address, err)
 	}
 
 	s.server = grpc.NewServer()
 	protocol.RegisterDropzServiceServer(s.server, s)
 
-	s.log.Infof("Starting gRPC server on %s", address)
+	s.log.Info("gRPC server started", "address", address)
 
 	s.wg.Add(1) // Increment WaitGroup counter for streamUpdateHandler
 	go s.streamUpdateHandler()
-	s.log.Debug("streamUpdateHandler goroutine started.")
+	s.log.Trace("streamUpdateHandler goroutine started")
 
 	s.wg.Add(1) // Increment WaitGroup counter for heartbeatSender
 	go s.heartbeatSender()
-	s.log.Debug("heartbeatSender goroutine started.")
+	s.log.Trace("heartbeatSender goroutine started")
 
 	// Goroutine to serve gRPC requests
 	go func() {
 		if err := s.server.Serve(listener); err != nil {
-			s.log.Errorf("gRPC server error: %v", err)
+			s.log.Error("gRPC server error", "error", err)
 		}
 	}()
 
@@ -119,73 +119,70 @@ func (s *DropzServer) Start(address string) error {
 
 // Stop stops the gRPC server
 func (s *DropzServer) Stop() {
-	s.log.Info("Initiating DropzServer shutdown...")
+	s.log.Info("Initiating DropzServer shutdown")
 
 	// 1. Signal internal goroutines to stop by canceling the context
-	s.log.Debug("Cancelling server context for internal goroutines (streamUpdateHandler, heartbeatSender)...")
+	s.log.Debug("Cancelling server context for internal goroutines", "components", []string{"streamUpdateHandler", "heartbeatSender"})
 	s.cancel()
 
 	// 2. Close 'done' channels for Watch... streams to allow them to terminate.
 	s.streamMutex.Lock()
-	s.log.Debugf("Closing %d discoveredStreams done channels", len(s.discoveredStreams))
+	s.log.Debug("Closing stream done channels", "discovered_streams", len(s.discoveredStreams), "managed_streams", len(s.managedStreams), "sync_queue_streams", len(s.syncQueueStreams))
 	for stream, ch := range s.discoveredStreams {
 		close(ch)
 		delete(s.discoveredStreams, stream)
 	}
-	s.log.Debugf("Closing %d managedStreams done channels", len(s.managedStreams))
 	for stream, ch := range s.managedStreams {
 		close(ch)
 		delete(s.managedStreams, stream)
 	}
-	s.log.Debugf("Closing %d syncQueueStreams done channels", len(s.syncQueueStreams))
 	for stream, ch := range s.syncQueueStreams {
 		close(ch)
 		delete(s.syncQueueStreams, stream)
 	}
 	s.streamMutex.Unlock()
-	s.log.Debug("All Watch... stream 'done' channels closed and maps cleared.")
+	s.log.Debug("All Watch stream done channels closed and maps cleared")
 
 	// 3. Stop the gRPC server.
 	if s.server != nil {
-		s.log.Info("Stopping gRPC server (GracefulStop)...")
+		s.log.Info("Stopping gRPC server gracefully")
 		s.server.GracefulStop()
-		s.log.Info("gRPC server.GracefulStop() completed.")
+		s.log.Info("gRPC server stopped")
 	} else {
-		s.log.Info("gRPC server was nil, no need to stop.")
+		s.log.Debug("gRPC server was nil, no need to stop")
 	}
 
 	// 4. Wait for internal goroutines (streamUpdateHandler, heartbeatSender) to finish.
-	s.log.Debug("Waiting for internal server goroutines (streamUpdateHandler, heartbeatSender) to stop...")
+	s.log.Debug("Waiting for internal server goroutines to stop")
 	s.wg.Wait()
-	s.log.Info("All internal server goroutines stopped.")
-	s.log.Info("DropzServer shutdown complete.")
+	s.log.Info("DropzServer shutdown complete")
 }
 
 // streamUpdateHandler sends updates to all active streams when changes occur
 func (s *DropzServer) streamUpdateHandler() {
 	defer s.wg.Done() // Decrement WaitGroup counter on exit
-	defer s.log.Debug("Stream update handler goroutine finished.")
-	s.log.Debug("Stream update handler started")
+	defer s.log.Trace("Stream update handler goroutine finished")
+	s.log.Trace("Stream update handler started")
 
 	for {
 		select {
 		case <-s.ctx.Done():
-			s.log.Debug("Stream update handler stopping due to context cancellation.")
+			s.log.Trace("Stream update handler stopping due to context cancellation")
 			return
 		case _, ok := <-s.streamUpdateChannel:
 			if !ok {
-				s.log.Debug("Stream update handler stopping because streamUpdateChannel was closed.")
+				s.log.Debug("Stream update handler stopping because streamUpdateChannel was closed")
 				return
 			}
 
 			// Check context again before processing to handle race during shutdown
 			select {
 			case <-s.ctx.Done():
-				s.log.Debug("Stream update handler: context done during update processing, aborting.")
+				s.log.Trace("Stream update handler: context done during update processing, aborting")
 				return
 			default:
 			}
-			s.log.Debug("Stream update handler processing an update.")
+			s.log.Trace("Stream update handler processing update")
 			// Get current counters
 			db := database.GetDatabase()
 			discoveredCounter := db.GetDiscoveredChangeCounter()
@@ -205,15 +202,15 @@ func (s *DropzServer) streamUpdateHandler() {
 
 			// Send updates if needed
 			if discoveredChanged {
-				s.log.Debug("Discovered cameras changed, sending updates.")
+				s.log.Debug("Discovered cameras changed, sending updates", "change_counter", discoveredCounter)
 				s.sendDiscoveredCamerasUpdates()
 			}
 			if managedChanged {
-				s.log.Debug("Managed cameras changed, sending updates.")
+				s.log.Debug("Managed cameras changed, sending updates", "change_counter", managedCounter)
 				s.sendManagedCamerasUpdates()
 			}
 			if syncQueueChanged {
-				s.log.Debug("Sync queue changed, sending updates.")
+				s.log.Debug("Sync queue changed, sending updates", "change_counter", syncQueueCounter)
 				s.sendSyncQueueUpdates()
 			}
 		}
@@ -223,25 +220,25 @@ func (s *DropzServer) streamUpdateHandler() {
 // heartbeatSender periodically sends heartbeats to all active streams
 func (s *DropzServer) heartbeatSender() {
 	defer s.wg.Done() // Decrement WaitGroup counter on exit
-	defer s.log.Debug("Heartbeat sender goroutine finished.")
-	s.log.Debug("Heartbeat sender started")
+	defer s.log.Trace("Heartbeat sender goroutine finished")
+	s.log.Trace("Heartbeat sender started", "interval", s.heartbeatInterval)
 	ticker := time.NewTicker(s.heartbeatInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-s.ctx.Done():
-			s.log.Debug("Heartbeat sender stopping due to context cancellation.")
+			s.log.Trace("Heartbeat sender stopping due to context cancellation")
 			return
 		case <-ticker.C:
 			// Check context again before processing
 			select {
 			case <-s.ctx.Done():
-				s.log.Debug("Heartbeat sender: context done during heartbeat processing, aborting.")
+				s.log.Trace("Heartbeat sender: context done during heartbeat processing, aborting")
 				return
 			default:
 			}
-			s.log.Debug("Heartbeat sender: tick received, sending heartbeats...")
+			s.log.Trace("Heartbeat sender: sending heartbeats to all streams")
 			s.mutex.Lock()
 			s.lastHeartbeat = time.Now()
 			s.mutex.Unlock()
@@ -275,8 +272,10 @@ func (s *DropzServer) sendDiscoveredCamerasUpdates() {
 
 	for stream := range s.discoveredStreams {
 		if err := stream.Send(response); err != nil {
-			s.log.Errorf("Failed to send discovered cameras update to stream %p: %v", stream, err)
+			s.log.Error("Failed to send discovered cameras update to stream", "stream_ptr", fmt.Sprintf("%p", stream), "error", err, "camera_count", len(protoCameras))
 			// Stream cleanup handled by heartbeat or Watch method exit
+		} else {
+			s.log.Trace("Sent discovered cameras update to stream", "stream_ptr", fmt.Sprintf("%p", stream), "camera_count", len(protoCameras), "change_counter", response.ChangeCounter)
 		}
 	}
 }
@@ -457,13 +456,14 @@ func (s *DropzServer) GetDiscoveredCameras(ctx context.Context, req *protocol.Ge
 	if s.ctx.Err() != nil {
 		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
 	}
-	s.log.Debug("Handling GetDiscoveredCameras request")
+	s.log.Trace("Handling GetDiscoveredCameras request", "client_change_counter", req.ChangeCounter)
 
 	db := database.GetDatabase()
 	currentCounter := db.GetDiscoveredChangeCounter()
 
 	// Check if client has latest data
 	if req.ChangeCounter > 0 && req.ChangeCounter == currentCounter {
+		s.log.Trace("Client has latest data, returning no changes", "change_counter", currentCounter)
 		return &protocol.GetDiscoveredCamerasResponse{
 			Cameras:       []*protocol.DiscoveredCamera{},
 			ChangeCounter: currentCounter,
@@ -480,6 +480,7 @@ func (s *DropzServer) GetDiscoveredCameras(ctx context.Context, req *protocol.Ge
 		protoCameras[i] = cam.ToProtoDiscoveredCamera()
 	}
 
+	s.log.Debug("Returning discovered cameras", "camera_count", len(protoCameras), "change_counter", currentCounter)
 	return &protocol.GetDiscoveredCamerasResponse{
 		Cameras:       protoCameras,
 		ChangeCounter: currentCounter,
@@ -723,10 +724,11 @@ func (s *DropzServer) ManageCamera(ctx context.Context, req *protocol.ManageCame
 	if s.ctx.Err() != nil {
 		return &protocol.ManageCameraResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
 	}
-	s.log.Debugf("Handling ManageCamera request for camera %s", req.CameraId)
+	s.log.Info("Handling ManageCamera request", "camera_id", req.CameraId)
 
 	managedCamera, err := s.manager.ManageCamera(req.CameraId)
 	if err != nil {
+		s.log.Error("Failed to manage camera", "camera_id", req.CameraId, "error", err)
 		return &protocol.ManageCameraResponse{
 			Success: false,
 			Message: err.Error(),
@@ -736,6 +738,7 @@ func (s *DropzServer) ManageCamera(ctx context.Context, req *protocol.ManageCame
 	// Notify about updates
 	s.NotifyUpdate()
 
+	s.log.Info("Camera managed successfully", "camera_id", req.CameraId, "camera_name", managedCamera.CameraState.Camera.Name)
 	return &protocol.ManageCameraResponse{
 		Success: true,
 		Message: fmt.Sprintf("Camera %s is now managed", req.CameraId),

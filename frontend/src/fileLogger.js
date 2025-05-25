@@ -4,17 +4,17 @@ const path = require('path');
 
 const logFilePath = path.join(__dirname, '..', 'logs', 'debug.log');
 
-// Log levels: 0 = ERROR, 1 = WARN, 2 = INFO, 3 = DEBUG, 4 = VERBOSE
+// Log levels: 0 = ERROR, 1 = WARN, 2 = INFO, 3 = DEBUG, 4 = TRACE
 const LOG_LEVELS = {
   ERROR: 0,
   WARN: 1,
   INFO: 2,
   DEBUG: 3,
-  VERBOSE: 4
+  TRACE: 4
 };
 
 // Current log level - change this to adjust logging verbosity
-// Default: DEBUG (3) - logs everything except verbose details
+// Default: DEBUG (3) - logs everything except trace details
 let currentLogLevel = LOG_LEVELS.DEBUG;
 
 // Export a function to update the log level dynamically
@@ -26,7 +26,7 @@ function setLogLevel(level) {
       case 'WARN': currentLogLevel = LOG_LEVELS.WARN; break;
       case 'INFO': currentLogLevel = LOG_LEVELS.INFO; break;
       case 'DEBUG': currentLogLevel = LOG_LEVELS.DEBUG; break;
-      case 'VERBOSE': currentLogLevel = LOG_LEVELS.VERBOSE; break;
+      case 'TRACE': currentLogLevel = LOG_LEVELS.TRACE; break;
     }
   } else if (Number.isInteger(level) && level >= 0 && level <= 4) {
     currentLogLevel = level;

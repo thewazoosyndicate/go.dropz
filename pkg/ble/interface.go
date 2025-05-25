@@ -24,6 +24,7 @@ type BLEInterface interface {
 	ConnectWithEnhancedPairing(macAddress string) error
 	IsPaired(macAddress string) (bool, error)
 	IsPairedWithVerification(macAddress string) (bool, error)
+	GetPairingState(macAddress string) (int, error)
 	RefreshPairingState(macAddress string) (int, error)
 
 	// Device operations

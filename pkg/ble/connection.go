@@ -227,7 +227,10 @@ func (cm *ConnectionManager) Connect(ctx context.Context, macAddress string) (*b
 		// Create bluetooth.Address with the parsed MAC
 		addr := bluetooth.Address{MACAddress: bluetooth.MACAddress{MAC: mac}}
 
-		device, connectErr = cm.adapter.Connect(addr, bluetooth.ConnectionParams{})
+		deviceValue, connectErr := cm.adapter.Connect(addr, bluetooth.ConnectionParams{})
+		if connectErr == nil {
+			device = &deviceValue
+		}
 	}()
 
 	// Wait for connection or timeout

@@ -68,7 +68,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 	manager.discoveryMgr = NewDiscoveryManager(cfg.Adapter, eventEmitter, cfg.Logger)
 	manager.characteristicsMgr = NewCharacteristicsManager(cfg.Logger)
 	manager.responseMgr = NewResponseHandler(eventEmitter, cfg.Logger)
-	manager.pairingMgr = NewPairingManager(manager.connManager, manager.characteristicsMgr, eventEmitter, cfg.Logger)
+	manager.pairingMgr = NewPairingManager(manager.connManager, manager.characteristicsMgr, manager.responseMgr, eventEmitter, cfg.Logger)
 
 	return manager
 }
@@ -228,6 +228,10 @@ func (m *Manager) IsPairedWithVerification(macAddress string) (bool, error) {
 
 func (m *Manager) RefreshPairingState(macAddress string) (int, error) {
 	return m.pairingMgr.RefreshPairingState(macAddress)
+}
+
+func (m *Manager) GetPairingState(macAddress string) (int, error) {
+	return m.pairingMgr.GetPairingState(macAddress)
 }
 
 // GetWifiCredentials retrieves WiFi SSID and password from the GoPro

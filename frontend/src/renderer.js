@@ -75,7 +75,7 @@ logToFile('Renderer process starting up');
 
 // Initialize the UI
 function init() {
-  debugLog('Initializing frontend application');
+  debugLog('Initializing frontend application', LOG_LEVELS.INFO);
   
   // Set initial status
   updateStatus(false);
@@ -111,7 +111,7 @@ function init() {
   loadCurrentLogLevel();
   
   // Listen for IPC messages from the main process
-  debugLog('Setting up IPC listeners');
+  debugLog('Setting up IPC listeners', LOG_LEVELS.TRACE);
   setupIpcListeners();
   
   // Periodically update device lists (to handle devices that may have gone offline)
@@ -119,7 +119,7 @@ function init() {
   
   // Start streaming for gRPC-based device updates
   setTimeout(() => {
-    debugLog('Starting device streaming');
+    debugLog('Starting device streaming', LOG_LEVELS.INFO);
     startDeviceStreaming();
     
     // Load additional data after connection is established
@@ -143,7 +143,7 @@ function init() {
     cancelAllStreams();
   });
   
-  debugLog('Frontend initialization complete');
+  debugLog('Frontend initialization complete', LOG_LEVELS.INFO);
 }
 
 // Initialize toggle switches with default values
@@ -163,7 +163,7 @@ function initializeToggles() {
     syncQueueToggle.addEventListener('change', toggleAutoSync);
   }
   
-  debugLog('Toggle switches initialized with default values', LOG_LEVELS.DEBUG);
+  debugLog('Toggle switches initialized with default values', LOG_LEVELS.TRACE);
 }
 
 // Setup view toggle buttons
@@ -246,7 +246,7 @@ function startDiscoveredCamerasStream(client) {
     const request = new grpcUtils.GetDiscoveredCamerasRequest();
     request.setChangeCounter(0);
     
-    debugLog('Starting WatchDiscoveredCameras stream for real-time updates', LOG_LEVELS.DEBUG);
+    debugLog('Starting WatchDiscoveredCameras stream for real-time updates', LOG_LEVELS.TRACE);
     
     const call = client.watchDiscoveredCameras(request);
     
@@ -265,18 +265,18 @@ function startDiscoveredCamerasStream(client) {
     call.on('data', (response) => {
       // Skip heartbeats which are just keepalives
       if (response.getHeartbeat()) {
-        debugLog('Received heartbeat from server', LOG_LEVELS.DEBUG);
+        debugLog('Received heartbeat from server', LOG_LEVELS.TRACE);
         return;
       }
       
       // If there are no changes, we can skip processing
       if (response.getNoChanges()) {
-        debugLog('Received no-change notification from server', LOG_LEVELS.DEBUG);
+        debugLog('Received no-change notification from server', LOG_LEVELS.TRACE);
         return;
       }
       
       const cameras = response.getCamerasList();
-      debugLog(`Received ${cameras.length} discovered cameras update via push notification`, LOG_LEVELS.DEBUG);
+      debugLog(`Received ${cameras.length} discovered cameras update via push notification`, LOG_LEVELS.TRACE);
       
       // Process each camera immediately
       cameras.forEach(camera => {
@@ -329,7 +329,7 @@ function startManagedCamerasStream(client) {
     // Set change counter to 0 for initial request to get all current managed cameras
     request.setChangeCounter(0);
     
-    debugLog('Starting WatchManagedCameras stream for real-time updates', LOG_LEVELS.DEBUG);
+    debugLog('Starting WatchManagedCameras stream for real-time updates', LOG_LEVELS.TRACE);
     
     const call = client.watchManagedCameras(request);
     
@@ -348,18 +348,18 @@ function startManagedCamerasStream(client) {
     call.on('data', (response) => {
       // Skip heartbeats which are just keepalives
       if (response.getHeartbeat()) {
-        debugLog('Received heartbeat from managed cameras stream', LOG_LEVELS.DEBUG);
+        debugLog('Received heartbeat from managed cameras stream', LOG_LEVELS.TRACE);
         return;
       }
       
       // Skip if no changes
       if (response.getNoChanges()) {
-        debugLog('Received no-change notification from managed cameras stream', LOG_LEVELS.DEBUG);
+        debugLog('Received no-change notification from managed cameras stream', LOG_LEVELS.TRACE);
         return;
       }
       
       const cameras = response.getCamerasList();
-      debugLog(`Received ${cameras.length} managed cameras update via push notification`, LOG_LEVELS.DEBUG);
+      debugLog(`Received ${cameras.length} managed cameras update via push notification`, LOG_LEVELS.TRACE);
       
       // Flag to track if we got any actual updates
       let hasUpdates = false;
@@ -375,7 +375,7 @@ function startManagedCamerasStream(client) {
       
       // Only update UI if we actually got updates
       if (hasUpdates) {
-        debugLog('Updating UI with new managed camera data', LOG_LEVELS.DEBUG);
+        debugLog('Updating UI with new managed camera data', LOG_LEVELS.TRACE);
         updateDeviceLists();
         updateCounters();
       }
@@ -430,7 +430,7 @@ function startSyncQueueStream(client) {
     // Set change counter to 0 for initial request to get all current queue entries
     request.setChangeCounter(0);
     
-    debugLog('Starting WatchSyncQueue stream for real-time updates', LOG_LEVELS.DEBUG);
+    debugLog('Starting WatchSyncQueue stream for real-time updates', LOG_LEVELS.TRACE);
     
     const call = client.watchSyncQueue(request);
     
@@ -449,18 +449,18 @@ function startSyncQueueStream(client) {
     call.on('data', (response) => {
       // Skip heartbeats which are just keepalives
       if (response.getHeartbeat()) {
-        debugLog('Received heartbeat from sync queue stream', LOG_LEVELS.DEBUG);
+        debugLog('Received heartbeat from sync queue stream', LOG_LEVELS.TRACE);
         return;
       }
       
       // Skip if no changes
       if (response.getNoChanges()) {
-        debugLog('Received no-change notification from sync queue stream', LOG_LEVELS.DEBUG);
+        debugLog('Received no-change notification from sync queue stream', LOG_LEVELS.TRACE);
         return;
       }
       
       const queueEntries = response.getQueueList();
-      debugLog(`Received sync queue update with ${queueEntries.length} entries via push notification`, LOG_LEVELS.DEBUG);
+      debugLog(`Received sync queue update with ${queueEntries.length} entries via push notification`, LOG_LEVELS.TRACE);
       
       // Check if there are actual changes in the queue
       const oldQueueLength = syncQueue.length;
@@ -470,7 +470,7 @@ function startSyncQueueStream(client) {
       
       // Only update UI if the queue changed
       if (oldQueueLength !== syncQueue.length || queueEntries.length > 0) {
-        debugLog('Updating UI with new sync queue data', LOG_LEVELS.DEBUG);
+        debugLog('Updating UI with new sync queue data', LOG_LEVELS.TRACE);
         updateSyncQueueUI();
         updateCounters();
       }
@@ -748,7 +748,7 @@ function cancelAllStreams() {
 }
 
 // Add a debug function that will output to the terminal with different log levels
-function debugLog(message, level = LOG_LEVELS.INFO) {
+function debugLog(message, level = LOG_LEVELS.INFO, context = {}) {
   // Import current log level from fileLogger
   const { currentLogLevel } = require('./fileLogger');
   
@@ -761,22 +761,31 @@ function debugLog(message, level = LOG_LEVELS.INFO) {
   // Get the log level name
   const levelName = getLogLevelName(level);
   
+  // Format the message with context if provided
+  let formattedMessage = message;
+  if (Object.keys(context).length > 0) {
+    const contextStr = Object.entries(context)
+      .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+      .join(' ');
+    formattedMessage = `${message} ${contextStr}`;
+  }
+  
   // Format the message with the level name
-  const formattedMessage = `[${levelName}] ${message}`;
+  const finalMessage = `[FRONTEND-${levelName}] ${formattedMessage}`;
   
   // Choose appropriate console method based on level
   const consoleMethod = 
     level === LOG_LEVELS.ERROR ? console.error :
     level === LOG_LEVELS.WARN ? console.warn :
     console.log;
-  consoleMethod(formattedMessage);
+  consoleMethod(finalMessage);
   
   // Log to file with appropriate level
-  logToFile(message, level);
+  logToFile(formattedMessage, level);
   
   // Send to main process
   try {
-    ipcRenderer.send('debug-log', formattedMessage);
+    ipcRenderer.send('debug-log', finalMessage);
   } catch (error) {
     logToFile(`Error sending debug message to main: ${error.message}`, LOG_LEVELS.ERROR);
   }
@@ -785,7 +794,7 @@ function debugLog(message, level = LOG_LEVELS.INFO) {
   const logStyle = 
     level === LOG_LEVELS.ERROR ? 'error' : 
     level === LOG_LEVELS.WARN ? 'warn' : 'info';
-  addLogEntry(`${levelName}: ${message}`, logStyle);
+  addLogEntry(`${levelName}: ${formattedMessage}`, logStyle);
 }
 
 // Helper to get log level name
@@ -794,6 +803,7 @@ function getLogLevelName(level) {
     case LOG_LEVELS.ERROR: return 'Error';
     case LOG_LEVELS.WARN: return 'Warning';
     case LOG_LEVELS.INFO: return 'Info';
+    case LOG_LEVELS.DEBUG: return 'Debug';
     case LOG_LEVELS.TRACE: return 'Trace';
     default: return 'Unknown';
   }
@@ -1089,8 +1099,8 @@ function changeLogLevel() {
     addLogEntry(`Setting log level to: ${logLevelName.toUpperCase()}`, 'info');
     
     // Test log messages at different levels to demonstrate the change
-    debugLog('This is a DEBUG message - should show if level is DEBUG or VERBOSE', LOG_LEVELS.DEBUG);
-    debugLog('This is a VERBOSE message - should only show if level is VERBOSE', LOG_LEVELS.VERBOSE);
+    debugLog('This is a DEBUG message - should show if level is DEBUG or TRACE', LOG_LEVELS.DEBUG);
+    debugLog('This is a TRACE message - should only show if level is TRACE', LOG_LEVELS.TRACE);
     
     // Then update backend log level through gRPC
     const client = getClient();
@@ -1261,7 +1271,7 @@ function updateDeviceLists() {
   
   // Log detailed device information for debugging
   Object.values(allDevices).forEach(device => {
-    debugLog(`Device: ${device.name}, MAC: ${device.macAddress}, isPaired: ${device.isPaired}, isManaged: ${device.isManaged}, isReachable: ${device.isReachable}, isSynced: ${device.isSynced}`, LOG_LEVELS.DEBUG);
+    debugLog(`Device: ${device.name}, MAC: ${device.macAddress}, isPaired: ${device.isPaired}, isManaged: ${device.isManaged}, isReachable: ${device.isReachable}, isSynced: ${device.isSynced}`, LOG_LEVELS.TRACE);
   });
   
   // Log how many devices should appear in each pool
@@ -1329,7 +1339,7 @@ function updatePairQueueUI() {
   debugLog(`Discovered pool filtering - Total devices: ${Object.values(allDevices).length}, Shown: ${discoveredDevices.length}`, LOG_LEVELS.DEBUG);
   Object.values(allDevices).forEach(device => {
     const shouldShow = device.isReachable && (!device.isPaired || !device.isManaged);
-    debugLog(`Device ${device.name} (${device.macAddress}): isReachable=${device.isReachable}, isPaired=${device.isPaired}, isManaged=${device.isManaged}, shouldShow=${shouldShow}`, LOG_LEVELS.DEBUG);
+    debugLog(`Device ${device.name} (${device.macAddress}): isReachable=${device.isReachable}, isPaired=${device.isPaired}, isManaged=${device.isManaged}, shouldShow=${shouldShow}`, LOG_LEVELS.TRACE);
   });
   
   // Sort by signal strength
@@ -1461,7 +1471,7 @@ function createGoProElement(device, inSyncQueue = false) {
   // Get device status
   const statusCode = getStatusShortcode(device);
   const formattedStatus = formatStatus(statusCode);
-  debugLog(`Device ${device.name}: visualStatus=${device.visualStatus}, formatted=${formattedStatus}`, LOG_LEVELS.DEBUG);
+  debugLog(`Device ${device.name}: visualStatus=${device.visualStatus}, formatted=${formattedStatus}`, LOG_LEVELS.TRACE);
   
   // Add status class to the device card for status-specific styling
   element.classList.add(`status-${statusCode.toLowerCase()}`);
@@ -2156,7 +2166,7 @@ function parseGoLogLevel(logMessage) {
   // Handle standard Go log format with level prefix
   // Our custom formatter adds level prefixes like [INFO], [DEBUG], etc.
   if (logMessage.includes('[TRACE]')) {
-    result.level = LOG_LEVELS.VERBOSE;
+    result.level = LOG_LEVELS.TRACE;
     result.style = 'info';
     result.prefix = '[Go-TRACE]';
     return result;
@@ -2204,7 +2214,7 @@ function parseGoLogLevel(logMessage) {
       if (logObj.level) {
         switch (logObj.level.toLowerCase()) {
           case 'trace':
-            result.level = LOG_LEVELS.VERBOSE;
+            result.level = LOG_LEVELS.TRACE;
             result.style = 'info';
             result.prefix = '[Go-TRACE]';
             break;
@@ -2263,7 +2273,7 @@ function parseGoLogLevel(logMessage) {
     result.prefix = '[Go-DEBUG]';
   } else if (logMessage.match(/\bTRACE\b/i) ||
              logMessage.match(/\bVERBOSE\b/i)) {
-    result.level = LOG_LEVELS.VERBOSE;
+    result.level = LOG_LEVELS.TRACE;
     result.style = 'info';
     result.prefix = '[Go-TRACE]';
   } else if (logMessage.match(/\bINFO\b/i)) {
@@ -2284,7 +2294,7 @@ function testLogLevels() {
   debugLog('This is a WARNING level message', LOG_LEVELS.WARN);
   debugLog('This is an INFO level message', LOG_LEVELS.INFO);
   debugLog('This is a DEBUG level message', LOG_LEVELS.DEBUG);
-  debugLog('This is a VERBOSE/TRACE level message', LOG_LEVELS.VERBOSE);
+  debugLog('This is a TRACE level message', LOG_LEVELS.TRACE);
   
   // Test special formatted Go log style detection
   // This helps verify our Go log parsing is working
@@ -2547,7 +2557,7 @@ function deleteGroup(groupId) {
 function updateGroupsUI() {
   // This is a placeholder - you'll need to implement the actual UI update
   // based on your application's needs and DOM structure
-  debugLog(`Groups UI would be updated with ${groups.length} groups`, LOG_LEVELS.DEBUG);
+  debugLog(`Groups UI would be updated with ${groups.length} groups`, LOG_LEVELS.TRACE);
 }
 
 // Get all synchronized videos
@@ -2648,7 +2658,7 @@ function getVideosForCamera(cameraId) {
 function updateVideosUI() {
   // This is a placeholder - you'll need to implement the actual UI update
   // based on your application's needs and DOM structure
-  debugLog(`Videos UI would be updated with ${videos.length} videos`, LOG_LEVELS.DEBUG);
+  debugLog(`Videos UI would be updated with ${videos.length} videos`, LOG_LEVELS.TRACE);
 }
 
 // Load full application configuration
@@ -3200,7 +3210,7 @@ function updateSettingsUI() {
     }
   }
   
-  debugLog('Settings UI updated', LOG_LEVELS.DEBUG);
+  debugLog('Settings UI updated', LOG_LEVELS.TRACE);
 }
 
 // Update a single setting element in the UI

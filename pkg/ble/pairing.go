@@ -14,16 +14,18 @@ import (
 type PairingManager struct {
 	connectionManager      *ConnectionManager
 	characteristicsManager *CharacteristicsManager
+	responseHandler        *ResponseHandler
 	eventEmitter           *events.EventEmitter
 	log                    logger.Logger
 }
 
 // NewPairingManager creates a new pairing manager
 func NewPairingManager(connMgr *ConnectionManager, charMgr *CharacteristicsManager,
-	eventEmitter *events.EventEmitter, log logger.Logger) *PairingManager {
+	responseHandler *ResponseHandler, eventEmitter *events.EventEmitter, log logger.Logger) *PairingManager {
 	return &PairingManager{
 		connectionManager:      connMgr,
 		characteristicsManager: charMgr,
+		responseHandler:        responseHandler,
 		eventEmitter:           eventEmitter,
 		log:                    log,
 	}
@@ -169,16 +171,73 @@ func (p *PairingManager) verifyPairingState(macAddress string) error {
 
 // GetPairingState gets the current pairing state from the device
 func (p *PairingManager) GetPairingState(macAddress string) (int, error) {
-	// Implementation would interact with characteristic manager
-	// This is a placeholder for the actual implementation
-	return PairingStateCompleted, nil
+	// Try to get cached pairing state from response handler first
+	if p.responseHandler != nil {
+		cachedState := p.responseHandler.GetPairingState(macAddress)
+		if cachedState > 0 {
+			p.log.Debugf("Using cached pairing state %d for device %s", cachedState, macAddress)
+			return cachedState, nil
+		}
+	}
+
+	// If no cached state available, query the device
+	p.log.Debugf("No cached pairing state, querying device %s", macAddress)
+	if err := p.characteristicsManager.QueryPairingState(); err != nil {
+		return 0, fmt.Errorf("failed to query pairing state: %v", err)
+	}
+
+	// Wait a moment for response to arrive
+	time.Sleep(500 * time.Millisecond)
+
+	// Try to get the response from the tracker
+	if p.responseHandler != nil {
+		state := p.responseHandler.GetPairingState(macAddress)
+		if state > 0 {
+			return state, nil
+		}
+	}
+
+	// If we still don't have a response, return never started as default
+	p.log.Warnf("Could not get pairing state for device %s, assuming never started", macAddress)
+	return PairingStateNeverStarted, nil
 }
 
 // RefreshPairingState forces a fresh query of the pairing state
 func (p *PairingManager) RefreshPairingState(macAddress string) (int, error) {
-	// Implementation would force a fresh characteristic read
-	// This is a placeholder for the actual implementation
-	return PairingStateCompleted, nil
+	p.log.Debug("RefreshPairingState: querying device for current pairing state", "device", macAddress)
+
+	// Initialize tracker for this device if needed
+	p.responseHandler.InitializeTracker(macAddress)
+
+	// Query the device for pairing state
+	err := p.characteristicsManager.QueryPairingState()
+	if err != nil {
+		p.log.Error("RefreshPairingState: failed to query pairing state", "device", macAddress, "error", err)
+		return PairingStateNeverStarted, err
+	}
+
+	// Wait for the specific pairing state response
+	response, err := p.responseHandler.WaitForResponse(macAddress, QueryGetPairingState, 5*time.Second)
+	if err != nil {
+		p.log.Warn("RefreshPairingState: failed to get pairing state response", "device", macAddress, "error", err)
+		// Return the cached state if available
+		cachedState := p.responseHandler.GetPairingState(macAddress)
+		if cachedState != 0 {
+			p.log.Debug("RefreshPairingState: using cached pairing state", "device", macAddress, "state", cachedState)
+			return cachedState, nil
+		}
+		return PairingStateNeverStarted, err
+	}
+
+	// Extract pairing state from response data
+	if len(response.Data) > 0 {
+		state := int(response.Data[0])
+		p.log.Debug("RefreshPairingState: received pairing state", "device", macAddress, "state", state)
+		return state, nil
+	}
+
+	p.log.Warn("RefreshPairingState: empty response data", "device", macAddress)
+	return PairingStateNeverStarted, fmt.Errorf("empty response data for pairing state query")
 }
 
 // IsPaired checks if the device is currently paired

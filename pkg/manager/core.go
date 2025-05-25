@@ -120,7 +120,7 @@ func NewGoProManager(dbPath, destinationDir string) (*GoProManager, error) {
 	}
 
 	bleManager := ble.NewManager(ble.ManagerConfig{
-		Logger:  logger.GetBLEFilteredLogger(),
+		Logger:  logger.GetLogger(),
 		Adapter: adapter,
 	})
 

@@ -230,10 +230,10 @@ func (cm *CharacteristicsManager) PerformSecurityHandshake() error {
 		return fmt.Errorf("failed to get command characteristic: %v", err)
 	}
 
-	// Security handshake command: Command ID 0x5F (Security Challenge)
-	securityCmd := []byte{0x5F, 0x01} // Simple handshake request
+	// Security handshake command: Use Get Open GoPro Version command
+	securityCmd := []byte{CommandGetOpenGoProVer}
 
-	if err := cm.WriteCommand(cmdChar, securityCmd, true); err != nil {
+	if err := cm.WriteCommand(cmdChar, securityCmd, false); err != nil {
 		cm.log.Error("Failed to write security handshake", "error", err)
 		return fmt.Errorf("failed to write security handshake: %v", err)
 	}
@@ -311,16 +311,16 @@ func (cm *CharacteristicsManager) SetConnectionParameters(modelType string) erro
 
 // SendKeepAlive sends a keep-alive signal to maintain the connection
 func (cm *CharacteristicsManager) SendKeepAlive() error {
-	// Get the settings characteristic for keep-alive
-	settingsChar, err := cm.GetCharacteristic(GoProControlServiceUUID, SettingsCharUUID)
+	// Get the command characteristic for keep-alive
+	cmdChar, err := cm.GetCharacteristic(GoProControlServiceUUID, CommandCharUUID)
 	if err != nil {
-		return fmt.Errorf("failed to get settings characteristic: %v", err)
+		return fmt.Errorf("failed to get command characteristic: %v", err)
 	}
 
-	// Keep-alive command using Turbo Active setting
-	cmd := []byte{CommandSetTurboActive, 0x01, 0x00} // Set turbo active to false (keep-alive)
+	// Keep-alive command using the official Keep Alive command ID
+	cmd := []byte{CommandKeepAlive}
 
-	if err := cm.WriteCommand(settingsChar, cmd, false); err != nil {
+	if err := cm.WriteCommand(cmdChar, cmd, false); err != nil {
 		return fmt.Errorf("failed to write keep-alive: %v", err)
 	}
 
@@ -328,7 +328,7 @@ func (cm *CharacteristicsManager) SendKeepAlive() error {
 	return nil
 }
 
-// SetCameraControl sets the camera control status
+// SetCameraControl sets the camera control status using protobuf commands
 func (cm *CharacteristicsManager) SetCameraControl(enabled bool) error {
 	// Get the command characteristic
 	cmdChar, err := cm.GetCharacteristic(GoProControlServiceUUID, CommandCharUUID)
@@ -336,13 +336,15 @@ func (cm *CharacteristicsManager) SetCameraControl(enabled bool) error {
 		return fmt.Errorf("failed to get command characteristic: %v", err)
 	}
 
-	// Prepare camera control command
-	cmd := make([]byte, 2)
-	cmd[0] = CommandSetCameraControl
+	// Camera control is a protobuf command, need to use proper protobuf format
+	// For now, use a simple approach - this would need proper protobuf implementation
+	cmd := make([]byte, 3)
+	cmd[0] = 0xF1 // Protobuf command header
+	cmd[1] = ProtobufCommandSetCameraControl
 	if enabled {
-		cmd[1] = 1 // Enable camera control
+		cmd[2] = 1 // Enable camera control
 	} else {
-		cmd[1] = 0 // Disable camera control
+		cmd[2] = 0 // Disable camera control
 	}
 
 	if err := cm.WriteCommand(cmdChar, cmd, true); err != nil {
@@ -355,20 +357,20 @@ func (cm *CharacteristicsManager) SetCameraControl(enabled bool) error {
 
 // QueryHardwareInfo queries the device for hardware information
 func (cm *CharacteristicsManager) QueryHardwareInfo() error {
-	// Get the query characteristic
-	queryChar, err := cm.GetCharacteristic(GoProControlServiceUUID, QueryCharUUID)
+	// Get the command characteristic (hardware info is a command, not a query)
+	cmdChar, err := cm.GetCharacteristic(GoProControlServiceUUID, CommandCharUUID)
 	if err != nil {
-		return fmt.Errorf("failed to get query characteristic: %v", err)
+		return fmt.Errorf("failed to get command characteristic: %v", err)
 	}
 
-	// Hardware info query command
-	hwInfoCmd := []byte{QueryGetHardwareInfo}
+	// Hardware info command
+	hwInfoCmd := []byte{CommandGetHardwareInfo}
 
-	if err := cm.WriteCommand(queryChar, hwInfoCmd, false); err != nil {
-		return fmt.Errorf("failed to write hardware info query: %v", err)
+	if err := cm.WriteCommand(cmdChar, hwInfoCmd, false); err != nil {
+		return fmt.Errorf("failed to write hardware info command: %v", err)
 	}
 
-	cm.log.Debug("Hardware info query sent")
+	cm.log.Debug("Hardware info command sent")
 	return nil
 }
 
@@ -380,8 +382,8 @@ func (cm *CharacteristicsManager) QueryPairingState() error {
 		return fmt.Errorf("failed to get query characteristic: %v", err)
 	}
 
-	// Pairing state query command (status ID 19)
-	pairingStateCmd := []byte{QueryGetStatusValues, 19}
+	// Pairing state query command (status ID 19 using Get Status Values)
+	pairingStateCmd := []byte{QueryGetStatusValues, StatusPairingState}
 
 	if err := cm.WriteCommand(queryChar, pairingStateCmd, false); err != nil {
 		return fmt.Errorf("failed to write pairing state query: %v", err)
@@ -399,8 +401,8 @@ func (cm *CharacteristicsManager) QueryBatteryLevel() error {
 		return fmt.Errorf("failed to get query characteristic: %v", err)
 	}
 
-	// Battery level query command (status ID 2)
-	batteryCmd := []byte{QueryGetStatusValues, 2}
+	// Battery level query command (status ID 2 using Get Status Values)
+	batteryCmd := []byte{QueryGetStatusValues, StatusBatteryLevel}
 
 	if err := cm.WriteCommand(queryChar, batteryCmd, false); err != nil {
 		return fmt.Errorf("failed to write battery level query: %v", err)

@@ -217,7 +217,7 @@ func (p *PairingManager) RefreshPairingState(macAddress string) (int, error) {
 	}
 
 	// Wait for the specific pairing state response
-	response, err := p.responseHandler.WaitForResponse(macAddress, QueryGetPairingState, 5*time.Second)
+	response, err := p.responseHandler.WaitForResponse(macAddress, QueryGetStatusValues, 5*time.Second)
 	if err != nil {
 		p.log.Warn("RefreshPairingState: failed to get pairing state response", "device", macAddress, "error", err)
 		// Return the cached state if available

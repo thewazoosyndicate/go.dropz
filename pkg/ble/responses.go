@@ -95,7 +95,7 @@ func (rh *ResponseHandler) CreateQueryResponseHandler(macAddress string) func([]
 			tracker.mutex.Lock()
 			tracker.lastResponse = responseData
 			// Store model ID if this is a hardware info response
-			if queryID == QueryGetHardwareInfo && status == 0 && len(data) >= 1 {
+			if queryID == CommandGetHardwareInfo && status == 0 && len(data) >= 1 {
 				tracker.ModelID = int(data[0])
 				rh.log.Info("Model ID detected from hardware info", "mac_address", macAddress, "model_id", tracker.ModelID)
 
@@ -174,7 +174,7 @@ func (rh *ResponseHandler) CreateSettingsResponseHandler(macAddress string) func
 // handleSpecificResponse handles specific types of query responses
 func (rh *ResponseHandler) handleSpecificResponse(macAddress string, queryID, status byte, data []byte) {
 	switch queryID {
-	case QueryGetHardwareInfo:
+	case CommandGetHardwareInfo:
 		rh.log.Trace("Hardware info response already processed", "mac_address", macAddress)
 
 	case QueryGetStatusValues:

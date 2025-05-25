@@ -409,7 +409,7 @@ func (m *Manager) GetMetadata(macAddress string) (map[string]string, error) {
 		}
 
 		// Query hardware info (0x3F)
-		hardwareQuery := []byte{QueryGetHardwareInfo}
+		hardwareQuery := []byte{CommandGetHardwareInfo}
 		if _, err := queryChar.WriteWithoutResponse(hardwareQuery); err != nil {
 			return fmt.Errorf("failed to query hardware info: %v", err)
 		}
@@ -417,7 +417,7 @@ func (m *Manager) GetMetadata(macAddress string) (map[string]string, error) {
 		// Wait for response
 		select {
 		case response := <-responseChan:
-			if len(response) >= 3 && response[0] == QueryGetHardwareInfo && response[1] == 0 {
+			if len(response) >= 3 && response[0] == CommandGetHardwareInfo && response[1] == 0 {
 				data := response[2:]
 				if len(data) >= 1 {
 					modelID := data[0]
@@ -565,12 +565,15 @@ func (m *Manager) SetCameraControl(macAddress string, enabled bool) error {
 
 		commandChar := chars["command"]
 
-		// Create the camera control command
-		var value byte = 0
+		// Create the camera control command (using protobuf format)
+		cmd := make([]byte, 3)
+		cmd[0] = 0xF1 // Protobuf command header
+		cmd[1] = ProtobufCommandSetCameraControl
 		if enabled {
-			value = 1
+			cmd[2] = 1
+		} else {
+			cmd[2] = 0
 		}
-		cmd := []byte{CommandSetCameraControl, value}
 
 		// Create packets for the command
 		packets := m.createPackets(cmd)

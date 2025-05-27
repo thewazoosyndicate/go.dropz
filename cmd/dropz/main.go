@@ -115,7 +115,13 @@ func main() {
 	}
 
 	// Check for CLI flags that require immediate action
-	cli.Cli()
+	cli.Cli(cli.CliFlags{
+		Scan:  *scan,
+		Pair:  *pair,
+		Sync:  *sync,
+		Sleep: *sleep,
+		Mac:   *mac,
+	})
 
 	// If no CLI args, start GoPro manager
 	if err := goProManager.Start(); err != nil {

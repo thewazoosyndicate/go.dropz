@@ -110,7 +110,7 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 		}
 
 		// Create a scan context with timeout for this single scan cycle
-		scanCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		scanCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 
 		s.log.Trace("Starting BLE scan cycle...")
 		err := s.ble.StartScanning(scanCtx)

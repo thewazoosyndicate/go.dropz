@@ -3,6 +3,7 @@ package ble
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,6 +93,8 @@ func (p *PairingManager) ConnectWithEnhancedPairing(macAddress string) error {
 		return fmt.Errorf("failed to cache characteristics: %v", err)
 	}
 
+	p.log.Infof("Successfully discovered and cached characteristics for device %s", macAddress)
+
 	// Setup notifications for response characteristics BEFORE querying
 	if err := p.setupResponseNotifications(macAddress); err != nil {
 		p.log.Errorf("Failed to setup response notifications: device=%s error=%v", macAddress, err)
@@ -100,11 +103,38 @@ func (p *PairingManager) ConnectWithEnhancedPairing(macAddress string) error {
 	}
 	p.log.Debugf("Successfully setup response notifications: device=%s", macAddress)
 
+	// Verify connection is still active before proceeding
+	connectionState := p.connectionManager.GetState(macAddress)
+	if connectionState != StateConnected && connectionState != StateReady {
+		p.log.Errorf("Connection lost after notification setup: device=%s state=%s", macAddress, connectionState)
+		p.emitPairingFailed(macAddress, fmt.Errorf("connection lost: state=%s", connectionState))
+		return fmt.Errorf("connection lost after notification setup: state=%s", connectionState)
+	}
+	p.log.Debugf("Connection verified active: device=%s state=%s", macAddress, connectionState)
+
 	// NOW we can check pairing state with proper service discovery
 	pairingState, err := p.queryPairingState(macAddress)
 	if err != nil {
 		p.log.Errorf("Failed to query initial pairing state: device=%s error=%v", macAddress, err)
-		// Continue anyway, assume unpaired
+
+		// Check if this is a connection issue
+		if connectionState := p.connectionManager.GetState(macAddress); connectionState != StateConnected && connectionState != StateReady {
+			p.log.Errorf("Connection lost during pairing state query: device=%s state=%s", macAddress, connectionState)
+			p.emitPairingFailed(macAddress, fmt.Errorf("connection lost during pairing state query: %v", err))
+			return fmt.Errorf("connection lost during pairing state query: %v", err)
+		}
+
+		// Check if this looks like a "Not connected" error from TinyGo
+		if strings.Contains(err.Error(), "Not connected") || strings.Contains(err.Error(), "WriteWithoutResponse") {
+			p.log.Errorf("TinyGo connection lost detected: device=%s error=%v", macAddress, err)
+			// Update our connection manager state to reflect reality
+			p.connectionManager.ChangeState(macAddress, StateDisconnected, err)
+			p.emitPairingFailed(macAddress, fmt.Errorf("underlying bluetooth connection lost: %v", err))
+			return fmt.Errorf("underlying bluetooth connection lost: %v", err)
+		}
+
+		// If device is connected but query failed, assume unpaired and continue
+		p.log.Warnf("Pairing state query failed but device connected, assuming unpaired: device=%s", macAddress)
 		pairingState = PairingStateNotPaired
 	} else {
 		p.log.Infof("Successfully queried initial pairing state: device=%s state=%d", macAddress, pairingState)
@@ -112,17 +142,44 @@ func (p *PairingManager) ConnectWithEnhancedPairing(macAddress string) error {
 
 	p.log.Infof("Current pairing state for device %s: %d", macAddress, pairingState)
 
-	// Detect model for enhanced pairing
+	// Check if device is already paired - skip pairing if so
+	if pairingState == PairingStateCompleted {
+		p.log.Infof("Device already paired, skipping pairing process: device=%s state=%d", macAddress, pairingState)
+
+		// Emit pairing completed event since device is already paired
+		p.eventEmitter.EmitEvent(events.BLEEvent{
+			Type:      events.EventPairingCompleted,
+			Device:    map[string]string{"mac_address": macAddress},
+			Timestamp: time.Now(),
+		})
+
+		p.log.Infof("BLE pairing completed (already paired): device=%s status=success", macAddress)
+
+		// Disconnect immediately since pairing is already complete
+		p.log.Infof("Disconnecting from already-paired device: device=%s", macAddress)
+		if err := p.connectionManager.Disconnect(macAddress); err != nil {
+			p.log.Warnf("Failed to disconnect from already-paired device: device=%s error=%v", macAddress, err)
+			// Don't return error here as pairing check was successful
+		} else {
+			p.log.Infof("Successfully disconnected from already-paired device: device=%s", macAddress)
+		}
+
+		return nil
+	}
+
+	// Device needs pairing - detect model for enhanced pairing
 	modelID, err := p.detectGoProModel(macAddress)
 	if err != nil {
 		p.log.Warnf("Model detection failed: device=%s error=%v fallback=default", macAddress, err)
-		modelID = 0 // Use 0 to indicate unknown model
+		// Use a default/unknown model ID when detection fails
+		// This allows pairing to continue with basic functionality
+		modelID = 1 // Use Hero 9 as the most basic/compatible fallback
 	} else {
 		p.log.Infof("Model detected: device=%s model=%s model_id=%d",
 			macAddress, models.GetModelName(modelID), modelID)
 	}
 
-	// Perform model-specific pairing procedures
+	// Perform model-specific pairing procedures using safe handler creation
 	if err := p.performModelSpecificPairing(macAddress, modelID); err != nil {
 		p.emitPairingFailed(macAddress, err)
 		return fmt.Errorf("model-specific pairing failed: %v", err)
@@ -142,6 +199,16 @@ func (p *PairingManager) ConnectWithEnhancedPairing(macAddress string) error {
 	})
 
 	p.log.Infof("BLE pairing completed: device=%s model_id=%d status=success", macAddress, modelID)
+
+	// Disconnect immediately after successful pairing completion
+	p.log.Infof("Disconnecting from device after successful pairing: device=%s", macAddress)
+	if err := p.connectionManager.Disconnect(macAddress); err != nil {
+		p.log.Warnf("Failed to disconnect after pairing completion: device=%s error=%v", macAddress, err)
+		// Don't return error here as pairing was successful
+	} else {
+		p.log.Infof("Successfully disconnected after pairing: device=%s", macAddress)
+	}
+
 	return nil
 }
 
@@ -152,10 +219,10 @@ func (p *PairingManager) performModelSpecificPairing(macAddress string, modelID 
 	modelName := models.GetModelName(modelID)
 	p.log.Debugf("Executing pairing sequence: device=%s model=%s model_id=%d", macAddress, modelName, modelID)
 
-	// Create model handler
-	handler, err := models.CreateHandler(modelID)
-	if err != nil {
-		return fmt.Errorf("failed to create model handler for model %d: %w", modelID, err)
+	// Create model handler using safe creation that handles unknown models
+	handler := models.CreateHandlerSafe(modelID)
+	if !handler.IsSupported() {
+		p.log.Warnf("Unknown or unsupported model ID %d, using basic pairing", modelID)
 	}
 
 	// Apply model-specific configuration
@@ -329,8 +396,14 @@ func (p *PairingManager) IsPaired(macAddress string) (bool, error) {
 
 // queryPairingState queries the current pairing state from the device
 // Thread Safety: Uses thread-safe characteristics manager calls and atomic cache updates.
-// Synchronizes notification setup with query execution to prevent race conditions.
+// Uses existing response handler to prevent notification conflicts.
 func (p *PairingManager) queryPairingState(macAddress string) (int, error) {
+	// First verify connection is active
+	connectionState := p.connectionManager.GetState(macAddress)
+	if connectionState != StateConnected && connectionState != StateReady {
+		return PairingStateNotPaired, fmt.Errorf("device not connected: state=%s", connectionState)
+	}
+
 	// Ensure we have the control service characteristics
 	chars, err := p.characteristicsManager.GetControlServiceCharacteristics()
 	if err != nil {
@@ -338,24 +411,23 @@ func (p *PairingManager) queryPairingState(macAddress string) (int, error) {
 	}
 
 	queryChar := chars["query"]
-	queryRespChar := chars["queryResponse"]
-
-	// Set up notification handler BEFORE querying
-	responseChan := make(chan []byte, 1)
-	err = queryRespChar.EnableNotifications(func(data []byte) {
-		select {
-		case responseChan <- data:
-		default:
-			p.log.Warnf("Response channel full, dropping pairing state response")
-		}
-	})
-	if err != nil {
-		return PairingStateNotPaired, fmt.Errorf("failed to enable notifications: %v", err)
+	if queryChar == nil {
+		return PairingStateNotPaired, fmt.Errorf("query characteristic not found")
 	}
 
+	// Initialize response tracker for this device if needed
+	if p.responseHandler != nil {
+		p.responseHandler.InitializeTracker(macAddress)
+	}
+
+	// Don't send keep-alive if connection verification already passed
 	// Send keep-alive to prevent disconnection during query
 	if err := p.sendKeepAlive(macAddress); err != nil {
 		p.log.Warnf("Failed to send keep-alive before pairing state query: %v", err)
+		// Verify connection is still active after keep-alive failure
+		if newState := p.connectionManager.GetState(macAddress); newState != StateConnected && newState != StateReady {
+			return PairingStateNotPaired, fmt.Errorf("connection lost during keep-alive: state=%s", newState)
+		}
 	}
 
 	// Query pairing state using correct OpenGoPro TLV format
@@ -367,22 +439,27 @@ func (p *PairingManager) queryPairingState(macAddress string) (int, error) {
 		return PairingStateNotPaired, fmt.Errorf("failed to write pairing state query: %v", err)
 	}
 
-	// Wait for response with timeout
-	select {
-	case response := <-responseChan:
-		state := p.parsePairingStateResponse(response)
-		p.cachePairingState(macAddress, state)
-		p.log.Debugf("Received pairing state response: device=%s state=%d", macAddress, state)
-		return state, nil
-	case <-time.After(10 * time.Second): // Increased timeout from 5 to 10 seconds
-		p.log.Errorf("Timeout waiting for pairing state response: device=%s", macAddress)
-		// Try to get cached state as fallback
-		if cachedState, exists := p.getCachedPairingState(macAddress); exists {
-			p.log.Debugf("Using cached pairing state after timeout: device=%s state=%d", macAddress, cachedState)
-			return cachedState, nil
+	// Wait for response using the response handler
+	if p.responseHandler != nil {
+		response, err := p.responseHandler.WaitForResponse(macAddress, QueryGetStatusValues, 10*time.Second)
+		if err == nil && len(response.Data) > 0 {
+			state := p.parsePairingStateResponse(response.Data)
+			p.cachePairingState(macAddress, state)
+			p.log.Debugf("Received pairing state response: device=%s state=%d", macAddress, state)
+			return state, nil
 		}
-		return PairingStateNotPaired, fmt.Errorf("timeout waiting for pairing state response after 10 seconds")
+		p.log.Warnf("Failed to get response via response handler: %v", err)
 	}
+
+	// Fallback: wait a bit and try to get cached state
+	time.Sleep(2 * time.Second)
+	if cachedState, exists := p.getCachedPairingState(macAddress); exists {
+		p.log.Debugf("Using cached pairing state as fallback: device=%s state=%d", macAddress, cachedState)
+		return cachedState, nil
+	}
+
+	p.log.Errorf("Timeout waiting for pairing state response: device=%s", macAddress)
+	return PairingStateNotPaired, fmt.Errorf("timeout waiting for pairing state response after 10 seconds")
 }
 
 // IsPairedWithVerification checks pairing with additional verification
@@ -512,6 +589,12 @@ func (p *PairingManager) setConnectionParameters(macAddress, modelType string) e
 // Thread Safety: Uses thread-safe characteristics manager calls.
 // Safe for concurrent execution with different devices.
 func (p *PairingManager) sendKeepAlive(macAddress string) error {
+	// Verify connection is active
+	connectionState := p.connectionManager.GetState(macAddress)
+	if connectionState != StateConnected && connectionState != StateReady {
+		return fmt.Errorf("device not connected: state=%s", connectionState)
+	}
+
 	chars, err := p.characteristicsManager.GetControlServiceCharacteristics()
 	if err != nil {
 		return fmt.Errorf("failed to get control service characteristics: %v", err)
@@ -539,45 +622,96 @@ func (p *PairingManager) sendKeepAlive(macAddress string) error {
 func (p *PairingManager) setupResponseNotifications(macAddress string) error {
 	p.log.Debugf("Setting up response notifications for device %s", macAddress)
 
+	// Verify connection is still active before setting up notifications
+	connectionState := p.connectionManager.GetState(macAddress)
+	if connectionState != StateConnected && connectionState != StateReady {
+		return fmt.Errorf("device not connected for notification setup: state=%s", connectionState)
+	}
+
 	chars, err := p.characteristicsManager.GetControlServiceCharacteristics()
 	if err != nil {
 		return fmt.Errorf("failed to get control service characteristics: %v", err)
 	}
 
-	// Set up notifications on response characteristics
+	// Set up notifications on response characteristics non-blockingly
+	// According to OpenGoPro spec, notifications should be enabled immediately after service discovery
 	responseChars := map[string]string{
 		"queryResponse":    "Query Response",
 		"commandResponse":  "Command Response",
 		"settingsResponse": "Settings Response",
 	}
 
+	// Track notification setup results
+	notificationErrors := make([]error, 0)
+	successfulNotifications := 0
+
 	for charKey, charName := range responseChars {
 		if char, exists := chars[charKey]; exists && char != nil {
 			p.log.Tracef("Enabling notifications for %s", charName)
 
-			err := char.EnableNotifications(func(data []byte) {
-				p.log.Tracef("Received %s notification: %d bytes", charName, len(data))
-				// Forward to response handler if available
-				if p.responseHandler != nil {
-					// Process the response data
-					p.handleNotificationResponse(macAddress, charName, data)
-				}
-			})
+			// Add a small delay between notification setups to prevent overwhelming the device
+			if successfulNotifications > 0 {
+				time.Sleep(200 * time.Millisecond)
+			}
 
-			if err != nil {
-				p.log.Warnf("Failed to enable %s notifications: %v", charName, err)
+			// Check connection before each notification setup
+			if currentState := p.connectionManager.GetState(macAddress); currentState != StateConnected && currentState != StateReady {
+				p.log.Warnf("Connection lost during notification setup: device=%s characteristic=%s state=%s", macAddress, charName, currentState)
+				notificationErrors = append(notificationErrors, fmt.Errorf("%s: connection lost", charName))
 				continue
 			}
 
-			p.log.Debugf("Successfully enabled %s notifications", charName)
+			// Run EnableNotifications in a goroutine with timeout to prevent blocking
+			notificationDone := make(chan error, 1)
+			go func(characteristic *bluetooth.DeviceCharacteristic, name string) {
+				err := characteristic.EnableNotifications(func(data []byte) {
+					p.log.Tracef("Received %s notification: %d bytes", name, len(data))
+					// Forward to response handler if available
+					if p.responseHandler != nil {
+						// Process the response data in a separate goroutine to avoid blocking
+						go func(mac, charType string, responseData []byte) {
+							p.handleNotificationResponse(mac, charType, responseData)
+						}(macAddress, name, data)
+					}
+				})
+				notificationDone <- err
+			}(char, charName)
 
-			// Small delay between setups
-			time.Sleep(100 * time.Millisecond)
+			// Wait for notification setup with extended timeout for the first (Query Response)
+			timeout := 3 * time.Second
+			if charName == "Query Response" {
+				timeout = 5 * time.Second // Give Query Response more time as it's critical
+			}
+
+			select {
+			case err := <-notificationDone:
+				if err != nil {
+					p.log.Warnf("Failed to enable %s notifications: %v", charName, err)
+					notificationErrors = append(notificationErrors, fmt.Errorf("%s: %v", charName, err))
+					continue
+				}
+				p.log.Debugf("Successfully enabled %s notifications", charName)
+				successfulNotifications++
+			case <-time.After(timeout):
+				p.log.Warnf("Timeout enabling %s notifications, continuing anyway", charName)
+				notificationErrors = append(notificationErrors, fmt.Errorf("%s: timeout", charName))
+			}
 		} else {
 			p.log.Tracef("%s characteristic not found or nil", charName)
 		}
 	}
 
+	// Return error only if ALL notifications failed
+	if len(notificationErrors) == len(responseChars) {
+		return fmt.Errorf("failed to enable any notifications: %v", notificationErrors)
+	}
+
+	// Log warnings for partial failures but don't fail the pairing
+	if len(notificationErrors) > 0 {
+		p.log.Warnf("Some notifications failed to enable: %v", notificationErrors)
+	}
+
+	p.log.Debugf("Response notifications setup completed for device %s", macAddress)
 	return nil
 }
 
@@ -733,4 +867,76 @@ func (p *PairingManager) extractPairingStateFromTLV(tlvData []byte) int {
 
 	p.log.Warnf("Pairing state not found in TLV response")
 	return PairingStateNotPaired
+}
+
+// verifyConnectionHealth checks if the device is responding to basic commands
+// This helps detect if the device is in pairing mode
+func (p *PairingManager) verifyConnectionHealth(macAddress string) error {
+	p.log.Debugf("Verifying connection health and pairing mode: device=%s", macAddress)
+
+	// Verify connection is active
+	connectionState := p.connectionManager.GetState(macAddress)
+	if connectionState != StateConnected && connectionState != StateReady {
+		return fmt.Errorf("device not connected: state=%s", connectionState)
+	}
+
+	chars, err := p.characteristicsManager.GetControlServiceCharacteristics()
+	if err != nil {
+		return fmt.Errorf("failed to get control service characteristics: %v", err)
+	}
+
+	queryChar := chars["query"]
+	if queryChar == nil {
+		return fmt.Errorf("query characteristic not found")
+	}
+
+	// Try a simple keep-alive command first to check responsiveness
+	commandChar := chars["command"]
+	if commandChar != nil {
+		p.log.Tracef("Testing device responsiveness with keep-alive command")
+		keepAliveCmd := []byte{CommandKeepAlive}
+		if _, err := commandChar.WriteWithoutResponse(keepAliveCmd); err != nil {
+			// Check if this is a TinyGo "Not connected" error
+			if strings.Contains(err.Error(), "Not connected") {
+				// Update connection manager state to reflect actual TinyGo state
+				p.connectionManager.ChangeState(macAddress, StateDisconnected, err)
+				return fmt.Errorf("underlying TinyGo connection lost: %v", err)
+			}
+			return fmt.Errorf("failed to send keep-alive: %v", err)
+		}
+	}
+
+	// Try a simple status query to check if device responds
+	p.log.Tracef("Testing device responsiveness with basic status query")
+	if p.responseHandler != nil {
+		p.responseHandler.InitializeTracker(macAddress)
+	}
+
+	// Query battery level (simple query that most GoPros respond to)
+	batteryQuery := []byte{QueryGetStatusValues, 0x01, StatusBatteryLevel}
+	_, err = queryChar.WriteWithoutResponse(batteryQuery)
+	if err != nil {
+		// Check if this is a TinyGo "Not connected" error
+		if strings.Contains(err.Error(), "Not connected") {
+			// Update connection manager state to reflect actual TinyGo state
+			p.connectionManager.ChangeState(macAddress, StateDisconnected, err)
+			return fmt.Errorf("underlying TinyGo connection lost: %v", err)
+		}
+		return fmt.Errorf("failed to send battery query: %v", err)
+	}
+
+	// Wait briefly for response
+	time.Sleep(2 * time.Second)
+
+	// Check if we got any response via the response handler
+	if p.responseHandler != nil {
+		if response, err := p.responseHandler.WaitForResponse(macAddress, QueryGetStatusValues, 1*time.Second); err == nil && len(response.Data) > 0 {
+			p.log.Debugf("Device is responsive and in pairing mode: device=%s", macAddress)
+			return nil
+		}
+	}
+
+	// If no response, the device is connected but not responding to commands
+	// This usually means it's not in pairing mode
+	return fmt.Errorf("device connected but not responding to commands - may not be in pairing mode")
 }

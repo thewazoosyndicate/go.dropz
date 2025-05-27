@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/dropz/dropz/cmd/dropz/cli"
 	"github.com/dropz/dropz/pkg/logger"
 	"github.com/dropz/dropz/pkg/manager"
 	"github.com/dropz/dropz/pkg/server"
@@ -22,7 +23,25 @@ var (
 	showVersion = flag.Bool("version", false, "Show version and exit")
 	pairMode    = flag.Bool("pair-mode", true, "Enable automatic pairing mode")
 	syncEnabled = flag.Bool("sync-enabled", true, "Enable automatic content synchronization")
+	// Commands
+	scan  = flag.Bool("scan", false, "Run scanner once and exit")
+	mac   = flag.String("mac", "", "GoPro Mac Address - required for commands")
+	pair  = flag.Bool("pair", false, "Run and exit")
+	sync  = flag.Bool("sync", false, "Run and exit")
+	sleep = flag.Bool("exit", false, "Run and exit")
 )
+
+// CLI
+//
+// Commands:
+// - scan
+// - pair (args. macAddress)
+// - connect (args. macAddress)
+//   . enable-wifi (also returns SSID/Passwd)
+//   . get-hw-info
+//   . get-battery-level
+// - sync (args. macAddress)
+// - sleep (args. macAddress)
 
 const (
 	appVersion = "0.2.0"
@@ -95,7 +114,10 @@ func main() {
 		}
 	}
 
-	// Start GoPro manager
+	// Check for CLI flags that require immediate action
+	cli.Cli()
+
+	// If no CLI args, start GoPro manager
 	if err := goProManager.Start(); err != nil {
 		log.Fatalf("Failed to start GoPro manager: %v", err)
 	}

@@ -46,7 +46,7 @@ func (d *DiscoveryManager) StartScanning(ctx context.Context) error {
 	d.isScanning = true
 	d.scanMutex.Unlock()
 
-	d.log.Infof("Starting BLE scan for GoPro devices (service 0xFEA6)")
+	d.log.Debugf("Starting BLE scan for GoPro devices (service 0xFEA6)")
 
 	// Create a derived context with reasonable timeout if none provided
 	scanCtx := ctx

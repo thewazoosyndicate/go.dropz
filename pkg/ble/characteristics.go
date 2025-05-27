@@ -604,6 +604,24 @@ func (cm *CharacteristicsManager) GetAvailableCharacteristics() map[string][]str
 	return result
 }
 
+// GetAllCharacteristics returns all cached characteristics in a flat map for per-device caching
+// Thread Safety: Read lock protects access to serviceMap during enumeration
+// Returns a flat map of charUUID -> characteristic pointer suitable for device-specific caching
+func (cm *CharacteristicsManager) GetAllCharacteristics() map[string]*bluetooth.DeviceCharacteristic {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+
+	result := make(map[string]*bluetooth.DeviceCharacteristic)
+	for _, serviceChars := range cm.serviceMap {
+		for charUUID, char := range serviceChars {
+			result[charUUID] = char
+		}
+	}
+
+	cm.log.Debug("Retrieved all characteristics from cache", "characteristic_count", len(result))
+	return result
+}
+
 // ValidateCharacteristicAccess validates that a characteristic can be accessed safely
 // Thread Safety: Read lock protects access to serviceMap during validation
 // Checks for nil pointers and validates UUIDs

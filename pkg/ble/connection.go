@@ -224,7 +224,7 @@ func (cm *ConnectionManager) GetState(macAddress string) ConnectionState {
 		// Return the current state
 		return info.State
 	}
-	cm.log.Warnf("GetState: Device %s not found in connections", macAddress)
+	cm.log.Debugf("GetState: Device %s not found in connections", macAddress)
 	return StateDisconnected
 }
 
@@ -312,7 +312,7 @@ func (cm *ConnectionManager) Connect(ctx context.Context, macAddress string) (*b
 
 	// Set state to connecting
 	cm.ChangeState(macAddress, StateConnecting, nil)
-	cm.log.Warnf("Attempting to connect to device %s (state: %s)", macAddress, cm.GetState(macAddress))
+	cm.log.Debugf("Attempting to connect to device %s (state: %s)", macAddress, cm.GetState(macAddress))
 
 	// Implement retry logic for transient failures
 	maxRetries := 3

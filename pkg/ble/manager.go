@@ -330,6 +330,51 @@ func (m *Manager) Connect(macAddress string) error {
 
 	m.log.Infof("Phase 3 complete: Services and characteristics cached for device %s", macAddress)
 
+	// Phase 3.5: Copy characteristics from global cache to per-device cache
+	m.log.Infof("Phase 3.5: Copying characteristics to per-device cache for device %s", macAddress)
+
+	// Get all cached characteristics from the global cache
+	allCharacteristics := m.characteristicsMgr.GetAllCharacteristics()
+	if len(allCharacteristics) == 0 {
+		m.log.Errorf("No characteristics found in global cache for device %s", macAddress)
+		// Clean up the connection on failure
+		m.removeConnection(macAddress)
+		_ = m.connManager.Disconnect(macAddress)
+		return NewConnectionError(macAddress, "copy_characteristics",
+			fmt.Errorf("no characteristics available"),
+			"Characteristics cache is empty - ensure device discovery completed", time.Now())
+	}
+
+	// Copy characteristics to the per-device cache in ConnectionManager
+	connectionInfo := m.connManager.GetConnectionInfo(macAddress)
+	if connectionInfo == nil {
+		m.log.Errorf("Connection info not found for device %s during characteristic copy", macAddress)
+		m.removeConnection(macAddress)
+		_ = m.connManager.Disconnect(macAddress)
+		return NewConnectionError(macAddress, "copy_characteristics",
+			fmt.Errorf("connection info not found"),
+			"Device connection state inconsistent", time.Now())
+	}
+
+	// Thread-safe copy of characteristics to the per-device cache
+	// This needs to be done under ConnectionManager's lock for thread safety
+	func() {
+		m.connManager.mutex.Lock()
+		defer m.connManager.mutex.Unlock()
+
+		if connectionInfo.characteristics == nil {
+			connectionInfo.characteristics = make(map[string]*bluetooth.DeviceCharacteristic)
+		}
+
+		// Copy all characteristics from global cache to per-device cache
+		for charUUID, char := range allCharacteristics {
+			connectionInfo.characteristics[charUUID] = char
+		}
+	}()
+
+	m.log.Infof("Phase 3.5 complete: Copied %d characteristics to per-device cache for device %s",
+		len(allCharacteristics), macAddress)
+
 	// Phase 4: Update connection state to ready
 	m.log.Infof("Phase 4: Setting device %s state to ready", macAddress)
 	m.connManager.ChangeState(macAddress, StateReady, nil)

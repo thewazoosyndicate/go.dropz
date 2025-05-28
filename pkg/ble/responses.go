@@ -1,7 +1,6 @@
 package ble
 
 import (
-	"encoding/binary"
 	"fmt"
 	"sync"
 	"time"
@@ -10,8 +9,17 @@ import (
 	"github.com/dropz/dropz/pkg/logger"
 )
 
-// DefaultTimeout for BLE operations
-const DefaultTimeout = 5 * time.Second
+// Timeout constants for different BLE operations based on OpenGoPro analysis
+const (
+	// DefaultTimeout for BLE operations
+	DefaultTimeout = 8 * time.Second
+
+	// Specialized timeouts for different operation types
+	PairingTimeout      = 10 * time.Second // Pairing operations need reasonable time
+	HardwareInfoTimeout = 8 * time.Second  // Hardware info queries can be slow
+	QuickTimeout        = 5 * time.Second  // For fast operations like keep-alive
+	StatusTimeout       = 6 * time.Second  // For status queries
+)
 
 // ResponseHandler manages response tracking and notification handling with request correlation
 // Thread Safety: All operations are protected by appropriate mutexes
@@ -103,7 +111,7 @@ func (rh *ResponseHandler) InitializeTracker(macAddress string) {
 		rh.responseTracker[macAddress] = &ResponseTracker{
 			responseChannel: make(chan *QueryResponseData, 10), // Legacy channel for backward compatibility
 			pendingRequests: make(map[byte]*PendingRequest),
-			fragmentBuffer:  make(map[byte][]*ResponseFragment),
+			fragmentBuffer:  make(map[byte]*FragmentedResponse),
 		}
 		rh.log.Trace("Response tracker initialized", "mac_address", macAddress, "buffer_size", 10)
 	} else {
@@ -135,7 +143,7 @@ func (rh *ResponseHandler) CleanupTracker(macAddress string) {
 			delete(tracker.pendingRequests, cmdID)
 		}
 		// Clear fragment buffers
-		tracker.fragmentBuffer = make(map[byte][]*ResponseFragment)
+		tracker.fragmentBuffer = make(map[byte]*FragmentedResponse)
 		tracker.mutex.Unlock()
 
 		close(tracker.responseChannel)
@@ -498,8 +506,9 @@ func (rh *ResponseHandler) SendCommandWithResponse(macAddress string, commandID 
 		return nil, fmt.Errorf("no response tracker found for device %s", macAddress)
 	}
 
+	// Intelligent timeout selection based on OpenGoPro patterns
 	if timeout == 0 {
-		timeout = DefaultTimeout
+		timeout = rh.selectOptimalTimeout(commandID, isQuery)
 	}
 
 	// Create pending request
@@ -539,6 +548,43 @@ func (rh *ResponseHandler) SendCommandWithResponse(macAddress string, commandID 
 
 		rh.log.Warn("Request timed out", "mac_address", macAddress, "command_id", commandID, "timeout", timeout)
 		return nil, fmt.Errorf("timeout waiting for response to command %d", commandID)
+	}
+}
+
+// selectOptimalTimeout selects appropriate timeout based on command type and OpenGoPro patterns
+// Thread Safety: Pure function with no shared state access. Safe for concurrent use.
+func (rh *ResponseHandler) selectOptimalTimeout(commandID byte, isQuery bool) time.Duration {
+	// Based on OpenGoPro implementation analysis, different operations need different timeouts
+
+	if isQuery {
+		switch commandID {
+		case QueryGetStatusValues:
+			// Status queries including pairing state
+			return StatusTimeout
+		case QueryGetSettingValues:
+			// Settings queries are typically faster
+			return DefaultTimeout
+		case QueryGetSettingCapabilities:
+			// Capability queries can be slow due to large responses
+			return HardwareInfoTimeout
+		default:
+			return DefaultTimeout
+		}
+	} else {
+		// Command timeouts
+		switch commandID {
+		case CommandGetHardwareInfo:
+			// Hardware info is notoriously slow
+			return HardwareInfoTimeout
+		case ProtobufCommandSetCameraControl, CommandKeepAlive:
+			// Control commands are typically fast
+			return QuickTimeout
+		case CommandGetOpenGoProVer:
+			// Version queries can be slow on some models
+			return DefaultTimeout
+		default:
+			return DefaultTimeout
+		}
 	}
 }
 
@@ -582,43 +628,87 @@ func (rh *ResponseHandler) handleResponse(macAddress string, responseData *Query
 	}
 }
 
-// processFragmentedResponse handles fragmented responses according to OpenGoPro spec
+// processFragmentedResponse handles fragmented responses according to OpenGoPro specification
+// Based on analysis of successful OpenGoPro implementations
 // Thread Safety: Uses tracker lock to atomically manage fragment buffers.
 // Prevents race conditions during fragment assembly from concurrent notifications.
 func (rh *ResponseHandler) processFragmentedResponse(macAddress string, buf []byte) *QueryResponseData {
-	if len(buf) < 2 {
-		rh.log.Error("Invalid fragmented response - too short", "mac_address", macAddress, "length", len(buf))
+	if len(buf) < 1 {
+		rh.log.Error("Invalid packet - empty buffer", "mac_address", macAddress)
 		return nil
 	}
 
-	// Parse OpenGoPro packet format
-	header := buf[0]
-	isStart := (header & PacketHeaderStart) != 0
-	isContinuation := (header & PacketHeaderCont) != 0
-	length := int(header & PacketLengthMask)
+	// Periodically clean up stale fragments to prevent memory leaks
+	go rh.cleanupStaleFragments(macAddress)
 
-	// Handle extended length if needed
-	dataStart := 1
-	if (header & ExtendedHeaderBit) != 0 {
-		if len(buf) < 3 {
-			rh.log.Error("Invalid extended header packet", "mac_address", macAddress, "length", len(buf))
+	// Parse OpenGoPro packet format according to specification
+	header := buf[0]
+
+	// OpenGoPro packet header format:
+	// Bit 7 (0x80): Continuation bit - 1 if more fragments follow
+	// Bit 6 (0x40): Extended header bit - 1 if 13-bit length field is used
+	// Bit 5 (0x20): Start bit - 1 if this is the start of a new message
+	// Bits 4-0: Length (5-bit) or part of extended length
+
+	isContinuation := (header & 0x80) != 0
+	hasExtendedHeader := (header & 0x40) != 0
+	isStart := (header & 0x20) != 0
+
+	var length int
+	var dataStart int
+
+	if hasExtendedHeader {
+		// 13-bit length field across header and next byte
+		if len(buf) < 2 {
+			rh.log.Error("Invalid extended header packet - too short", "mac_address", macAddress, "length", len(buf))
 			return nil
 		}
-		length = int(binary.BigEndian.Uint16(buf[1:3]) & ExtendedLengthByteMask)
-		dataStart = 3
+		// Combine bits 4-0 of header with bits 7-0 of next byte
+		length = int((int(header)&0x1F)<<8 | int(buf[1]))
+		dataStart = 2
+	} else {
+		// 5-bit length field in header
+		length = int(header & 0x1F)
+		dataStart = 1
 	}
 
 	if len(buf) < dataStart+length {
-		rh.log.Error("Packet shorter than declared length", "mac_address", macAddress, "declared", length, "actual", len(buf)-dataStart)
+		rh.log.Error("Packet shorter than declared length",
+			"mac_address", macAddress,
+			"declared", length,
+			"actual", len(buf)-dataStart,
+			"header", fmt.Sprintf("0x%02X", header))
 		return nil
 	}
 
 	packetData := buf[dataStart : dataStart+length]
 
+	rh.log.Trace("Processing packet",
+		"mac_address", macAddress,
+		"header", fmt.Sprintf("0x%02X", header),
+		"is_start", isStart,
+		"is_continuation", isContinuation,
+		"has_extended", hasExtendedHeader,
+		"length", length,
+		"data_start", dataStart)
+
+	tracker := rh.GetTracker(macAddress)
+	if tracker == nil {
+		rh.log.Error("No tracker available", "mac_address", macAddress)
+		return nil
+	}
+
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+
+	if tracker.fragmentBuffer == nil {
+		tracker.fragmentBuffer = make(map[byte]*FragmentedResponse)
+	}
+
 	if isStart {
-		// Starting a new response
-		if len(packetData) < 3 {
-			rh.log.Error("Invalid start packet - too short for response header", "mac_address", macAddress, "length", len(packetData))
+		// Start of new response (may be single packet or first of multi-packet)
+		if len(packetData) < 2 {
+			rh.log.Error("Invalid start packet - missing query ID and status", "mac_address", macAddress, "length", len(packetData))
 			return nil
 		}
 
@@ -627,7 +717,13 @@ func (rh *ResponseHandler) processFragmentedResponse(macAddress string, buf []by
 		responseData := packetData[2:]
 
 		if !isContinuation {
-			// Single packet response
+			// Complete single-packet response
+			rh.log.Debug("Complete single-packet response",
+				"mac_address", macAddress,
+				"query_id", fmt.Sprintf("0x%02X", queryID),
+				"status", fmt.Sprintf("0x%02X", status),
+				"data_length", len(responseData))
+
 			return &QueryResponseData{
 				QueryID:      queryID,
 				Status:       status,
@@ -636,106 +732,179 @@ func (rh *ResponseHandler) processFragmentedResponse(macAddress string, buf []by
 				IsFragmented: false,
 			}
 		} else {
-			// Start of fragmented response
-			tracker := rh.GetTracker(macAddress)
-			if tracker == nil {
-				rh.log.Error("No tracker for fragmented response", "mac_address", macAddress, "query_id", queryID)
-				return nil
-			}
+			// Start of multi-packet response
+			rh.log.Debug("Starting fragmented response",
+				"mac_address", macAddress,
+				"query_id", fmt.Sprintf("0x%02X", queryID),
+				"status", fmt.Sprintf("0x%02X", status),
+				"first_fragment_size", len(responseData))
 
-			tracker.mutex.Lock()
-			if tracker.fragmentBuffer == nil {
-				tracker.fragmentBuffer = make(map[byte][]*ResponseFragment)
-			}
-			tracker.fragmentBuffer[queryID] = []*ResponseFragment{
-				{
-					SequenceNumber: 0,
-					Data:           responseData,
-					IsLast:         false,
-				},
-			}
-			tracker.mutex.Unlock()
-
-			rh.log.Debug("Started fragmented response", "mac_address", macAddress, "query_id", queryID, "first_fragment_size", len(responseData))
-			return nil // Wait for more fragments
-		}
-	} else if isContinuation {
-		// Continuation packet
-		if len(packetData) < 1 {
-			rh.log.Error("Invalid continuation packet", "mac_address", macAddress)
-			return nil
-		}
-
-		// Find the query ID from existing fragments
-		tracker := rh.GetTracker(macAddress)
-		if tracker == nil {
-			rh.log.Error("No tracker for continuation packet", "mac_address", macAddress)
-			return nil
-		}
-
-		tracker.mutex.Lock()
-		defer tracker.mutex.Unlock()
-
-		// For simplicity, assume single active fragmented response
-		// In a full implementation, you'd need to track multiple concurrent fragmented responses
-		var queryID byte
-		var fragments []*ResponseFragment
-		for qid, frags := range tracker.fragmentBuffer {
-			queryID = qid
-			fragments = frags
-			break
-		}
-
-		if fragments == nil {
-			rh.log.Error("No active fragmented response for continuation", "mac_address", macAddress)
-			return nil
-		}
-
-		// Determine if this is the last fragment
-		isLast := (header & 0x10) == 0 // In OpenGoPro, last fragment doesn't have continuation bit in certain positions
-
-		// Add fragment
-		fragment := &ResponseFragment{
-			SequenceNumber: len(fragments),
-			Data:           packetData,
-			IsLast:         isLast,
-		}
-		tracker.fragmentBuffer[queryID] = append(fragments, fragment)
-
-		if isLast {
-			// Assemble complete response
-			var completeData []byte
-			for _, frag := range tracker.fragmentBuffer[queryID] {
-				completeData = append(completeData, frag.Data...)
-			}
-
-			// Clean up fragment buffer
-			delete(tracker.fragmentBuffer, queryID)
-
-			rh.log.Debug("Assembled fragmented response", "mac_address", macAddress, "query_id", queryID, "total_size", len(completeData), "fragments", len(tracker.fragmentBuffer[queryID]))
-
-			// Determine status from first fragment (should be in format)
-			status := byte(0)
-			if len(completeData) > 0 {
-				// The status should be at the beginning of the complete data
-				// This might need adjustment based on actual OpenGoPro protocol
-				status = completeData[0]
-				completeData = completeData[1:]
-			}
-
-			return &QueryResponseData{
+			tracker.fragmentBuffer[queryID] = &FragmentedResponse{
 				QueryID:      queryID,
 				Status:       status,
-				Data:         completeData,
-				ResponseTime: time.Now(),
-				IsFragmented: true,
-				TotalSize:    len(completeData),
+				Fragments:    [][]byte{responseData},
+				TotalLength:  len(responseData),
+				LastReceived: time.Now(),
+				IsComplete:   false,
 			}
+
+			return nil // Wait for continuation packets
+		}
+	} else if isContinuation {
+		// Continuation packet - find matching fragmented response
+		var activeResponse *FragmentedResponse
+		var matchingQueryID byte
+
+		// Find the most recent incomplete fragmented response
+		// In practice, there should typically be only one active at a time
+		for queryID, response := range tracker.fragmentBuffer {
+			if !response.IsComplete && time.Since(response.LastReceived) < 30*time.Second {
+				activeResponse = response
+				matchingQueryID = queryID
+				break
+			}
+		}
+
+		if activeResponse == nil {
+			rh.log.Error("No active fragmented response for continuation packet",
+				"mac_address", macAddress,
+				"active_fragments", len(tracker.fragmentBuffer))
+			return nil
+		}
+
+		// Add fragment data
+		activeResponse.Fragments = append(activeResponse.Fragments, packetData)
+		activeResponse.TotalLength += len(packetData)
+		activeResponse.LastReceived = time.Now()
+
+		rh.log.Debug("Added continuation fragment",
+			"mac_address", macAddress,
+			"query_id", fmt.Sprintf("0x%02X", matchingQueryID),
+			"fragment_num", len(activeResponse.Fragments),
+			"fragment_size", len(packetData),
+			"total_size", activeResponse.TotalLength,
+			"has_more", isContinuation)
+
+		// If this is the last fragment (no continuation bit), assemble response
+		if !isContinuation {
+			rh.log.Error("Logic error: continuation packet without continuation bit", "mac_address", macAddress)
+			return nil
 		}
 
 		return nil // Wait for more fragments
+	} else {
+		// This is a final fragment (no continuation bit set)
+		var activeResponse *FragmentedResponse
+		var matchingQueryID byte
+
+		// Find the active fragmented response
+		for queryID, response := range tracker.fragmentBuffer {
+			if !response.IsComplete && time.Since(response.LastReceived) < 30*time.Second {
+				activeResponse = response
+				matchingQueryID = queryID
+				break
+			}
+		}
+
+		if activeResponse == nil {
+			// No active fragmented response - this might be a single packet response
+			// that doesn't follow the expected fragmentation pattern
+			rh.log.Debug("No active fragmented response, treating as single packet",
+				"mac_address", macAddress,
+				"header", fmt.Sprintf("0x%02X", header),
+				"data_length", len(packetData))
+
+			// Try to parse as a single packet response
+			if len(packetData) >= 2 {
+				queryID := packetData[0]
+				status := packetData[1]
+				responseData := packetData[2:]
+
+				return &QueryResponseData{
+					QueryID:      queryID,
+					Status:       status,
+					Data:         responseData,
+					ResponseTime: time.Now(),
+					IsFragmented: false,
+				}
+			} else {
+				rh.log.Warn("Packet too short to parse as response",
+					"mac_address", macAddress,
+					"data_length", len(packetData))
+				return nil
+			}
+		}
+
+		// Add final fragment
+		activeResponse.Fragments = append(activeResponse.Fragments, packetData)
+		activeResponse.TotalLength += len(packetData)
+		activeResponse.IsComplete = true
+
+		// Assemble complete response
+		var completeData []byte
+		for _, fragment := range activeResponse.Fragments {
+			completeData = append(completeData, fragment...)
+		}
+
+		// Clean up
+		delete(tracker.fragmentBuffer, matchingQueryID)
+
+		rh.log.Debug("Assembled complete fragmented response",
+			"mac_address", macAddress,
+			"query_id", fmt.Sprintf("0x%02X", activeResponse.QueryID),
+			"status", fmt.Sprintf("0x%02X", activeResponse.Status),
+			"total_fragments", len(activeResponse.Fragments),
+			"total_size", len(completeData))
+
+		return &QueryResponseData{
+			QueryID:      activeResponse.QueryID,
+			Status:       activeResponse.Status,
+			Data:         completeData,
+			ResponseTime: time.Now(),
+			IsFragmented: true,
+			TotalSize:    len(completeData),
+		}
+	}
+}
+
+// cleanupStaleFragments removes old incomplete fragments that have timed out
+// Thread Safety: Uses tracker lock to atomically clean up fragment buffers.
+// Prevents memory leaks from incomplete fragmented responses.
+func (rh *ResponseHandler) cleanupStaleFragments(macAddress string) {
+	tracker := rh.GetTracker(macAddress)
+	if tracker == nil {
+		return
 	}
 
-	rh.log.Error("Invalid packet format", "mac_address", macAddress, "header", header)
-	return nil
+	tracker.mutex.Lock()
+	defer tracker.mutex.Unlock()
+
+	if tracker.fragmentBuffer == nil {
+		return
+	}
+
+	now := time.Now()
+	staleFragments := make([]byte, 0)
+
+	// Find fragments that have timed out
+	for queryID, response := range tracker.fragmentBuffer {
+		if !response.IsComplete && now.Sub(response.LastReceived) > QuickTimeout {
+			staleFragments = append(staleFragments, queryID)
+		}
+	}
+
+	// Remove stale fragments
+	for _, queryID := range staleFragments {
+		rh.log.Warn("Cleaning up stale fragment",
+			"mac_address", macAddress,
+			"query_id", fmt.Sprintf("0x%02X", queryID),
+			"age", now.Sub(tracker.fragmentBuffer[queryID].LastReceived))
+		delete(tracker.fragmentBuffer, queryID)
+	}
+
+	if len(staleFragments) > 0 {
+		rh.log.Debug("Fragment cleanup completed",
+			"mac_address", macAddress,
+			"removed_fragments", len(staleFragments))
+	}
 }

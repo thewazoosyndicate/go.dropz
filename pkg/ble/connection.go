@@ -606,21 +606,21 @@ func (cm *ConnectionManager) GetCharacteristic(macAddress, charUUID string) (*bl
 	return char, nil
 }
 
-// GetDiscoveredServices returns all discovered services for a device
-func (cm *ConnectionManager) GetDiscoveredServices(macAddress string) []bluetooth.DeviceService {
+// GetCachedServices returns cached services for a device (for internal use)
+func (cm *ConnectionManager) GetCachedServices(macAddress string) map[string]bluetooth.DeviceService {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
 
 	info := cm.connections[macAddress]
-	if info == nil {
+	if info == nil || info.services == nil {
 		return nil
 	}
 
-	services := make([]bluetooth.DeviceService, 0, len(info.services))
-	for _, service := range info.services {
-		services = append(services, service)
+	// Return a copy to prevent external modification
+	services := make(map[string]bluetooth.DeviceService)
+	for uuid, service := range info.services {
+		services[uuid] = service
 	}
-	cm.log.Debugf("Returning %d discovered services for device %s", len(services), macAddress)
 	return services
 }
 

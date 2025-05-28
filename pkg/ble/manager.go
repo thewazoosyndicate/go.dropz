@@ -31,7 +31,7 @@ type Manager struct {
 	discoveryMgr       *DiscoveryManager
 	characteristicsMgr *CharacteristicsManager
 	responseMgr        *ResponseHandler
-	pairingMgr         *PairingManager
+	pairingCoordinator *PairingCoordinator
 
 	// Event handling
 	eventHandlers map[events.EventType][]events.EventHandler
@@ -67,7 +67,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 	manager.connManager = NewConnectionManager(cfg.Adapter, manager.responseMgr, cfg.Logger)
 	manager.discoveryMgr = NewDiscoveryManager(cfg.Adapter, eventEmitter, cfg.Logger)
 	manager.characteristicsMgr = NewCharacteristicsManager(cfg.Logger)
-	manager.pairingMgr = NewPairingManager(manager.connManager, manager.characteristicsMgr, manager.responseMgr, eventEmitter, cfg.Logger)
+	manager.pairingCoordinator = NewPairingCoordinator(manager.connManager, manager.characteristicsMgr, manager.responseMgr, eventEmitter, cfg.Logger)
 
 	return manager
 }
@@ -149,53 +149,7 @@ func (m *Manager) withRetryAndReturn(operation, macAddress string, maxRetries in
 	return nil, fmt.Errorf("operation %s failed after %d retries: %v", operation, maxRetries, lastErr)
 }
 
-// createPackets breaks large payloads into BLE-compatible packets
-func (m *Manager) createPackets(payload []byte) [][]byte {
-	const maxDataSize = 18 // Conservative BLE packet size
-	const headerSize = 2
-
-	if len(payload) <= maxDataSize {
-		// Single packet
-		packet := make([]byte, headerSize+len(payload))
-		packet[0] = 0x00 // Start and end packet
-		packet[1] = byte(len(payload))
-		copy(packet[2:], payload)
-		return [][]byte{packet}
-	}
-
-	// Multiple packets needed
-	var packets [][]byte
-	offset := 0
-	packetIndex := 0
-
-	for offset < len(payload) {
-		remainingData := len(payload) - offset
-		dataSize := maxDataSize
-		if remainingData < dataSize {
-			dataSize = remainingData
-		}
-
-		packet := make([]byte, headerSize+dataSize)
-
-		// Set packet header
-		if packetIndex == 0 {
-			packet[0] = 0x20 // Start packet
-		} else if offset+dataSize >= len(payload) {
-			packet[0] = 0x80 // End packet
-		} else {
-			packet[0] = 0x60 // Continuation packet
-		}
-
-		packet[1] = byte(dataSize)
-		copy(packet[2:], payload[offset:offset+dataSize])
-
-		packets = append(packets, packet)
-		offset += dataSize
-		packetIndex++
-	}
-
-	return packets
-}
+// Removed duplicate createPackets method - using CharacteristicsManager.createPackets instead
 
 // BLEInterface implementation methods
 
@@ -406,23 +360,23 @@ func (m *Manager) DisconnectGoPro(macAddress string) error {
 }
 
 func (m *Manager) ConnectWithEnhancedPairing(macAddress string) error {
-	return m.pairingMgr.ConnectWithEnhancedPairing(macAddress)
+	return m.pairingCoordinator.PairDevice(m.ctx, macAddress)
 }
 
 func (m *Manager) IsPaired(macAddress string) (bool, error) {
-	return m.pairingMgr.IsPaired(macAddress)
+	return m.pairingCoordinator.IsPaired(macAddress)
 }
 
 func (m *Manager) IsPairedWithVerification(macAddress string) (bool, error) {
-	return m.pairingMgr.IsPairedWithVerification(macAddress)
+	return m.pairingCoordinator.IsPairedWithVerification(macAddress)
 }
 
 func (m *Manager) RefreshPairingState(macAddress string) (int, error) {
-	return m.pairingMgr.RefreshPairingState(macAddress)
+	return m.pairingCoordinator.RefreshPairingState(macAddress)
 }
 
 func (m *Manager) GetPairingState(macAddress string) (int, error) {
-	return m.pairingMgr.GetPairingState(macAddress)
+	return m.pairingCoordinator.GetPairingState(macAddress)
 }
 
 // GetWifiCredentials retrieves WiFi SSID and password from the GoPro with comprehensive validation
@@ -701,21 +655,22 @@ func (m *Manager) GetMetadata(macAddress string) (map[string]string, error) {
 			return fmt.Errorf("failed to get control service characteristics: %v", err)
 		}
 
-		queryChar := chars["query"]
-		queryRespChar := chars["queryResponse"]
+		// Hardware info is a command (0x3C), not a query - use command characteristics
+		cmdChar := chars["command"]
+		cmdRespChar := chars["commandResponse"]
 
 		// Validate characteristic pointers
-		if err := ValidateCharacteristicPointer(queryChar); err != nil {
-			return NewCharacteristicError(GoProControlServiceUUID, QueryCharUUID, "validate", err)
+		if err := ValidateCharacteristicPointer(cmdChar); err != nil {
+			return NewCharacteristicError(GoProControlServiceUUID, CommandCharUUID, "validate", err)
 		}
 
-		if err := ValidateCharacteristicPointer(queryRespChar); err != nil {
-			return NewCharacteristicError(GoProControlServiceUUID, QueryResponseCharUUID, "validate", err)
+		if err := ValidateCharacteristicPointer(cmdRespChar); err != nil {
+			return NewCharacteristicError(GoProControlServiceUUID, CommandResponseCharUUID, "validate", err)
 		}
 
 		// Set up notification handler for responses with timeout
 		responseChan := make(chan []byte, 5)
-		notificationErr := queryRespChar.EnableNotifications(func(data []byte) {
+		notificationErr := cmdRespChar.EnableNotifications(func(data []byte) {
 			select {
 			case responseChan <- data:
 				// Successfully queued response
@@ -726,24 +681,24 @@ func (m *Manager) GetMetadata(macAddress string) (map[string]string, error) {
 		})
 
 		if notificationErr != nil {
-			return NewCharacteristicError(GoProControlServiceUUID, QueryResponseCharUUID, "enable_notifications",
+			return NewCharacteristicError(GoProControlServiceUUID, CommandResponseCharUUID, "enable_notifications",
 				fmt.Errorf("failed to enable notifications: %v", notificationErr))
 		}
 
-		// Query hardware info (0x3F) with validation
+		// Send hardware info command (0x3C) via command characteristic per OpenGoPro spec
 		hardwareQuery := []byte{CommandGetHardwareInfo}
-		n, err := queryChar.WriteWithoutResponse(hardwareQuery)
+		n, err := cmdChar.WriteWithoutResponse(hardwareQuery)
 		if err != nil {
-			return NewCharacteristicError(GoProControlServiceUUID, QueryCharUUID, "write",
-				fmt.Errorf("failed to query hardware info: %v", err))
+			return NewCharacteristicError(GoProControlServiceUUID, CommandCharUUID, "write",
+				fmt.Errorf("failed to send hardware info command: %v", err))
 		}
 
 		if n != len(hardwareQuery) {
-			return NewCharacteristicError(GoProControlServiceUUID, QueryCharUUID, "write",
+			return NewCharacteristicError(GoProControlServiceUUID, CommandCharUUID, "write",
 				fmt.Errorf("incomplete write: expected %d bytes, wrote %d", len(hardwareQuery), n))
 		}
 
-		m.log.Tracef("Hardware info query sent to device %s", macAddress)
+		m.log.Tracef("Hardware info command sent to device %s", macAddress)
 
 		// Wait for response with proper timeout and validation
 		select {
@@ -1064,8 +1019,8 @@ func (m *Manager) SetCameraControl(macAddress string, enabled bool) error {
 
 		m.log.Tracef("Camera control command payload for device %s: %02X", macAddress, cmd)
 
-		// Create packets for the command with validation
-		packets := m.createPackets(cmd)
+		// Create packets for the command with validation using characteristics manager
+		packets := m.characteristicsMgr.CreatePackets(cmd)
 		if len(packets) == 0 {
 			return fmt.Errorf("failed to create command packets")
 		}
@@ -1199,8 +1154,8 @@ func (m *Manager) Sleep(macAddress string) error {
 
 		m.log.Trace("Creating sleep command packets", "mac_address", macAddress, "command", cmd)
 
-		// Create packets for the command
-		packets := m.createPackets(cmd)
+		// Create packets for the command using characteristics manager
+		packets := m.characteristicsMgr.CreatePackets(cmd)
 		if len(packets) == 0 {
 			return NewValidationError("sleep", fmt.Errorf("no packets created for sleep command"),
 				"Check command data format")

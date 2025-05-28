@@ -54,6 +54,16 @@ type ResponseFragment struct {
 	IsLast         bool
 }
 
+// FragmentedResponse represents a complete fragmented response being assembled
+type FragmentedResponse struct {
+	QueryID      byte
+	Status       byte
+	Fragments    [][]byte
+	TotalLength  int
+	LastReceived time.Time
+	IsComplete   bool
+}
+
 // ResponseTracker tracks the response for a specific query with request correlation
 // Thread Safety: All fields are protected by RWMutex for concurrent access
 // - lastResponse, ModelID, PairingState: Protected for atomic reads/writes
@@ -65,7 +75,7 @@ type ResponseTracker struct {
 	ModelID         int                          // Stores the last detected model ID (if any)
 	PairingState    int                          // Stores the last detected pairing state (if any)
 	pendingRequests map[byte]*PendingRequest     // CommandID -> PendingRequest (protected by mutex)
-	fragmentBuffer  map[byte][]*ResponseFragment // CommandID -> ordered fragments (protected by mutex)
+	fragmentBuffer  map[byte]*FragmentedResponse // CommandID -> fragmented response (protected by mutex)
 }
 
 // QueryResponseData holds the data for a query response

@@ -14,10 +14,18 @@ import (
 	"github.com/dropz/dropz/pkg/server"
 )
 
+// getDefaultPath expands home directory and returns the full path
+func getDefaultPath(path string) string {
+	if homeDir, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(homeDir, path)
+	}
+	return path // fallback to relative path if home dir can't be determined
+}
+
 var (
-	dataDir     = flag.String("data-dir", "data", "Directory for storing data")
-	videoDir    = flag.String("video-dir", "videos", "Directory for storing downloaded videos")
-	logDir      = flag.String("log-dir", "logs", "Directory for storing logs")
+	dataDir     = flag.String("data-dir", getDefaultPath(".dropz/data"), "Directory for storing data")
+	videoDir    = flag.String("video-dir", getDefaultPath("Videos"), "Directory for storing downloaded videos")
+	logDir      = flag.String("log-dir", getDefaultPath(".dropz/logs"), "Directory for storing logs")
 	logLevel    = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	serverAddr  = flag.String("server-addr", "127.0.0.1:50051", "gRPC server address")
 	showVersion = flag.Bool("version", false, "Show version and exit")

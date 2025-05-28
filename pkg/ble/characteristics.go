@@ -166,7 +166,7 @@ func (cm *CharacteristicsManager) EnableNotifications(characteristics map[string
 // Safe for concurrent use with different characteristics.
 func (cm *CharacteristicsManager) WriteCommand(char *bluetooth.DeviceCharacteristic, command []byte, usePackets bool) error {
 	if usePackets {
-		packets := cm.createPackets(command)
+		packets := cm.CreatePackets(command)
 		cm.log.Debug("Writing command with packetization", "command_length", len(command), "packet_count", len(packets))
 
 		for i, packet := range packets {
@@ -446,9 +446,9 @@ func (cm *CharacteristicsManager) QueryBatteryLevel() error {
 	return nil
 }
 
-// createPackets splits a large payload into BLE packets according to OpenGoPro spec
+// CreatePackets splits a large payload into BLE packets according to OpenGoPro spec
 // Thread Safety: Pure function with no shared state access. Safe for concurrent use.
-func (cm *CharacteristicsManager) createPackets(payload []byte) [][]byte {
+func (cm *CharacteristicsManager) CreatePackets(payload []byte) [][]byte {
 	// BLE limits packet size to 20 bytes
 	maxPacketSize := 20
 	maxDataPerPacket := maxPacketSize - 1 // Reserve 1 byte for header

@@ -119,10 +119,7 @@ func NewGoProManager(dbPath, destinationDir string) (*GoProManager, error) {
 		return nil, fmt.Errorf("timeout while enabling BLE adapter")
 	}
 
-	bleManager := ble.NewManager(ble.ManagerConfig{
-		Logger:  logger.GetLogger(),
-		Adapter: adapter,
-	})
+	bleManager := ble.NewManager(adapter, logger.GetLogger())
 
 	if err := bleManager.Start(); err != nil {
 		cancel()

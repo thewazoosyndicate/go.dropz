@@ -11,9 +11,10 @@ import (
 
 // Scanner handles background scanning operations
 type Scanner struct {
-	ble          ble.BLEInterface
-	log          logger.Logger
-	scanInterval time.Duration
+	ble               ble.BLEInterface
+	log               logger.Logger
+	scanInterval      time.Duration
+	processDeviceFunc func(ble.Device) // callback for processing individual devices
 }
 
 // NewScanner creates a new scanner
@@ -25,9 +26,10 @@ func NewScanner(ble ble.BLEInterface, log logger.Logger, scanInterval time.Durat
 	}
 }
 
-// StartBackgroundScanner starts the background scanner
-func (s *Scanner) StartBackgroundScanner(ctx context.Context, processDevices func([]ble.Device)) {
-	s.log.Info("Starting background scanner")
+// StartBackgroundScanner starts the background scanner with live device processing
+func (s *Scanner) StartBackgroundScanner(ctx context.Context, processDeviceFunc func(ble.Device)) {
+	s.log.Info("Starting background scanner with live device processing")
+	s.processDeviceFunc = processDeviceFunc
 
 	// Create a ticker for regular scan intervals
 	ticker := time.NewTicker(s.scanInterval)
@@ -51,7 +53,7 @@ func (s *Scanner) StartBackgroundScanner(ctx context.Context, processDevices fun
 	}()
 
 	// Start initial scan
-	go s.startContinuousScan(continuousScanCtx, &scanInProgress, processDevices)
+	go s.startContinuousScan(continuousScanCtx, &scanInProgress)
 
 	for {
 		select {
@@ -72,7 +74,7 @@ func (s *Scanner) StartBackgroundScanner(ctx context.Context, processDevices fun
 				}
 				continuousScanCtx, cancelContinuousScan = context.WithCancel(ctx)
 
-				go s.startContinuousScan(continuousScanCtx, &scanInProgress, processDevices)
+				go s.startContinuousScan(continuousScanCtx, &scanInProgress)
 			}
 
 		case <-watchdogTicker.C:
@@ -85,19 +87,19 @@ func (s *Scanner) StartBackgroundScanner(ctx context.Context, processDevices fun
 				}
 				continuousScanCtx, cancelContinuousScan = context.WithCancel(ctx)
 
-				go s.startContinuousScan(continuousScanCtx, &scanInProgress, processDevices)
+				go s.startContinuousScan(continuousScanCtx, &scanInProgress)
 			}
 		}
 	}
 }
 
-// startContinuousScan initiates a continuous BLE scan process
-func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomic.Bool, processDevices func([]ble.Device)) {
+// startContinuousScan initiates a continuous BLE scan process with live device processing
+func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomic.Bool) {
 	// Mark scan as in progress
 	scanInProgress.Store(true)
 	defer scanInProgress.Store(false)
 
-	s.log.Debug("Starting continuous BLE scanning process")
+	s.log.Debug("Starting continuous BLE scanning process with live device callbacks")
 
 	// Loop until context is canceled or other conditions stop the scan
 	for {
@@ -109,11 +111,21 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 			// Continue with the scan
 		}
 
-		// Create a scan context with timeout for this single scan cycle
-		scanCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		// For continuous RSSI monitoring, use much longer scan cycles (5 minutes)
+		// This ensures we keep getting RSSI updates without frequent restarts
+		scanCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 
-		s.log.Trace("Starting BLE scan cycle...")
-		err := s.ble.StartScanning(scanCtx)
+		s.log.Trace("Starting BLE scan cycle with live device processing...")
+
+		// Use the callback-based scanning for live updates
+		err := s.ble.StartScanningWithCallback(scanCtx, func(device ble.Device) {
+			// Process device immediately when discovered for real-time RSSI updates
+			s.log.Debugf("Live discovery: %s (%s) RSSI:%d", device.Name, device.MACAddress, device.RSSI)
+			if s.processDeviceFunc != nil {
+				s.processDeviceFunc(device)
+			}
+		})
+
 		if err != nil {
 			cancel() // Always cancel the context
 			s.log.Errorf("Failed to start BLE scan: %v", err)
@@ -128,16 +140,13 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 			continue
 		}
 
-		s.log.Debug("BLE scan started, waiting for scan to complete...")
+		s.log.Debug("BLE scan started with live processing, waiting for scan to complete...")
 
-		// Process devices immediately after scan completes or times out
+		// Wait for scan to complete or context cancellation
 		select {
 		case <-scanCtx.Done():
 			if scanCtx.Err() != context.Canceled {
-				s.log.Debug("Scan cycle completed, processing discovered devices")
-				// Process discovered devices
-				devices := s.ble.GetDiscoveredDevices()
-				processDevices(devices)
+				s.log.Debug("Scan cycle completed (5 minute timeout)")
 			}
 		case <-ctx.Done():
 			cancel()
@@ -147,13 +156,12 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 
 		cancel() // Always cancel the context
 
-		// If we're in continuous mode, add a small pause between scans
-		// to allow other BLE operations to occur
+		// Minimal pause between scan cycles for continuous RSSI monitoring
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(500 * time.Millisecond):
-			// Short pause between scan cycles
+		case <-time.After(100 * time.Millisecond):
+			// Very short pause to ensure continuous scanning
 		}
 	}
 }

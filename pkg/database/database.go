@@ -125,20 +125,15 @@ type Config struct {
 
 // Database represents the in-memory database with JSON persistence
 type Database struct {
-	CameraStates   map[string]*CameraWithState `json:"camera_states"`
-	SyncQueue      []*SyncQueueEntry           `json:"sync_queue"`
-	Groups         []*Group                    `json:"groups"`
-	Videos         []*VideoFile                `json:"videos"`
-	Logs           []*LogEntry                 `json:"logs"`
-	Config         Config                      `json:"config"`
-	filePath       string
-	mutex          sync.RWMutex
-	log            logger.Logger
-	changeCounters struct {
-		discovered int64
-		managed    int64
-		syncQueue  int64
-	}
+	CameraStates map[string]*CameraWithState `json:"camera_states"`
+	SyncQueue    []*SyncQueueEntry           `json:"sync_queue"`
+	Groups       []*Group                    `json:"groups"`
+	Videos       []*VideoFile                `json:"videos"`
+	Logs         []*LogEntry                 `json:"logs"`
+	Config       Config                      `json:"config"`
+	filePath     string
+	mutex        sync.RWMutex
+	log          logger.Logger
 }
 
 var instance *Database
@@ -241,17 +236,19 @@ func (db *Database) AddOrUpdateDiscoveredCamera(camera *DiscoveredCamera) error 
 	defer db.mutex.Unlock()
 
 	// Check if this is a new camera or an update to an existing one
-	existingCam, exists := db.CameraStates[camera.CameraState.Camera.MACAddress]
+	_, exists := db.CameraStates[camera.CameraState.Camera.MACAddress]
 
-	// Always increment the change counter for GoPro cameras
-	// But only if it's a new camera or if there are meaningful changes
-	if !exists ||
-		existingCam.Camera.RSSI != camera.CameraState.Camera.RSSI ||
-		existingCam.Status.IsPairing != camera.CameraState.Status.IsPairing ||
-		existingCam.Status.IsManaged != camera.CameraState.Status.IsManaged ||
-		existingCam.Status.IsPaired != camera.CameraState.Status.IsPaired {
-		db.changeCounters.discovered++
-		db.log.Trace("Discovered camera updated", "camera_name", camera.CameraState.Camera.Name, "mac_address", camera.CameraState.Camera.MACAddress, "change_counter", db.changeCounters.discovered, "is_new", !exists)
+	// Log camera updates
+	if !exists {
+		db.log.Info("New discovered camera added",
+			"camera_name", camera.CameraState.Camera.Name,
+			"mac_address", camera.CameraState.Camera.MACAddress,
+			"rssi", camera.CameraState.Camera.RSSI)
+	} else {
+		db.log.Trace("Discovered camera updated",
+			"camera_name", camera.CameraState.Camera.Name,
+			"mac_address", camera.CameraState.Camera.MACAddress,
+			"rssi", camera.CameraState.Camera.RSSI)
 	}
 
 	// Store the camera in the database
@@ -287,21 +284,13 @@ func (db *Database) GetAllDiscoveredCameras() []*DiscoveredCamera {
 	return cameras
 }
 
-// GetDiscoveredChangeCounter returns the current counter for discovered cameras
-func (db *Database) GetDiscoveredChangeCounter() int64 {
-	db.mutex.RLock()
-	defer db.mutex.RUnlock()
-	return db.changeCounters.discovered
-}
-
 // AddOrUpdateManagedCamera adds or updates a managed camera
 func (db *Database) AddOrUpdateManagedCamera(camera *ManagedCamera) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
 	db.CameraStates[camera.CameraState.Camera.MACAddress] = camera.CameraState
-	db.changeCounters.managed++
-	db.log.Info("Managed camera added/updated", "camera_name", camera.CameraState.Camera.Name, "mac_address", camera.CameraState.Camera.MACAddress, "change_counter", db.changeCounters.managed)
+	db.log.Info("Managed camera added/updated", "camera_name", camera.CameraState.Camera.Name, "mac_address", camera.CameraState.Camera.MACAddress)
 	return db.saveToFile()
 }
 
@@ -349,13 +338,6 @@ func (db *Database) GetAllManagedCameras() []*ManagedCamera {
 	return cameras
 }
 
-// GetManagedChangeCounter returns the current counter for managed cameras
-func (db *Database) GetManagedChangeCounter() int64 {
-	db.mutex.RLock()
-	defer db.mutex.RUnlock()
-	return db.changeCounters.managed
-}
-
 // RemoveManagedCamera removes a camera from the managed pool
 func (db *Database) RemoveManagedCamera(macAddress string) error {
 	db.mutex.Lock()
@@ -365,8 +347,7 @@ func (db *Database) RemoveManagedCamera(macAddress string) error {
 	if exists {
 		// Just update the camera status, don't remove it from the database
 		cameraState.Status.IsManaged = false
-		db.changeCounters.managed++
-		db.log.Info("Camera removed from managed pool", "mac_address", macAddress, "camera_name", cameraState.Camera.Name, "change_counter", db.changeCounters.managed)
+		db.log.Info("Camera removed from managed pool", "mac_address", macAddress, "camera_name", cameraState.Camera.Name)
 		return db.saveToFile()
 	}
 	db.log.Warn("Attempted to remove non-existent managed camera", "mac_address", macAddress)
@@ -383,16 +364,14 @@ func (db *Database) AddSyncQueueEntry(entry *SyncQueueEntry) error {
 		if existing.CameraID == entry.CameraID {
 			// Already in queue, update it
 			*existing = *entry
-			db.changeCounters.syncQueue++
-			db.log.Debug("Sync queue entry updated", "camera_id", entry.CameraID, "operation", entry.CurrentOperation, "progress", entry.ProgressPercent, "change_counter", db.changeCounters.syncQueue)
+			db.log.Debug("Sync queue entry updated", "camera_id", entry.CameraID, "operation", entry.CurrentOperation, "progress", entry.ProgressPercent)
 			return db.saveToFile()
 		}
 	}
 
 	// Add to queue
 	db.SyncQueue = append(db.SyncQueue, entry)
-	db.changeCounters.syncQueue++
-	db.log.Info("Camera added to sync queue", "camera_id", entry.CameraID, "operation", entry.CurrentOperation, "queue_length", len(db.SyncQueue), "change_counter", db.changeCounters.syncQueue)
+	db.log.Info("Camera added to sync queue", "camera_id", entry.CameraID, "operation", entry.CurrentOperation, "queue_length", len(db.SyncQueue))
 	return db.saveToFile()
 }
 
@@ -406,13 +385,6 @@ func (db *Database) GetSyncQueue() []*SyncQueueEntry {
 	return queue
 }
 
-// GetSyncQueueChangeCounter returns the current counter for the sync queue
-func (db *Database) GetSyncQueueChangeCounter() int64 {
-	db.mutex.RLock()
-	defer db.mutex.RUnlock()
-	return db.changeCounters.syncQueue
-}
-
 // UpdateSyncQueueEntry updates an existing sync queue entry
 func (db *Database) UpdateSyncQueueEntry(entry *SyncQueueEntry) error {
 	db.mutex.Lock()
@@ -421,8 +393,7 @@ func (db *Database) UpdateSyncQueueEntry(entry *SyncQueueEntry) error {
 	for i, existing := range db.SyncQueue {
 		if existing.CameraID == entry.CameraID {
 			db.SyncQueue[i] = entry
-			db.changeCounters.syncQueue++
-			db.log.Debug("Sync queue entry progress updated", "camera_id", entry.CameraID, "operation", entry.CurrentOperation, "progress", entry.ProgressPercent, "change_counter", db.changeCounters.syncQueue)
+			db.log.Debug("Sync queue entry progress updated", "camera_id", entry.CameraID, "operation", entry.CurrentOperation, "progress", entry.ProgressPercent)
 			return db.saveToFile()
 		}
 	}
@@ -440,8 +411,7 @@ func (db *Database) RemoveSyncQueueEntry(cameraID string) error {
 			// Remove entry by replacing it with the last one and truncating
 			db.SyncQueue[i] = db.SyncQueue[len(db.SyncQueue)-1]
 			db.SyncQueue = db.SyncQueue[:len(db.SyncQueue)-1]
-			db.changeCounters.syncQueue++
-			db.log.Info("Camera removed from sync queue", "camera_id", cameraID, "queue_length", len(db.SyncQueue), "change_counter", db.changeCounters.syncQueue)
+			db.log.Info("Camera removed from sync queue", "camera_id", cameraID, "queue_length", len(db.SyncQueue))
 			return db.saveToFile()
 		}
 	}
@@ -791,8 +761,6 @@ func (db *Database) UpdateCameraReachability(macAddress string, isReachable bool
 	// Only make changes if the state actually changes
 	if cameraState.Status.IsReachable != isReachable {
 		cameraState.Status.IsReachable = isReachable
-		db.changeCounters.discovered++
-		db.changeCounters.managed++
 		return db.saveToFile()
 	}
 
@@ -810,8 +778,6 @@ func (db *Database) UpdateCameraPairingStatus(macAddress string, isPairing bool)
 	}
 
 	cameraState.Status.IsPairing = isPairing
-	db.changeCounters.discovered++
-	db.changeCounters.managed++
 	return db.saveToFile()
 }
 
@@ -827,8 +793,6 @@ func (db *Database) SetCameraPaired(macAddress string, isPaired bool) error {
 
 	cameraState.Status.IsPaired = isPaired
 	cameraState.Status.IsPairing = false // Always reset pairing status
-	db.changeCounters.discovered++
-	db.changeCounters.managed++
 	return db.saveToFile()
 }
 
@@ -843,8 +807,6 @@ func (db *Database) ToggleCameraManaged(macAddress string) error {
 	}
 
 	cameraState.Status.IsManaged = !cameraState.Status.IsManaged
-	db.changeCounters.discovered++
-	db.changeCounters.managed++
 	return db.saveToFile()
 }
 
@@ -859,7 +821,6 @@ func (db *Database) UpdateCameraSyncingStatus(macAddress string, isSyncing bool)
 	}
 
 	cameraState.Status.IsSyncing = isSyncing
-	db.changeCounters.managed++
 	return db.saveToFile()
 }
 
@@ -876,7 +837,6 @@ func (db *Database) MarkCameraSynced(macAddress string) error {
 	cameraState.Status.IsSynced = true
 	cameraState.Status.IsSyncing = false // Reset syncing status
 	cameraState.Status.LastSynced = time.Now()
-	db.changeCounters.managed++
 	return db.saveToFile()
 }
 
@@ -891,7 +851,6 @@ func (db *Database) ResetSyncStatus(macAddress string) error {
 	}
 
 	cameraState.Status.IsSynced = false
-	db.changeCounters.managed++
 	return db.saveToFile()
 }
 
@@ -910,8 +869,6 @@ func (db *Database) ResetTransientStates() error {
 	}
 
 	if changesMade {
-		db.changeCounters.discovered++
-		db.changeCounters.managed++
 		return db.saveToFile()
 	}
 
@@ -924,23 +881,27 @@ func (db *Database) GetCamerasForDiscoveredPool() []*DiscoveredCamera {
 	defer db.mutex.RUnlock()
 
 	cameras := make([]*DiscoveredCamera, 0)
-	for _, cameraState := range db.CameraStates {
+
+	// Log all cameras and their states for debugging
+	db.log.Debugf("GetCamerasForDiscoveredPool: examining %d total cameras", len(db.CameraStates))
+
+	for macAddress, cameraState := range db.CameraStates {
+		db.log.Debugf("Camera %s (%s): Reachable=%v, Paired=%v, Managed=%v",
+			cameraState.Camera.Name, macAddress,
+			cameraState.Status.IsReachable,
+			cameraState.Status.IsPaired,
+			cameraState.Status.IsManaged)
+
 		// Camera must be reachable and either not paired OR not managed
 		if cameraState.Status.IsReachable && (!cameraState.Status.IsPaired || !cameraState.Status.IsManaged) {
 			cameras = append(cameras, &DiscoveredCamera{CameraState: cameraState})
+			db.log.Debugf("✓ Camera %s INCLUDED in discovered pool", cameraState.Camera.Name)
+		} else {
+			db.log.Debugf("✗ Camera %s EXCLUDED from discovered pool (criteria not met)", cameraState.Camera.Name)
 		}
 	}
 
-	// Log debug info about discovered pool criteria
 	db.log.Debugf("GetCamerasForDiscoveredPool returning %d cameras", len(cameras))
-	for _, camera := range cameras {
-		db.log.Debugf("Camera in discovered pool: %s (Paired=%v, Managed=%v, Reachable=%v)",
-			camera.CameraState.Camera.Name,
-			camera.CameraState.Status.IsPaired,
-			camera.CameraState.Status.IsManaged,
-			camera.CameraState.Status.IsReachable)
-	}
-
 	return cameras
 }
 

@@ -70,6 +70,17 @@ let videos = [];
 // Configuration state
 let appConfig = null;
 
+// UI state tracking for efficient updates
+let uiState = {
+  currentDeviceCounts: {
+    discovered: 0,
+    managed: 0,
+    sync: 0
+  },
+  deviceElements: {}, // Track DOM elements by MAC address for direct updates
+  poolMembership: {} // Track which pools each device belongs to
+};
+
 // Log initial message
 logToFile('Renderer process starting up');
 
@@ -194,7 +205,7 @@ function setupViewToggle() {
           
           debugLog(`View mode changed to: ${viewMode}`, LOG_LEVELS.INFO);
           
-          // Refresh the UI to apply new view
+          // Refresh the UI to apply new view - use full rebuild for view changes
           updateDeviceLists();
         }
       });
@@ -283,13 +294,9 @@ function startDiscoveredCamerasStream(client) {
         const cameraObj = processDiscoveredCamera(camera);
         if (cameraObj) {
           addOrUpdateDevice(cameraObj);
-          // Update UI immediately for each device
-          updateDeviceLists();
+          // addOrUpdateDevice now handles targeted updates automatically
         }
       });
-      
-      // Update counters after all devices are processed
-      updateCounters();
     });
     
     call.on('error', (error) => {
@@ -373,11 +380,9 @@ function startManagedCamerasStream(client) {
         }
       });
       
-      // Only update UI if we actually got updates
+      // addOrUpdateDevice now handles targeted updates automatically
       if (hasUpdates) {
-        debugLog('Updating UI with new managed camera data', LOG_LEVELS.TRACE);
-        updateDeviceLists();
-        updateCounters();
+        debugLog('Updated managed camera data via targeted updates', LOG_LEVELS.TRACE);
       }
     });
     
@@ -471,7 +476,7 @@ function startSyncQueueStream(client) {
       // Only update UI if the queue changed
       if (oldQueueLength !== syncQueue.length || queueEntries.length > 0) {
         debugLog('Updating UI with new sync queue data', LOG_LEVELS.TRACE);
-        updateSyncQueueUI();
+        updateSyncQueueUI(); // Sync queue still needs full rebuild for now
         updateCounters();
       }
     });
@@ -820,7 +825,23 @@ function cleanupDisconnectedDevices() {
     
     if (now - lastSeen > timeout) {
       addLogEntry(`Device ${device.name} (${mac}) has not been seen for a while and may be offline.`, 'info');
+      
+      // Remove from UI pools using targeted removal
+      const membership = uiState.poolMembership[mac] || {};
+      if (membership.discovered) {
+        removeDeviceFromPool(mac, 'discovered');
+      }
+      if (membership.managed) {
+        removeDeviceFromPool(mac, 'managed');
+      }
+      if (membership.sync) {
+        removeDeviceFromPool(mac, 'sync');
+      }
+      
+      // Clean up tracking
       delete allDevices[mac];
+      delete uiState.poolMembership[mac];
+      delete uiState.deviceElements[mac];
       
       // Remove from other collections as needed
       if (syncQueue.includes(mac)) {
@@ -837,8 +858,8 @@ function cleanupDisconnectedDevices() {
     }
   }
   
-  // Update UI
-  updateDeviceLists();
+  // Update counters after cleanup
+  updateCounters();
 }
 
 // Set up IPC listeners for communication with the main process
@@ -930,8 +951,7 @@ function setupIpcListeners() {
       delete pairingInProgress[mac];
     });
     
-    // Update the UI
-    updateDeviceLists();
+    // updateDeviceStatus already handles UI updates via targeted updates
   });
 }
 
@@ -1193,12 +1213,37 @@ function addOrUpdateDevice(device) {
   const existingDevice = allDevices[device.macAddress];
   const isNewDevice = !existingDevice;
   
+  // Track RSSI changes for real-time signal strength updates
+  let rssiChanged = false;
+  let lastSeenChanged = false;
+  let significantChange = false;
+  
+  if (!isNewDevice && existingDevice) {
+    rssiChanged = existingDevice.rssi !== device.rssi;
+    lastSeenChanged = existingDevice.lastSeen !== device.lastSeen;
+    
+    // Check for significant status changes
+    significantChange = 
+      existingDevice.isReachable !== device.isReachable ||
+      existingDevice.isPaired !== device.isPaired ||
+      existingDevice.isManaged !== device.isManaged ||
+      existingDevice.isSyncing !== device.isSyncing ||
+      existingDevice.name !== device.name ||
+      existingDevice.visualStatus !== device.visualStatus;
+    
+    // Log RSSI changes for debugging real-time updates
+    if (rssiChanged) {
+      debugLog(`RSSI updated for ${device.name} (${device.macAddress}): ${existingDevice.rssi} -> ${device.rssi}`, LOG_LEVELS.TRACE);
+    }
+  }
+  
   if (isNewDevice) {
     // Log new device
-    debugLog(`New device discovered: ${device.name} (${device.macAddress})`, LOG_LEVELS.INFO);
+    debugLog(`New device discovered: ${device.name} (${device.macAddress}) RSSI: ${device.rssi}`, LOG_LEVELS.INFO);
     addLogEntry(`New device discovered: ${device.name}`, 'info');
-  } else {
-    // Check for significant status changes
+    significantChange = true;
+  } else if (significantChange) {
+    // Log significant changes
     if (existingDevice.isReachable !== device.isReachable) {
       debugLog(`Device reachability changed: ${device.name} (${device.macAddress}) - now ${device.isReachable ? 'reachable' : 'unreachable'}`, LOG_LEVELS.INFO);
     }
@@ -1226,98 +1271,469 @@ function addOrUpdateDevice(device) {
     }
   }
   
+  // Calculate which pools this device should be in
+  const poolMembership = {
+    discovered: shouldShowInDiscoveredPool(device),
+    managed: shouldShowInManagedPool(device),
+    sync: shouldShowInSyncQueue(device)
+  };
+  
+  // Check if pool membership changed
+  const previousMembership = uiState.poolMembership[device.macAddress] || {};
+  const membershipChanged = isNewDevice || 
+    previousMembership.discovered !== poolMembership.discovered ||
+    previousMembership.managed !== poolMembership.managed ||
+    previousMembership.sync !== poolMembership.sync;
+  
   // Update or add the device
   allDevices[device.macAddress] = device;
-  
-  // Log which pools the device will show in (only for new devices or significant changes)
-  const inDiscovered = shouldShowInDiscoveredPool(device);
-  const inManaged = shouldShowInManagedPool(device);
-  const inSyncQueue = shouldShowInSyncQueue(device);
+  uiState.poolMembership[device.macAddress] = poolMembership;
   
   // Only log detailed pool membership info for new devices or when explicitly debugging
   if (isNewDevice) {
-    debugLog(`Device ${device.name} pool memberships: Discovered=${inDiscovered}, Managed=${inManaged}, SyncQueue=${inSyncQueue}`, LOG_LEVELS.DEBUG);
+    debugLog(`Device ${device.name} pool memberships: Discovered=${poolMembership.discovered}, Managed=${poolMembership.managed}, SyncQueue=${poolMembership.sync}`, LOG_LEVELS.DEBUG);
     debugLog(`Device ${device.name} flags: isReachable=${device.isReachable}, isPaired=${device.isPaired}, isManaged=${device.isManaged}, isSynced=${device.isSynced}`, LOG_LEVELS.DEBUG);
   }
   
-  // Update UI immediately for this device
-  updateDeviceLists();
+  // Determine what kind of update we need
+  if (isNewDevice || membershipChanged || significantChange) {
+    // Significant change - device needs to be added/removed/moved between pools
+    updateDeviceInPools(device, poolMembership, isNewDevice, membershipChanged);
+    updateCounters();
+  } else if (rssiChanged) {
+    // Just RSSI update - only update signal strength indicators
+    updateSignalStrengthForDevice(device.macAddress, device.rssi);
+    debugLog(`RSSI-only update for ${device.name}: ${device.rssi} dBm`, LOG_LEVELS.TRACE);
+  } else if (lastSeenChanged) {
+    // Just timestamp update - only update the timestamp display
+    updateDeviceTimestamp(device.macAddress, device.lastSeen);
+  } else {
+    // Minor update - update the existing device element in place
+    updateDeviceElementInPlace(device);
+  }
   
   return device;
 }
 
-// Update a device's status in the tracking
-function updateDeviceStatus(macAddress, status) {
-  if (!allDevices[macAddress]) {
-    debugLog(`Cannot update status for unknown device: ${macAddress}`, LOG_LEVELS.ERROR);
+// Update a device across all pools where it should appear
+function updateDeviceInPools(device, poolMembership, isNewDevice, membershipChanged) {
+  const macAddress = device.macAddress;
+  
+  // If device changed pools, remove it from old pools first
+  if (membershipChanged && !isNewDevice) {
+    const oldMembership = uiState.poolMembership[macAddress] || {};
+    
+    if (oldMembership.discovered && !poolMembership.discovered) {
+      removeDeviceFromPool(macAddress, 'discovered');
+    }
+    if (oldMembership.managed && !poolMembership.managed) {
+      removeDeviceFromPool(macAddress, 'managed');
+    }
+    if (oldMembership.sync && !poolMembership.sync) {
+      removeDeviceFromPool(macAddress, 'sync');
+    }
+  }
+  
+  // Add device to new pools or update existing ones
+  if (poolMembership.discovered) {
+    updateDeviceInPool(device, 'discovered');
+  }
+  if (poolMembership.managed) {
+    updateDeviceInPool(device, 'managed');
+  }
+  if (poolMembership.sync) {
+    updateDeviceInPool(device, 'sync');
+  }
+  
+  // Clean up tracking for elements that are no longer needed
+  if (membershipChanged) {
+    cleanupDeviceElements(macAddress, poolMembership);
+  }
+}
+
+// Update or add a device in a specific pool
+function updateDeviceInPool(device, poolType) {
+  const macAddress = device.macAddress;
+  const container = getPoolContainer(poolType);
+  
+  if (!container) {
+    debugLog(`No pool container found for pool type: ${poolType}`, LOG_LEVELS.ERROR);
     return;
   }
   
-  // Store previous status for comparison
-  const previousStatus = allDevices[macAddress].visualStatus;
+  let gridContainer = container.querySelector('.gopro-grid-container');
   
-  // Set the new visualStatus for UI purposes
-  allDevices[macAddress].visualStatus = status;
-  
-  // Update UI
-  updateDeviceLists();
-  
-  // Apply status change animation if status actually changed
-  if (previousStatus !== status) {
-    highlightStatusChange(macAddress);
-  }
-}
-
-// Update all device lists in the UI
-function updateDeviceLists() {
-  // Only log on significant changes, not every update
-  const totalDevices = Object.keys(allDevices).length;
-  const discoveredCount = Object.values(allDevices).filter(device => shouldShowInDiscoveredPool(device)).length;
-  const managedCount = Object.values(allDevices).filter(device => shouldShowInManagedPool(device)).length;
-  const syncCount = Object.values(allDevices).filter(device => shouldShowInSyncQueue(device)).length;
-  
-  // Only log if this is a significant change (new devices, status changes, etc.)
-  // We track the previous counts to avoid excessive logging
-  if (!updateDeviceLists.lastCounts || 
-      updateDeviceLists.lastCounts.total !== totalDevices ||
-      updateDeviceLists.lastCounts.discovered !== discoveredCount ||
-      updateDeviceLists.lastCounts.managed !== managedCount ||
-      updateDeviceLists.lastCounts.sync !== syncCount) {
-    
-    debugLog(`Device lists updated - Total: ${totalDevices}, Discovered: ${discoveredCount}, Managed: ${managedCount}, Sync: ${syncCount}`, LOG_LEVELS.TRACE);
-    
-    // Store current counts for next comparison
-    updateDeviceLists.lastCounts = {
-      total: totalDevices,
-      discovered: discoveredCount,
-      managed: managedCount,
-      sync: syncCount
-    };
+  if (!gridContainer) {
+    // Create grid container if it doesn't exist
+    debugLog(`Creating grid container for pool: ${poolType}`, LOG_LEVELS.DEBUG);
+    container.innerHTML = ''; // Clear any existing content
+    gridContainer = document.createElement('div');
+    gridContainer.className = 'gopro-grid-container';
+    container.appendChild(gridContainer);
   }
   
-  // Update UI for each list
-  updatePairQueueUI();
-  updateCamerasPoolUI();
-  updateSyncQueueUI();
+  // Check if device already exists in this pool
+  const existingElement = gridContainer.querySelector(`.device-card[data-mac="${macAddress}"]`);
   
-  // Update counters
-  updateCounters();
-}
-
-// Highlight a device card when its status changes
-function highlightStatusChange(macAddress) {
-  setTimeout(() => {
-    const deviceCard = document.querySelector(`.device-card[data-mac="${macAddress}"]`);
-    if (deviceCard) {
-      // Add highlight class to the device card for status-specific styling
-      deviceCard.classList.add(`status-changed`);
-      
-      // Remove highlight class after animation completes
-      setTimeout(() => {
-        deviceCard.classList.remove(`status-changed`);
-      }, 1500);
+  if (existingElement) {
+    // Update existing element
+    updateDeviceElement(existingElement, device, poolType === 'sync');
+  } else {
+    // Create new element
+    const deviceElement = createGoProElement(device, poolType === 'sync');
+    
+    // Insert in the correct position (maintain sorting)
+    insertDeviceInCorrectPosition(gridContainer, deviceElement, device, poolType);
+    
+    // Track the element
+    if (!uiState.deviceElements[macAddress]) {
+      uiState.deviceElements[macAddress] = {};
     }
-  }, 100); // Short delay to ensure the DOM has updated
+    uiState.deviceElements[macAddress][poolType] = deviceElement;
+    
+    // Remove empty state if present
+    removeEmptyState(gridContainer);
+  }
+}
+
+// Remove a device from a specific pool
+function removeDeviceFromPool(macAddress, poolType) {
+  const container = getPoolContainer(poolType);
+  
+  if (!container) {
+    debugLog(`No pool container found for pool type: ${poolType}`, LOG_LEVELS.ERROR);
+    return;
+  }
+  
+  const element = container.querySelector(`.device-card[data-mac="${macAddress}"]`);
+  
+  if (element) {
+    element.remove();
+    
+    // Clean up tracking
+    if (uiState.deviceElements[macAddress]) {
+      delete uiState.deviceElements[macAddress][poolType];
+      if (Object.keys(uiState.deviceElements[macAddress]).length === 0) {
+        delete uiState.deviceElements[macAddress];
+      }
+    }
+    
+    // Check if we need to show empty state
+    const gridContainer = container.querySelector('.gopro-grid-container');
+    if (gridContainer && gridContainer.children.length === 0) {
+      showEmptyState(gridContainer, poolType);
+    }
+  }
+}
+
+// Get the container element for a specific pool type
+function getPoolContainer(poolType) {
+  let container;
+  switch (poolType) {
+    case 'discovered': 
+      container = pairQueueContainer;
+      break;
+    case 'managed': 
+      container = camerasPoolContainer;
+      break;
+    case 'sync': 
+      container = syncQueueContainer;
+      break;
+    default: 
+      debugLog(`Unknown pool type: ${poolType}`, LOG_LEVELS.ERROR);
+      return null;
+  }
+  
+  if (!container) {
+    debugLog(`Container for pool type '${poolType}' is null - DOM may not be ready`, LOG_LEVELS.ERROR);
+  }
+  
+  return container;
+}
+
+// Insert device element in the correct sorted position
+function insertDeviceInCorrectPosition(gridContainer, deviceElement, device, poolType) {
+  const children = Array.from(gridContainer.children);
+  let insertIndex = children.length;
+  
+  // Sort by signal strength for discovered pool, by name for others
+  if (poolType === 'discovered') {
+    // Sort by RSSI (highest first)
+    for (let i = 0; i < children.length; i++) {
+      const childMac = children[i].getAttribute('data-mac');
+      const childDevice = allDevices[childMac];
+      if (childDevice && (device.rssi || -100) > (childDevice.rssi || -100)) {
+        insertIndex = i;
+        break;
+      }
+    }
+  } else {
+    // Sort by name (alphabetical)
+    for (let i = 0; i < children.length; i++) {
+      const childMac = children[i].getAttribute('data-mac');
+      const childDevice = allDevices[childMac];
+      if (childDevice && (device.name || '').localeCompare(childDevice.name || '') < 0) {
+        insertIndex = i;
+        break;
+      }
+    }
+  }
+  
+  if (insertIndex >= children.length) {
+    gridContainer.appendChild(deviceElement);
+  } else {
+    gridContainer.insertBefore(deviceElement, children[insertIndex]);
+  }
+}
+
+// Update an existing device element in place
+function updateDeviceElement(element, device, inSyncQueue = false) {
+  const macAddress = device.macAddress;
+  
+  // Update device name and status badge
+  const nameElement = element.querySelector('.device-name');
+  if (nameElement) {
+    // Clear existing content
+    nameElement.innerHTML = '';
+    nameElement.textContent = device.name || 'Unknown GoPro';
+    
+    // Add status badge
+    const statusText = formatStatus(getStatusShortcode(device));
+    const statusBadge = document.createElement('span');
+    statusBadge.className = `status-badge status-${getStatusShortcode(device).toLowerCase()}`;
+    statusBadge.textContent = statusText;
+    nameElement.appendChild(document.createTextNode(' '));
+    nameElement.appendChild(statusBadge);
+  }
+  
+  // Update device model
+  const modelElement = element.querySelector('.device-model');
+  if (modelElement) {
+    modelElement.textContent = device.model || 'Unknown Model';
+  }
+  
+  // Update firmware
+  const firmwareElement = element.querySelector('.device-firmware');
+  if (firmwareElement) {
+    firmwareElement.textContent = device.firmwareVersion || 'Unknown FW';
+  }
+  
+  // Update signal strength
+  updateSignalStrengthInElement(element, device.rssi || -100);
+  
+  // Update battery if available
+  const batteryElement = element.querySelector('.device-battery');
+  if (batteryElement && device.batteryLevel !== undefined) {
+    batteryElement.innerHTML = '';
+    const batteryIndicator = createBatteryIndicator(device.batteryLevel, device.isCharging);
+    batteryElement.appendChild(batteryIndicator);
+  }
+  
+  // Update status/timestamp
+  const statusElement = element.querySelector('.device-status');
+  if (statusElement) {
+    const lastSeen = device.lastSeen ? `Last seen: ${formatTimeSince(device.lastSeen)}` : '';
+    statusElement.textContent = lastSeen;
+    statusElement.className = `device-status status-${getStatusShortcode(device).toLowerCase()}`;
+  }
+  
+  // Update status class on main element
+  const statusCode = getStatusShortcode(device);
+  element.className = element.className.replace(/status-\w+/g, '');
+  element.classList.add(`status-${statusCode.toLowerCase()}`);
+  
+  // Update buttons and toggles
+  updateDeviceControls(element, device, inSyncQueue);
+}
+
+// Update device controls (buttons and toggles)
+function updateDeviceControls(element, device, inSyncQueue = false) {
+  const macAddress = device.macAddress;
+  const pairButton = element.querySelector('.pair-button');
+  const syncButton = element.querySelector('.sync-button');
+  const manageToggle = element.querySelector('.manage-toggle');
+  
+  // Configure pair button
+  if (pairButton) {
+    // Clear existing event listeners by cloning the element
+    const newPairButton = pairButton.cloneNode(true);
+    pairButton.parentNode.replaceChild(newPairButton, pairButton);
+    
+    if (pairingInProgress[macAddress]) {
+      newPairButton.textContent = "Pairing...";
+      newPairButton.disabled = true;
+      newPairButton.classList.add('in-progress');
+    } else if (!device.isPaired) {
+      newPairButton.textContent = "Pair";
+      newPairButton.disabled = false;
+      newPairButton.classList.remove('in-progress');
+      newPairButton.addEventListener('click', () => {
+        newPairButton.textContent = "Pairing...";
+        newPairButton.disabled = true;
+        newPairButton.classList.add('in-progress');
+        pairDevice(macAddress);
+      });
+    } else {
+      newPairButton.textContent = "Paired";
+      newPairButton.disabled = true;
+      newPairButton.classList.remove('in-progress');
+    }
+  }
+  
+  // Configure sync button
+  if (syncButton) {
+    const newSyncButton = syncButton.cloneNode(true);
+    syncButton.parentNode.replaceChild(newSyncButton, syncButton);
+    
+    if (inSyncQueue) {
+      newSyncButton.textContent = "In Queue";
+      newSyncButton.disabled = true;
+      newSyncButton.classList.add('queued');
+    } else if (device.isPaired && device.isManaged) {
+      newSyncButton.textContent = "Sync";
+      newSyncButton.disabled = false;
+      newSyncButton.classList.remove('in-progress', 'queued');
+      newSyncButton.addEventListener('click', () => {
+        newSyncButton.textContent = "Syncing...";
+        newSyncButton.disabled = true;
+        newSyncButton.classList.add('in-progress');
+        addToSyncQueue(macAddress);
+      });
+    } else {
+      newSyncButton.disabled = true;
+      newSyncButton.classList.remove('in-progress', 'queued');
+    }
+  }
+  
+  // Configure manage toggle
+  if (manageToggle) {
+    const newManageToggle = manageToggle.cloneNode(true);
+    manageToggle.parentNode.replaceChild(newManageToggle, manageToggle);
+    
+    newManageToggle.checked = !!device.isManaged;
+    newManageToggle.addEventListener('change', (event) => {
+      toggleDeviceManaged(macAddress, event.target.checked);
+    });
+  }
+}
+
+// Update just the signal strength in a specific element
+function updateSignalStrengthInElement(element, rssi) {
+  const signalElement = element.querySelector('.device-signal');
+  if (signalElement) {
+    const signalBarsContainer = signalElement.querySelector('.signal-bars');
+    const rssiValueElement = signalElement.querySelector('.rssi-value');
+    
+    if (signalBarsContainer) {
+      const bars = signalBarsContainer.querySelectorAll('.signal-bar');
+      
+      // Clear existing filled state
+      bars.forEach(bar => bar.classList.remove('filled'));
+      
+      // Calculate and fill bars based on RSSI
+      const normalizedRssi = Math.min(Math.max(rssi, -100), -30);
+      const signalStrength = Math.floor(((normalizedRssi + 100) / 70) * 4);
+      
+      for (let i = 0; i < signalStrength; i++) {
+        if (bars[i]) {
+          bars[i].classList.add('filled');
+        }
+      }
+    }
+    
+    if (rssiValueElement) {
+      rssiValueElement.textContent = `${rssi} dBm`;
+    }
+  }
+}
+
+// Update just the timestamp for a device
+function updateDeviceTimestamp(macAddress, lastSeen) {
+  const deviceElements = uiState.deviceElements[macAddress];
+  if (deviceElements) {
+    Object.values(deviceElements).forEach(element => {
+      const statusElement = element.querySelector('.device-status');
+      if (statusElement && lastSeen) {
+        const lastSeenText = `Last seen: ${formatTimeSince(lastSeen)}`;
+        statusElement.textContent = lastSeenText;
+      }
+    });
+  }
+}
+
+// Update a device element in place for minor changes
+function updateDeviceElementInPlace(device) {
+  const macAddress = device.macAddress;
+  const deviceElements = uiState.deviceElements[macAddress];
+  
+  if (deviceElements) {
+    Object.entries(deviceElements).forEach(([poolType, element]) => {
+      updateDeviceElement(element, device, poolType === 'sync');
+    });
+  }
+}
+
+// Clean up device element tracking
+function cleanupDeviceElements(macAddress, currentMembership) {
+  if (uiState.deviceElements[macAddress]) {
+    Object.keys(uiState.deviceElements[macAddress]).forEach(poolType => {
+      if (!currentMembership[poolType]) {
+        delete uiState.deviceElements[macAddress][poolType];
+      }
+    });
+    
+    if (Object.keys(uiState.deviceElements[macAddress]).length === 0) {
+      delete uiState.deviceElements[macAddress];
+    }
+  }
+}
+
+// Show empty state in a container
+function showEmptyState(gridContainer, poolType) {
+  if (!gridContainer) {
+    debugLog(`Cannot show empty state: gridContainer is null for pool type: ${poolType}`, LOG_LEVELS.ERROR);
+    return;
+  }
+  
+  const emptyState = document.createElement('div');
+  emptyState.className = 'empty-state';
+  
+  const logo = document.createElement('img');
+  logo.src = 'imgs/3_dropz.svg';
+  logo.alt = 'Dropz Logo';
+  logo.className = 'empty-state-logo';
+  
+  const message = document.createElement('p');
+  switch (poolType) {
+    case 'discovered':
+      message.textContent = 'No GoPro devices detected';
+      break;
+    case 'managed':
+      message.textContent = 'No managed GoPro devices';
+      break;
+    case 'sync':
+      message.textContent = 'No GoPro devices in sync queue';
+      break;
+    default:
+      message.textContent = 'No devices';
+  }
+  
+  emptyState.appendChild(logo);
+  emptyState.appendChild(message);
+  gridContainer.appendChild(emptyState);
+}
+
+// Remove empty state from a container
+function removeEmptyState(gridContainer) {
+  if (!gridContainer) {
+    debugLog(`Cannot remove empty state: gridContainer is null`, LOG_LEVELS.ERROR);
+    return;
+  }
+  
+  const emptyState = gridContainer.querySelector('.empty-state');
+  if (emptyState) {
+    emptyState.remove();
+  }
 }
 
 // Update the counters display for the three lists
@@ -1331,6 +1747,14 @@ function updateCounters() {
   managedCountDisplay.textContent = managedCount;
   unpairedCountDisplay.textContent = unpairedCount;
   syncCountDisplay.textContent = syncCount;
+  
+  // Update our cached counts
+  uiState.currentDeviceCounts = {
+    total: Object.keys(allDevices).length,
+    discovered: Object.values(allDevices).filter(device => shouldShowInDiscoveredPool(device)).length,
+    managed: managedCount,
+    sync: syncCount
+  };
 }
 
 // Update UI for pair queue
@@ -1351,36 +1775,27 @@ function updatePairQueueUI() {
   
   // Add debugging to see which devices are being considered and why (only log when filter changes)
   const filterKey = `discovered-${discoveredDevices.length}-${Object.values(allDevices).length}`;
-  if (updatePairQueueUI.lastFilterKey !== filterKey) {
+  if (uiState.lastFilterKey !== filterKey) {
     debugLog(`Discovered pool filtering - Total devices: ${Object.values(allDevices).length}, Shown: ${discoveredDevices.length}`, LOG_LEVELS.DEBUG);
-    updatePairQueueUI.lastFilterKey = filterKey;
+    uiState.lastFilterKey = filterKey;
   }
   
   // Sort by signal strength
   discoveredDevices.sort((a, b) => (b.rssi || -100) - (a.rssi || -100));
   
   if (discoveredDevices.length === 0) {
-    // No discovered devices - create an empty state similar to the initial HTML
-    const emptyState = document.createElement('div');
-    emptyState.className = 'empty-state';
-    
-    // Use the Dropz logo instead of Font Awesome icon
-    const logo = document.createElement('img');
-    logo.src = 'imgs/3_dropz.svg';
-    logo.alt = 'Dropz Logo';
-    logo.className = 'empty-state-logo';
-    
-    const message = document.createElement('p');
-    message.textContent = 'No GoPro devices detected';
-    
-    emptyState.appendChild(logo);
-    emptyState.appendChild(message);
-    gridContainer.appendChild(emptyState);
+    showEmptyState(gridContainer, 'discovered');
   } else {
     // Add each discovered device to the UI
     discoveredDevices.forEach(device => {
       const deviceElement = createGoProElement(device);
       gridContainer.appendChild(deviceElement);
+      
+      // Track the element for future targeted updates
+      if (!uiState.deviceElements[device.macAddress]) {
+        uiState.deviceElements[device.macAddress] = {};
+      }
+      uiState.deviceElements[device.macAddress].discovered = deviceElement;
     });
   }
 }
@@ -1406,27 +1821,18 @@ function updateCamerasPoolUI() {
   managedDevices.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   
   if (managedDevices.length === 0) {
-    // No managed devices - create an empty state similar to the initial HTML
-    const emptyState = document.createElement('div');
-    emptyState.className = 'empty-state';
-    
-    // Use the Dropz logo instead of Font Awesome icon
-    const logo = document.createElement('img');
-    logo.src = 'imgs/3_dropz.svg';
-    logo.alt = 'Dropz Logo';
-    logo.className = 'empty-state-logo';
-    
-    const message = document.createElement('p');
-    message.textContent = 'No managed GoPro devices';
-    
-    emptyState.appendChild(logo);
-    emptyState.appendChild(message);
-    gridContainer.appendChild(emptyState);
+    showEmptyState(gridContainer, 'managed');
   } else {
     // Add each managed device to the UI
     managedDevices.forEach(device => {
       const deviceElement = createGoProElement(device);
       gridContainer.appendChild(deviceElement);
+      
+      // Track the element for future targeted updates
+      if (!uiState.deviceElements[device.macAddress]) {
+        uiState.deviceElements[device.macAddress] = {};
+      }
+      uiState.deviceElements[device.macAddress].managed = deviceElement;
     });
   }
 }
@@ -1450,28 +1856,19 @@ function updateSyncQueueUI() {
   );
 
   if (syncDevices.length === 0) {
-    // No devices in sync queue - create an empty state similar to the initial HTML
-    const emptyState = document.createElement('div');
-    emptyState.className = 'empty-state';
-    
-    // Use the Dropz logo instead of Font Awesome icon
-    const logo = document.createElement('img');
-    logo.src = 'imgs/3_dropz.svg';
-    logo.alt = 'Dropz Logo';
-    logo.className = 'empty-state-logo';
-    
-    const message = document.createElement('p');
-    message.textContent = 'No GoPro devices in sync queue';
-    
-    emptyState.appendChild(logo);
-    emptyState.appendChild(message);
-    gridContainer.appendChild(emptyState);
+    showEmptyState(gridContainer, 'sync');
   } else {
     // Add each device in sync queue to the UI
     syncDevices.forEach(device => {
-        // Create and add UI element
+      // Create and add UI element
       const deviceElement = createGoProElement(device, true);
-        gridContainer.appendChild(deviceElement);
+      gridContainer.appendChild(deviceElement);
+      
+      // Track the element for future targeted updates
+      if (!uiState.deviceElements[device.macAddress]) {
+        uiState.deviceElements[device.macAddress] = {};
+      }
+      uiState.deviceElements[device.macAddress].sync = deviceElement;
     });
   }
 }
@@ -2018,7 +2415,7 @@ function toggleDeviceManaged(macAddress, isManaged) {
         }
       }
       
-      // Update device lists regardless
+      // Update device lists regardless (management changes may affect multiple pools)
       updateDeviceLists();
       updateCounters();
       
@@ -2884,12 +3281,9 @@ function handleDeviceStreamUpdate(cameras, callback) {
     const cameraObj = callback(camera);
     if (cameraObj) {
       addOrUpdateDevice(cameraObj);
+      // addOrUpdateDevice now handles targeted updates and counter updates automatically
     }
   });
-  
-  // Update UI
-  updateDeviceLists();
-  updateCounters();
 }
 
 // Toggle between light and dark themes
@@ -3255,4 +3649,121 @@ function updateSettingUI(settingName, value) {
   } else {
     debugLog(`No standard UI element found for setting ${settingName}`, LOG_LEVELS.DEBUG);
   }
+}
+
+// Update signal strength indicators for a specific device in real-time
+function updateSignalStrengthForDevice(macAddress, rssi) {
+  debugLog(`Updating signal strength for ${macAddress}: ${rssi} dBm`, LOG_LEVELS.TRACE);
+  
+  // Find all device cards with this MAC address (there might be multiple in different panels)
+  const deviceCards = document.querySelectorAll(`.device-card[data-mac="${macAddress}"]`);
+  
+  deviceCards.forEach(deviceCard => {
+    // Update signal bars
+    const signalBarsContainer = deviceCard.querySelector('.signal-bars');
+    if (signalBarsContainer) {
+      const bars = signalBarsContainer.querySelectorAll('.signal-bar');
+      
+      // Clear existing filled state
+      bars.forEach(bar => bar.classList.remove('filled'));
+      
+      // Calculate and fill bars based on new RSSI
+      const normalizedRssi = Math.min(Math.max(rssi, -100), -30);
+      const signalStrength = Math.floor(((normalizedRssi + 100) / 70) * 4);
+      
+      for (let i = 0; i < signalStrength; i++) {
+        if (bars[i]) {
+          bars[i].classList.add('filled');
+        }
+      }
+    }
+    
+    // Update RSSI value text
+    const rssiValueElement = deviceCard.querySelector('.rssi-value');
+    if (rssiValueElement) {
+      rssiValueElement.textContent = `${rssi} dBm`;
+    }
+    
+
+  });
+}
+
+// Update a device's status in the tracking
+function updateDeviceStatus(macAddress, status) {
+  if (!allDevices[macAddress]) {
+    debugLog(`Cannot update status for unknown device: ${macAddress}`, LOG_LEVELS.ERROR);
+    return;
+  }
+  
+  // Store previous status for comparison
+  const previousStatus = allDevices[macAddress].visualStatus;
+  
+  // Set the new visualStatus for UI purposes
+  allDevices[macAddress].visualStatus = status;
+  
+  // Use targeted update instead of full rebuild
+  const device = allDevices[macAddress];
+  updateDeviceElementInPlace(device);
+  
+  // Apply status change animation if status actually changed
+  if (previousStatus !== status) {
+    highlightStatusChange(macAddress);
+  }
+}
+
+// Update all device lists in the UI (kept for full rebuilds when needed)
+function updateDeviceLists() {
+  // Only log on significant changes, not every update
+  const totalDevices = Object.keys(allDevices).length;
+  const discoveredCount = Object.values(allDevices).filter(device => shouldShowInDiscoveredPool(device)).length;
+  const managedCount = Object.values(allDevices).filter(device => shouldShowInManagedPool(device)).length;
+  const syncCount = Object.values(allDevices).filter(device => shouldShowInSyncQueue(device)).length;
+  
+  // Only log if this is a significant change (new devices, status changes, etc.)
+  // We track the previous counts to avoid excessive logging
+  if (!uiState.currentDeviceCounts || 
+      uiState.currentDeviceCounts.total !== totalDevices ||
+      uiState.currentDeviceCounts.discovered !== discoveredCount ||
+      uiState.currentDeviceCounts.managed !== managedCount ||
+      uiState.currentDeviceCounts.sync !== syncCount) {
+    
+    debugLog(`Device lists updated - Total: ${totalDevices}, Discovered: ${discoveredCount}, Managed: ${managedCount}, Sync: ${syncCount}`, LOG_LEVELS.TRACE);
+    
+    // Store current counts for next comparison
+    uiState.currentDeviceCounts = {
+      total: totalDevices,
+      discovered: discoveredCount,
+      managed: managedCount,
+      sync: syncCount
+    };
+  }
+  
+  // Clear UI state tracking since we're doing a full rebuild
+  uiState.deviceElements = {};
+  uiState.poolMembership = {};
+  
+  // Update UI for each list
+  updatePairQueueUI();
+  updateCamerasPoolUI();
+  updateSyncQueueUI();
+  
+  // Update counters
+  updateCounters();
+}
+
+// Highlight a device card when its status changes
+function highlightStatusChange(macAddress) {
+  setTimeout(() => {
+    // Find all instances of this device across pools
+    const deviceCards = document.querySelectorAll(`.device-card[data-mac="${macAddress}"]`);
+    deviceCards.forEach(deviceCard => {
+      // Add highlight class to the device card for status-specific styling
+      deviceCard.classList.add(`status-changed`);
+      
+      // Remove highlight class after animation completes
+      setTimeout(() => {
+        deviceCard.classList.remove(`status-changed`);
+      }, 1500);
+    });
+  }, 100); // Short delay to ensure the DOM has updated
 }

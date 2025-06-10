@@ -11,9 +11,9 @@ func TestOpenGoProUUIDs(t *testing.T) {
 		uuid string
 		want bool
 	}{
-		{"Valid GoPro Command UUID", CommandCharUUID, true},
-		{"Valid GoPro Query UUID", QueryCharUUID, true},
-		{"Valid GoPro Settings UUID", SettingsCharUUID, true},
+		{"Valid GoPro Command UUID", CharCommand, true},
+		{"Valid GoPro Query UUID", CharQuery, true},
+		{"Valid GoPro Settings UUID", CharSettings, true},
 		{"Invalid UUID - wrong prefix", "a5f90072-aa8d-11e3-9046-0002a5d5c51b", false},
 		{"Invalid UUID - wrong suffix", "b5f90072-bb8d-11e3-9046-0002a5d5c51b", false},
 		{"Invalid UUID - too short", "b5f90072", false},
@@ -36,7 +36,7 @@ func TestControlServiceUUID(t *testing.T) {
 		uuid string
 		want bool
 	}{
-		{"Valid Control Service UUID", GoProControlServiceUUID, true},
+		{"Valid Control Service UUID", ServiceControl, true},
 		{"Valid short form", "fea6", true},
 		{"Valid hex form", "0xfea6", true},
 		{"Invalid UUID", "b5f90001-aa8d-11e3-9046-0002a5d5c51b", false},
@@ -66,13 +66,13 @@ func TestCharacteristicNames(t *testing.T) {
 		uuid         string
 		expectedName string
 	}{
-		{CommandCharUUID, "Command Request (GP-0072)"},
-		{CommandResponseCharUUID, "Command Response (GP-0073)"},
-		{QueryCharUUID, "Query Request (GP-0076)"},
-		{QueryResponseCharUUID, "Query Response (GP-0077)"},
-		{SettingsCharUUID, "Settings Request (GP-0074)"},
-		{SettingsResponseCharUUID, "Settings Response (GP-0075)"},
-		{WifiSSIDCharUUID, "WiFi SSID (GP-0002)"},
+		{CharCommand, "Command Request (GP-0072)"},
+		{CharCommandResponse, "Command Response (GP-0073)"},
+		{CharQuery, "Query Request (GP-0076)"},
+		{CharQueryResponse, "Query Response (GP-0077)"},
+		{CharSettings, "Settings Request (GP-0074)"},
+		{CharSettingsResponse, "Settings Response (GP-0075)"},
+		{CharWifiSSID, "WiFi SSID (GP-0002)"},
 		{"unknown-uuid", "Unknown Characteristic"},
 	}
 
@@ -91,9 +91,9 @@ func TestServiceNames(t *testing.T) {
 		uuid         string
 		expectedName string
 	}{
-		{GoProWifiServiceUUID, "WiFi Access Point Service (GP-0001)"},
-		{GoProControlServiceUUID, "Control & Query Service (FEA6)"},
-		{GoProNetworkMgmtUUID, "Camera Management Service (GP-0090)"},
+		{ServiceWifiAP, "WiFi Access Point Service (GP-0001)"},
+		{ServiceControl, "Control & Query Service (FEA6)"},
+		{ServiceCameraMgmt, "Camera Management Service (GP-0090)"},
 		{"unknown-uuid", "Unknown Service"},
 	}
 
@@ -108,7 +108,7 @@ func TestServiceNames(t *testing.T) {
 
 // BenchmarkIsGoProUUID benchmarks the UUID validation function
 func BenchmarkIsGoProUUID(b *testing.B) {
-	uuid := CommandCharUUID
+	uuid := CharCommand
 	for i := 0; i < b.N; i++ {
 		IsGoProUUID(uuid)
 	}

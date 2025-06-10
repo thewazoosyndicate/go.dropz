@@ -35,12 +35,12 @@ func (m *GoProManager) GetVideosByCamera(cameraID string, startDate, endDate tim
 // startBackgroundScanner starts the background scanner
 func (m *GoProManager) startBackgroundScanner() {
 	defer m.wg.Done()
-	// Delegate to discovery scanner
+	// Delegate to discovery scanner with live processing
 	scanner := discovery.NewScanner(m.ble, m.log, m.scanInterval)
-	scanner.StartBackgroundScanner(m.ctx, m.processDiscoveredDevices)
+	scanner.StartBackgroundScanner(m.ctx, m.processDiscoveredDeviceLive)
 }
 
-// processDiscoveredDevices delegates to discovery processor
+// processDiscoveredDevices delegates to discovery processor (batch processing - kept for compatibility)
 func (m *GoProManager) processDiscoveredDevices(devices []ble.Device) {
 	m.mutex.RLock()
 	notifier := m.notifier
@@ -48,6 +48,17 @@ func (m *GoProManager) processDiscoveredDevices(devices []ble.Device) {
 
 	if m.discoveryProcessor != nil {
 		m.discoveryProcessor.ProcessDiscoveredDevices(devices, notifier)
+	}
+}
+
+// processDiscoveredDeviceLive delegates to discovery processor for live processing
+func (m *GoProManager) processDiscoveredDeviceLive(device ble.Device) {
+	m.mutex.RLock()
+	notifier := m.notifier
+	m.mutex.RUnlock()
+
+	if m.discoveryProcessor != nil {
+		m.discoveryProcessor.ProcessDiscoveredDeviceLive(device, notifier)
 	}
 }
 

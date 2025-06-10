@@ -43,11 +43,6 @@ type DropzServer struct {
 	log     logger.Logger
 	server  *grpc.Server
 
-	// Change tracking
-	discoveredChangeCounter int64
-	managedChangeCounter    int64
-	syncQueueChangeCounter  int64
-
 	// Stream management
 	discoveredStreams map[protocol.DropzService_WatchDiscoveredCamerasServer]chan bool
 	managedStreams    map[protocol.DropzService_WatchManagedCamerasServer]chan bool
@@ -183,36 +178,13 @@ func (s *DropzServer) streamUpdateHandler() {
 			default:
 			}
 			s.log.Trace("Stream update handler processing update")
-			// Get current counters
-			db := database.GetDatabase()
-			discoveredCounter := db.GetDiscoveredChangeCounter()
-			managedCounter := db.GetManagedChangeCounter()
-			syncQueueCounter := db.GetSyncQueueChangeCounter()
 
-			// Update local counters
-			s.mutex.Lock()
-			discoveredChanged := s.discoveredChangeCounter != discoveredCounter
-			managedChanged := s.managedChangeCounter != managedCounter
-			syncQueueChanged := s.syncQueueChangeCounter != syncQueueCounter
-
-			s.discoveredChangeCounter = discoveredCounter
-			s.managedChangeCounter = managedCounter
-			s.syncQueueChangeCounter = syncQueueCounter
-			s.mutex.Unlock()
-
-			// Send updates if needed
-			if discoveredChanged {
-				s.log.Debug("Discovered cameras changed, sending updates", "change_counter", discoveredCounter)
-				s.sendDiscoveredCamerasUpdates()
-			}
-			if managedChanged {
-				s.log.Debug("Managed cameras changed, sending updates", "change_counter", managedCounter)
-				s.sendManagedCamerasUpdates()
-			}
-			if syncQueueChanged {
-				s.log.Debug("Sync queue changed, sending updates", "change_counter", syncQueueCounter)
-				s.sendSyncQueueUpdates()
-			}
+			// Since NotifyUpdate() now only sends notifications for actual changes,
+			// we can directly send updates to all streams without redundant counter checks
+			s.log.Debug("Sending updates to all active streams")
+			s.sendDiscoveredCamerasUpdates()
+			s.sendManagedCamerasUpdates()
+			s.sendSyncQueueUpdates()
 		}
 	}
 }
@@ -261,10 +233,9 @@ func (s *DropzServer) sendDiscoveredCamerasUpdates() {
 	}
 
 	response := &protocol.GetDiscoveredCamerasResponse{
-		Cameras:       protoCameras,
-		ChangeCounter: db.GetDiscoveredChangeCounter(),
-		NoChanges:     false,
-		Heartbeat:     false,
+		Cameras:   protoCameras,
+		NoChanges: false,
+		Heartbeat: false,
 	}
 
 	s.streamMutex.RLock()
@@ -275,7 +246,7 @@ func (s *DropzServer) sendDiscoveredCamerasUpdates() {
 			s.log.Error("Failed to send discovered cameras update to stream", "stream_ptr", fmt.Sprintf("%p", stream), "error", err, "camera_count", len(protoCameras))
 			// Stream cleanup handled by heartbeat or Watch method exit
 		} else {
-			s.log.Trace("Sent discovered cameras update to stream", "stream_ptr", fmt.Sprintf("%p", stream), "camera_count", len(protoCameras), "change_counter", response.ChangeCounter)
+			s.log.Trace("Sent discovered cameras update to stream", "stream_ptr", fmt.Sprintf("%p", stream), "camera_count", len(protoCameras))
 		}
 	}
 }
@@ -291,10 +262,9 @@ func (s *DropzServer) sendManagedCamerasUpdates() {
 	}
 
 	response := &protocol.GetManagedCamerasResponse{
-		Cameras:       protoCameras,
-		ChangeCounter: db.GetManagedChangeCounter(),
-		NoChanges:     false,
-		Heartbeat:     false,
+		Cameras:   protoCameras,
+		NoChanges: false,
+		Heartbeat: false,
 	}
 
 	s.streamMutex.RLock()
@@ -318,10 +288,9 @@ func (s *DropzServer) sendSyncQueueUpdates() {
 	}
 
 	response := &protocol.GetSyncQueueResponse{
-		Queue:         protoQueue,
-		ChangeCounter: db.GetSyncQueueChangeCounter(),
-		NoChanges:     false,
-		Heartbeat:     false,
+		Queue:     protoQueue,
+		NoChanges: false,
+		Heartbeat: false,
 	}
 
 	s.streamMutex.RLock()
@@ -336,15 +305,10 @@ func (s *DropzServer) sendSyncQueueUpdates() {
 
 // sendDiscoveredCamerasHeartbeats sends heartbeats to all discovered cameras streams
 func (s *DropzServer) sendDiscoveredCamerasHeartbeats() {
-	s.mutex.RLock()
-	counter := s.discoveredChangeCounter
-	s.mutex.RUnlock()
-
 	heartbeat := &protocol.GetDiscoveredCamerasResponse{
-		Cameras:       []*protocol.DiscoveredCamera{},
-		ChangeCounter: counter,
-		NoChanges:     true,
-		Heartbeat:     true,
+		Cameras:   []*protocol.DiscoveredCamera{},
+		NoChanges: true,
+		Heartbeat: true,
 	}
 
 	s.streamMutex.Lock() // Write lock to modify map
@@ -368,15 +332,10 @@ func (s *DropzServer) sendDiscoveredCamerasHeartbeats() {
 
 // sendManagedCamerasHeartbeats sends heartbeats to all managed cameras streams
 func (s *DropzServer) sendManagedCamerasHeartbeats() {
-	s.mutex.RLock()
-	counter := s.managedChangeCounter
-	s.mutex.RUnlock()
-
 	heartbeat := &protocol.GetManagedCamerasResponse{
-		Cameras:       []*protocol.ManagedCamera{},
-		ChangeCounter: counter,
-		NoChanges:     true,
-		Heartbeat:     true,
+		Cameras:   []*protocol.ManagedCamera{},
+		NoChanges: true,
+		Heartbeat: true,
 	}
 
 	s.streamMutex.Lock() // Write lock to modify map
@@ -400,15 +359,10 @@ func (s *DropzServer) sendManagedCamerasHeartbeats() {
 
 // sendSyncQueueHeartbeats sends heartbeats to all sync queue streams
 func (s *DropzServer) sendSyncQueueHeartbeats() {
-	s.mutex.RLock()
-	counter := s.syncQueueChangeCounter
-	s.mutex.RUnlock()
-
 	heartbeat := &protocol.GetSyncQueueResponse{
-		Queue:         []*protocol.SyncQueueEntry{},
-		ChangeCounter: counter,
-		NoChanges:     true,
-		Heartbeat:     true,
+		Queue:     []*protocol.SyncQueueEntry{},
+		NoChanges: true,
+		Heartbeat: true,
 	}
 
 	s.streamMutex.Lock() // Write lock to modify map
@@ -434,13 +388,6 @@ func (s *DropzServer) sendSyncQueueHeartbeats() {
 func (s *DropzServer) NotifyUpdate() {
 	s.log.Debug("NotifyUpdate called - sending update to clients")
 
-	// Increment all counters under lock
-	s.mutex.Lock()
-	s.discoveredChangeCounter++
-	s.managedChangeCounter++
-	s.syncQueueChangeCounter++
-	s.mutex.Unlock()
-
 	// Send notification to stream handler
 	select {
 	case s.streamUpdateChannel <- struct{}{}:
@@ -456,21 +403,9 @@ func (s *DropzServer) GetDiscoveredCameras(ctx context.Context, req *protocol.Ge
 	if s.ctx.Err() != nil {
 		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
 	}
-	s.log.Trace("Handling GetDiscoveredCameras request", "client_change_counter", req.ChangeCounter)
+	s.log.Trace("Handling GetDiscoveredCameras request")
 
 	db := database.GetDatabase()
-	currentCounter := db.GetDiscoveredChangeCounter()
-
-	// Check if client has latest data
-	if req.ChangeCounter > 0 && req.ChangeCounter == currentCounter {
-		s.log.Trace("Client has latest data, returning no changes", "change_counter", currentCounter)
-		return &protocol.GetDiscoveredCamerasResponse{
-			Cameras:       []*protocol.DiscoveredCamera{},
-			ChangeCounter: currentCounter,
-			NoChanges:     true,
-			Heartbeat:     false,
-		}, nil
-	}
 
 	// Get all discovered cameras (following the same filters as the stream)
 	discoveredCameras := db.GetCamerasForDiscoveredPool()
@@ -480,12 +415,11 @@ func (s *DropzServer) GetDiscoveredCameras(ctx context.Context, req *protocol.Ge
 		protoCameras[i] = cam.ToProtoDiscoveredCamera()
 	}
 
-	s.log.Debug("Returning discovered cameras", "camera_count", len(protoCameras), "change_counter", currentCounter)
+	s.log.Debug("Returning discovered cameras", "camera_count", len(protoCameras))
 	return &protocol.GetDiscoveredCamerasResponse{
-		Cameras:       protoCameras,
-		ChangeCounter: currentCounter,
-		NoChanges:     false,
-		Heartbeat:     false,
+		Cameras:   protoCameras,
+		NoChanges: false,
+		Heartbeat: false,
 	}, nil
 }
 
@@ -552,17 +486,6 @@ func (s *DropzServer) GetManagedCameras(ctx context.Context, req *protocol.GetMa
 	s.log.Debug("Handling GetManagedCameras request")
 
 	db := database.GetDatabase()
-	currentCounter := db.GetManagedChangeCounter()
-
-	// Check if client has latest data
-	if req.ChangeCounter > 0 && req.ChangeCounter == currentCounter {
-		return &protocol.GetManagedCamerasResponse{
-			Cameras:       []*protocol.ManagedCamera{},
-			ChangeCounter: currentCounter,
-			NoChanges:     true,
-			Heartbeat:     false,
-		}, nil
-	}
 
 	// Get all managed cameras
 	managedCameras := db.GetCamerasForManagedPool()
@@ -573,10 +496,9 @@ func (s *DropzServer) GetManagedCameras(ctx context.Context, req *protocol.GetMa
 	}
 
 	return &protocol.GetManagedCamerasResponse{
-		Cameras:       protoCameras,
-		ChangeCounter: currentCounter,
-		NoChanges:     false,
-		Heartbeat:     false,
+		Cameras:   protoCameras,
+		NoChanges: false,
+		Heartbeat: false,
 	}, nil
 }
 
@@ -640,30 +562,19 @@ func (s *DropzServer) GetSyncQueue(ctx context.Context, req *protocol.GetSyncQue
 	s.log.Debug("Handling GetSyncQueue request")
 
 	db := database.GetDatabase()
-	currentCounter := db.GetSyncQueueChangeCounter()
-
-	// Check if client has latest data
-	if req.ChangeCounter > 0 && req.ChangeCounter == currentCounter {
-		return &protocol.GetSyncQueueResponse{
-			Queue:         []*protocol.SyncQueueEntry{},
-			ChangeCounter: currentCounter,
-			NoChanges:     true,
-			Heartbeat:     false,
-		}, nil
-	}
 
 	// Get all sync queue entries
-	entries := db.GetSyncQueue()
-	protoEntries := make([]*protocol.SyncQueueEntry, len(entries))
-	for i, entry := range entries {
-		protoEntries[i] = entry.ToProtoSyncQueueEntry()
+	queue := db.GetSyncQueue()
+
+	protoQueue := make([]*protocol.SyncQueueEntry, len(queue))
+	for i, entry := range queue {
+		protoQueue[i] = entry.ToProtoSyncQueueEntry()
 	}
 
 	return &protocol.GetSyncQueueResponse{
-		Queue:         protoEntries,
-		ChangeCounter: currentCounter,
-		NoChanges:     false,
-		Heartbeat:     false,
+		Queue:     protoQueue,
+		NoChanges: false,
+		Heartbeat: false,
 	}, nil
 }
 

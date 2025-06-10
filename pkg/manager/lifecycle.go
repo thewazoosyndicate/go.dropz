@@ -78,6 +78,10 @@ func (m *GoProManager) deviceManager() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
+	// Ticker for marking unreachable devices (needed since we moved to live processing)
+	unreachableTicker := time.NewTicker(15 * time.Second)
+	defer unreachableTicker.Stop()
+
 	m.log.Info("Starting device manager")
 
 	for {
@@ -91,6 +95,9 @@ func (m *GoProManager) deviceManager() {
 			m.checkManagedDevices()
 			// Process sync queue to start sync tasks for pending cameras
 			m.processSyncQueue()
+		case <-unreachableTicker.C:
+			// Mark unreachable devices (since we're no longer doing batch processing)
+			m.markUnreachableDevicesBackground()
 		}
 	}
 }
@@ -156,5 +163,20 @@ func (m *GoProManager) checkManagedDevices() {
 					camera.CameraState.Camera.Name, err)
 			}
 		}
+	}
+}
+
+// markUnreachableDevicesBackground marks cameras as unreachable in the background
+func (m *GoProManager) markUnreachableDevicesBackground() {
+	m.mutex.RLock()
+	notifier := m.notifier
+	discoveryProcessor := m.discoveryProcessor
+	m.mutex.RUnlock()
+
+	if discoveryProcessor != nil {
+		m.log.Trace("Running background cleanup for unreachable devices")
+		discoveryProcessor.MarkUnreachableDevicesBackground(notifier)
+	} else {
+		m.log.Warn("Discovery processor not available for background cleanup")
 	}
 }

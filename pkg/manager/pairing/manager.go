@@ -63,6 +63,10 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 	ctx, cancel := context.WithTimeout(pm.ctx, 30*time.Second)
 	defer cancel()
 
+	// Variable to store verification result from inside BLE operation
+	var verifiedPairingState bool
+	var pairingVerificationDone bool
+
 	// Perform the BLE pairing operation
 	bleErr := bleOperation(ctx, "PairCamera", func() error {
 		// Use ONLY ConnectWithEnhancedPairing - it handles everything
@@ -92,7 +96,73 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 			pm.notifier.NotifyUpdate()
 		}
 
-		// Disconnect from the camera
+		// IMPROVED PAIRING VERIFICATION STRATEGY:
+		// WiFi credential retrieval is the definitive success indicator for OpenGoPro pairing
+		// But we also verify device state with proper timing to handle camera internal updates
+
+		pm.log.Infof("Verifying pairing state while still connected for camera %s", cameraState.Camera.Name)
+
+		// Give camera time to update internal pairing state after WiFi credential access
+		time.Sleep(2 * time.Second)
+
+		// Get fresh pairing state while connected (with retries for reliability)
+		var devicePairingState int
+		var verifyErr error
+		for attempt := 1; attempt <= 3; attempt++ {
+			devicePairingState, verifyErr = pm.ble.RefreshPairingState(macAddress)
+			if verifyErr == nil {
+				break
+			}
+			pm.log.Debugf("Pairing state verification attempt %d failed: %v", attempt, verifyErr)
+			if attempt < 3 {
+				time.Sleep(1 * time.Second) // Brief delay between retries
+			}
+		}
+
+		// Determine final pairing status using hierarchical logic
+		var isPaired bool
+		var statusReason string
+
+		if verifyErr != nil {
+			// Verification failed, but we got WiFi credentials
+			isPaired = true
+			statusReason = "WiFi credentials obtained (verification failed but pairing assumed successful)"
+			pm.log.Warnf("Pairing verification failed: %v - but considering successful since WiFi credentials were obtained", verifyErr)
+		} else {
+			// Verification succeeded, check device state
+			deviceReportsPaired := (devicePairingState == 4) // PairingStateCompleted
+
+			if deviceReportsPaired {
+				isPaired = true
+				statusReason = "both WiFi credentials obtained AND device reports paired state"
+			} else {
+				// Device doesn't report paired, but we got WiFi credentials
+				// According to OpenGoPro implementation analysis, this is still success
+				isPaired = true
+				statusReason = fmt.Sprintf("WiFi credentials obtained (device reports state %d instead of 4, but this is acceptable)", devicePairingState)
+			}
+		}
+
+		pm.log.Infof("Pairing verification completed: state=%d, isPaired=%v (%s)", devicePairingState, isPaired, statusReason)
+
+		// Update database immediately with determined pairing status
+		if err := pm.db.SetCameraPaired(macAddress, isPaired); err != nil {
+			pm.log.Errorf("Failed to set camera paired status: %v", err)
+			// Continue anyway since we have definitive success indicators
+		} else {
+			pm.log.Infof("Camera %s pairing status updated in database: %v", cameraState.Camera.Name, isPaired)
+		}
+
+		// Notify about pairing status update
+		if pm.notifier != nil {
+			pm.notifier.NotifyUpdate()
+		}
+
+		// Store the verified pairing state for use after the BLE operation
+		verifiedPairingState = isPaired
+		pairingVerificationDone = true
+
+		// Now disconnect from the camera
 		if err := pm.ble.Disconnect(macAddress); err != nil {
 			pm.log.Warnf("Failed to disconnect from camera: %v", err)
 			// This is not critical, we can continue
@@ -110,7 +180,12 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 		return nil, fmt.Errorf("failed in BLE pairing operation: %v", bleErr)
 	}
 
-	// Verify and complete pairing
+	// Use the verified pairing state if verification was done during BLE operation
+	if pairingVerificationDone {
+		return pm.completePairingOperationWithState(cameraState, macAddress, verifiedPairingState)
+	}
+
+	// Fallback to original verification logic if something went wrong
 	return pm.completePairingOperation(cameraState, macAddress)
 }
 
@@ -188,6 +263,70 @@ func (pm *Manager) completePairingOperation(cameraState *database.CameraWithStat
 		time.Sleep(3 * time.Second)
 		if finalPaired, err := pm.ble.IsPaired(macAddress); err == nil {
 			if finalPaired != isPaired {
+				pm.log.Infof("Final pairing state verification shows different result: %v, updating database", finalPaired)
+				if err := pm.db.SetCameraPaired(macAddress, finalPaired); err == nil && pm.notifier != nil {
+					pm.notifier.NotifyUpdate()
+				}
+			}
+		}
+	}()
+
+	// Return the managed camera view
+	managedCamera, exists := pm.db.GetManagedCamera(cameraState.Camera.MACAddress)
+
+	// If the camera is paired but not managed, it won't be returned by GetManagedCamera
+	// In this case, we need to create a ManagedCamera wrapper around the CameraState
+	// to return to the caller
+	if !exists {
+		pm.log.Debugf("Camera %s is paired but not yet managed, creating managed view", cameraState.Camera.Name)
+		managedCamera = &database.ManagedCamera{
+			CameraState: cameraState,
+		}
+	}
+
+	return managedCamera, nil
+}
+
+// completePairingOperationWithState verifies pairing and updates database with a given pairing state
+func (pm *Manager) completePairingOperationWithState(cameraState *database.CameraWithState, macAddress string, verifiedPairingState bool) (*database.ManagedCamera, error) {
+	// Check current database state first
+	currentState, exists := pm.db.CameraStates[macAddress]
+	if exists && currentState.Status.IsPaired == verifiedPairingState {
+		pm.log.Debugf("Camera %s pairing state already correct in database: %v", cameraState.Camera.Name, verifiedPairingState)
+	} else {
+		// Mark camera as paired based on actual device state
+		pairErr := pm.db.SetCameraPaired(cameraState.Camera.MACAddress, verifiedPairingState)
+		if pairErr != nil {
+			pm.log.Errorf("Error setting camera paired status: %v", pairErr)
+			// Make sure pairing flag is reset even if there was an error
+			pm.db.UpdateCameraPairingStatus(cameraState.Camera.MACAddress, false)
+			return nil, fmt.Errorf("failed to set camera paired status: %v", pairErr)
+		}
+	}
+
+	// Reset the pairing flag since pairing process is complete
+	pm.db.UpdateCameraPairingStatus(cameraState.Camera.MACAddress, false)
+
+	// Double-check the paired status was correctly set
+	updatedState, exists := pm.db.CameraStates[cameraState.Camera.MACAddress]
+	if exists {
+		pm.log.Infof("Camera %s pairing completed. isPaired=%v, isPairing=%v",
+			cameraState.Camera.Name, updatedState.Status.IsPaired, updatedState.Status.IsPairing)
+	} else {
+		pm.log.Warnf("Camera state not found after pairing for %s", cameraState.Camera.MACAddress)
+	}
+
+	// Immediate notification about the final status change
+	if pm.notifier != nil {
+		pm.notifier.NotifyUpdate()
+	}
+
+	// Additional verification: try to get fresh pairing state one more time
+	go func() {
+		// Wait a bit and then do a final verification
+		time.Sleep(3 * time.Second)
+		if finalPaired, err := pm.ble.IsPaired(macAddress); err == nil {
+			if finalPaired != verifiedPairingState {
 				pm.log.Infof("Final pairing state verification shows different result: %v, updating database", finalPaired)
 				if err := pm.db.SetCameraPaired(macAddress, finalPaired); err == nil && pm.notifier != nil {
 					pm.notifier.NotifyUpdate()

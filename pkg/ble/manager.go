@@ -246,13 +246,41 @@ func (m *Manager) SetDateTime(macAddress string, t time.Time) error {
 
 // Sleep puts the device to sleep
 func (m *Manager) Sleep(macAddress string) error {
-	_, err := m.sendCommand(macAddress, CmdSleep, nil)
-	return err
+	// According to OpenGoPro BLE spec, Sleep command (ID 0x05) might not send a response
+	// or the camera may go to sleep immediately, so we don't wait for a response
+	conn := m.getConnection(macAddress)
+	if conn == nil || conn.GetState() != StateReady {
+		return fmt.Errorf("device not ready: %s", macAddress)
+	}
+
+	cmdChar, exists := conn.GetCharacteristic(CharCommand)
+	if !exists {
+		return fmt.Errorf("command characteristic not found")
+	}
+
+	// Build sleep command
+	cmd := []byte{CmdSleep}
+
+	m.log.Infof("Sending sleep command to device: %s", macAddress)
+
+	// Send command without waiting for response (camera may go to sleep immediately)
+	_, err := cmdChar.WriteWithoutResponse(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to send sleep command: %v", err)
+	}
+
+	// Give the camera a moment to process the sleep command
+	time.Sleep(500 * time.Millisecond)
+
+	m.log.Infof("Sleep command sent successfully to device: %s", macAddress)
+	return nil
 }
 
-// KeepAlive sends a keep-alive command
+// KeepAlive sends a keep-alive command using Settings characteristic with parameter 0x42
 func (m *Manager) KeepAlive(macAddress string) error {
-	_, err := m.sendCommand(macAddress, CmdKeepAlive, nil)
+	// According to OpenGoPro BLE spec, Keep Alive (ID 0x5B) uses Settings characteristic
+	// and requires parameter 0x42
+	_, err := m.sendSetting(macAddress, CmdKeepAlive, []byte{0x42})
 	return err
 }
 
@@ -384,7 +412,7 @@ func (m *Manager) isResponseCharacteristic(uuid string) bool {
 }
 
 func (m *Manager) verifyRequiredCharacteristics(conn *DeviceConnection) error {
-	required := []string{CharCommand, CharCommandResponse, CharQuery, CharQueryResponse}
+	required := []string{CharCommand, CharCommandResponse, CharQuery, CharQueryResponse, CharSettings, CharSettingsResponse}
 
 	for _, uuid := range required {
 		if _, exists := conn.GetCharacteristic(uuid); !exists {
@@ -426,6 +454,42 @@ func (m *Manager) sendCommand(macAddress string, commandID byte, data []byte) (R
 		}
 	case <-time.After(5 * time.Second):
 		return Response{}, fmt.Errorf("command timeout")
+	}
+
+	return Response{}, fmt.Errorf("no response received")
+}
+
+func (m *Manager) sendSetting(macAddress string, settingID byte, data []byte) (Response, error) {
+	conn := m.getConnection(macAddress)
+	if conn == nil || conn.GetState() != StateReady {
+		return Response{}, fmt.Errorf("device not ready")
+	}
+
+	settingsChar, exists := conn.GetCharacteristic(CharSettings)
+	if !exists {
+		return Response{}, fmt.Errorf("settings characteristic not found")
+	}
+
+	// Build setting command
+	setting := []byte{settingID}
+	if data != nil {
+		setting = append(setting, data...)
+	}
+
+	// Send setting
+	_, err := settingsChar.WriteWithoutResponse(setting)
+	if err != nil {
+		return Response{}, fmt.Errorf("failed to send setting: %v", err)
+	}
+
+	// Wait for response
+	select {
+	case response := <-conn.responses:
+		if response.CommandID == settingID {
+			return response, nil
+		}
+	case <-time.After(5 * time.Second):
+		return Response{}, fmt.Errorf("setting timeout")
 	}
 
 	return Response{}, fmt.Errorf("no response received")

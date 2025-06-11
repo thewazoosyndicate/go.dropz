@@ -672,9 +672,9 @@ function determineVisualStatus(status) {
 }
 
 // Check if a camera should be in the discovered pool
-// For a camera to appear in "Discovered pool" she will have to have is_paired false or is_managed false and is_reachable to true
+// For a camera to appear in "Discovered pool" she will have to be reachable and NOT managed (regardless of pairing status)
 function shouldShowInDiscoveredPool(device) {
-  return device.isReachable && (!device.isPaired || !device.isManaged);
+  return device.isReachable && !device.isManaged;
 }
 
 // Check if a camera should be in the managed pool
@@ -1278,16 +1278,22 @@ function addOrUpdateDevice(device) {
     sync: shouldShowInSyncQueue(device)
   };
   
-  // Check if pool membership changed
+  // CRITICAL: Preserve the old membership BEFORE updating uiState.poolMembership
   const previousMembership = uiState.poolMembership[device.macAddress] || {};
   const membershipChanged = isNewDevice || 
     previousMembership.discovered !== poolMembership.discovered ||
     previousMembership.managed !== poolMembership.managed ||
     previousMembership.sync !== poolMembership.sync;
   
+  // Debug membership changes
+  if (membershipChanged && !isNewDevice) {
+    debugLog(`Pool membership changed for ${device.name}: Discovered=${previousMembership.discovered}=>${poolMembership.discovered}, Managed=${previousMembership.managed}=>${poolMembership.managed}, Sync=${previousMembership.sync}=>${poolMembership.sync}`, LOG_LEVELS.DEBUG);
+  }
+  
   // Update or add the device
   allDevices[device.macAddress] = device;
-  uiState.poolMembership[device.macAddress] = poolMembership;
+  // NOTE: We update poolMembership AFTER calling updateDeviceInPools so it can access the old values
+  // uiState.poolMembership[device.macAddress] = poolMembership;
   
   // Only log detailed pool membership info for new devices or when explicitly debugging
   if (isNewDevice) {
@@ -1295,10 +1301,17 @@ function addOrUpdateDevice(device) {
     debugLog(`Device ${device.name} flags: isReachable=${device.isReachable}, isPaired=${device.isPaired}, isManaged=${device.isManaged}, isSynced=${device.isSynced}`, LOG_LEVELS.DEBUG);
   }
   
+  // Debug device state for troubleshooting
+  if (membershipChanged || isNewDevice) {
+    debugDeviceState(device, isNewDevice ? 'NEW DEVICE' : 'MEMBERSHIP CHANGED');
+  }
+  
   // Determine what kind of update we need
   if (isNewDevice || membershipChanged || significantChange) {
     // Significant change - device needs to be added/removed/moved between pools
     updateDeviceInPools(device, poolMembership, isNewDevice, membershipChanged);
+    // NOW update the UI state after the pools have been updated
+    uiState.poolMembership[device.macAddress] = poolMembership;
     updateCounters();
   } else if (rssiChanged) {
     // Just RSSI update - only update signal strength indicators
@@ -1310,6 +1323,8 @@ function addOrUpdateDevice(device) {
   } else {
     // Minor update - update the existing device element in place
     updateDeviceElementInPlace(device);
+    // For minor updates, also ensure pool membership is up to date
+    uiState.poolMembership[device.macAddress] = poolMembership;
   }
   
   return device;
@@ -1740,18 +1755,18 @@ function removeEmptyState(gridContainer) {
 function updateCounters() {
   // Count devices in each category using our helper functions
   let managedCount = Object.values(allDevices).filter(device => shouldShowInManagedPool(device)).length;
-  let unpairedCount = Object.values(allDevices).filter(device => device.isReachable && device.isManaged && !device.isPaired).length;
+  let discoveredCount = Object.values(allDevices).filter(device => shouldShowInDiscoveredPool(device)).length;
   let syncCount = Object.values(allDevices).filter(device => shouldShowInSyncQueue(device)).length;
   
   // Update displays
   managedCountDisplay.textContent = managedCount;
-  unpairedCountDisplay.textContent = unpairedCount;
+  unpairedCountDisplay.textContent = discoveredCount;
   syncCountDisplay.textContent = syncCount;
   
   // Update our cached counts
   uiState.currentDeviceCounts = {
     total: Object.keys(allDevices).length,
-    discovered: Object.values(allDevices).filter(device => shouldShowInDiscoveredPool(device)).length,
+    discovered: discoveredCount,
     managed: managedCount,
     sync: syncCount
   };
@@ -2404,6 +2419,9 @@ function toggleDeviceManaged(macAddress, isManaged) {
       debugLog(`Successfully ${isManaged ? 'managed' : 'unmanaged'} device: ${device.name}`, LOG_LEVELS.INFO);
       addLogEntry(`${isManaged ? 'Added' : 'Removed'} ${device.name} ${isManaged ? 'to' : 'from'} camera pool`, 'success');
       
+      // Update local device state immediately to ensure UI reflects the change
+      device.isManaged = isManaged;
+      
       // If this was a manage request, process the returned camera
       if (isManaged && response.getCamera) {
         const managedCamera = response.getCamera();
@@ -2413,11 +2431,11 @@ function toggleDeviceManaged(macAddress, isManaged) {
             addOrUpdateDevice(updatedDevice);
           }
         }
+      } else {
+        // For unmanage operations or manage operations without returned camera data,
+        // update the device using the local state change
+        addOrUpdateDevice(device);
       }
-      
-      // Update device lists regardless (management changes may affect multiple pools)
-      updateDeviceLists();
-      updateCounters();
       
       // Auto-pair if enabled
       if (isManaged && autoPair && !(device.isPaired)) {
@@ -3709,6 +3727,18 @@ function updateDeviceStatus(macAddress, status) {
   if (previousStatus !== status) {
     highlightStatusChange(macAddress);
   }
+}
+
+// Add debug function to log device state and pool memberships
+function debugDeviceState(device, action) {
+  // Use the existing debug logging system instead of undefined debuggingEnabled
+  debugLog(`[DEVICE STATE DEBUG] ${action}: ${device.name} (${device.macAddress})`, LOG_LEVELS.DEBUG);
+  debugLog(`Device flags: isReachable=${device.isReachable}, isPaired=${device.isPaired}, isManaged=${device.isManaged}, isSynced=${device.isSynced}, isSyncing=${device.isSyncing}`, LOG_LEVELS.DEBUG);
+  
+  debugLog(`Pool membership should be: Discovered=${shouldShowInDiscoveredPool(device)}, Managed=${shouldShowInManagedPool(device)}, Sync=${shouldShowInSyncQueue(device)}`, LOG_LEVELS.DEBUG);
+  
+  const currentMembership = uiState.poolMembership[device.macAddress] || {};
+  debugLog(`Current UI pool membership: Discovered=${currentMembership.discovered}, Managed=${currentMembership.managed}, Sync=${currentMembership.sync}`, LOG_LEVELS.DEBUG);
 }
 
 // Update all device lists in the UI (kept for full rebuilds when needed)

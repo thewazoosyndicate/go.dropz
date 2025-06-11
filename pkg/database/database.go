@@ -892,8 +892,8 @@ func (db *Database) GetCamerasForDiscoveredPool() []*DiscoveredCamera {
 			cameraState.Status.IsPaired,
 			cameraState.Status.IsManaged)
 
-		// Camera must be reachable and either not paired OR not managed
-		if cameraState.Status.IsReachable && (!cameraState.Status.IsPaired || !cameraState.Status.IsManaged) {
+		// Camera must be reachable and NOT managed (regardless of pairing status)
+		if cameraState.Status.IsReachable && !cameraState.Status.IsManaged {
 			cameras = append(cameras, &DiscoveredCamera{CameraState: cameraState})
 			db.log.Debugf("✓ Camera %s INCLUDED in discovered pool", cameraState.Camera.Name)
 		} else {

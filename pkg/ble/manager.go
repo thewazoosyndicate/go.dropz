@@ -281,11 +281,6 @@ func (m *Manager) Sleep(macAddress string) error {
 	// Send the sleep command using standard method
 	response, err := m.sendCommand(macAddress, CmdSleep, nil)
 	if err != nil {
-		// Check for the specific case where camera responds with invalid CommandID 0x02
-		if err.Error() == "unexpected response CommandID: 0x02" {
-			m.log.Errorf("Camera responded with invalid CommandID 0x02 - this indicates camera was busy/encoding and rejected the sleep command")
-			return fmt.Errorf("sleep command rejected: camera is busy or encoding (received invalid response 0x02)")
-		}
 		return fmt.Errorf("failed to send sleep command: %v", err)
 	}
 
@@ -459,39 +454,80 @@ func (m *Manager) sendCommand(macAddress string, commandID byte, data []byte) (R
 	// Build TLV command according to OpenGoPro BLE specification
 	// Format: [Length, CommandID, Parameters...]
 	var cmd []byte
-	if data == nil || len(data) == 0 {
+	if len(data) == 0 {
 		// Command without parameters: [Length=1, CommandID]
 		cmd = []byte{0x01, commandID}
 	} else {
 		// Command with parameters: [Length=1+len(data), CommandID, Parameters...]
 		length := byte(1 + len(data))
-		cmd = []byte{length, commandID}
-		cmd = append(cmd, data...)
+		cmd = append([]byte{length, commandID}, data...)
+	}
+
+	// Flush any stale responses before sending
+flushLoop:
+	for {
+		select {
+		case <-conn.responses:
+			// drop stale
+		default:
+			break flushLoop
+		}
 	}
 
 	m.log.Debugf("Sending TLV command 0x%02X (length=%d) to device: %s", commandID, len(cmd)-1, macAddress)
-
 	// Send command
-	_, err := cmdChar.WriteWithoutResponse(cmd)
-	if err != nil {
+	if _, err := cmdChar.WriteWithoutResponse(cmd); err != nil {
 		return Response{}, fmt.Errorf("failed to send command: %v", err)
 	}
 
-	// Wait for response
-	select {
-	case response := <-conn.responses:
-		m.log.Debugf("Received response for command 0x%02X - CommandID: 0x%02X, Status: 0x%02X, DataLen: %d",
-			commandID, response.CommandID, response.Status, len(response.Data))
-
-		if response.CommandID == commandID {
-			return response, nil
-		} else {
-			m.log.Warnf("Command 0x%02X received unexpected response CommandID 0x%02X", commandID, response.CommandID)
-			return Response{}, fmt.Errorf("unexpected response CommandID: 0x%02X", response.CommandID)
+	// Collect TLV fragments and reassemble payload
+	timeout := time.After(5 * time.Second)
+	var fullPayload []byte
+	var status byte
+	var expectedLen int
+	first := true
+	for {
+		select {
+		case resp := <-conn.responses:
+			// raw TLV fragment in resp.Data
+			raw := resp.Data
+			// parse header on first fragment
+			if first {
+				first = false
+				// determine header length
+				hdrType := raw[0] >> 6
+				var hdrLen int
+				switch hdrType {
+				case 0:
+					hdrLen = 1
+				case 2:
+					hdrLen = 2
+				case 3:
+					hdrLen = 3
+				default:
+					hdrLen = 1
+				}
+				// read total length excluding header bytes
+				length := int(raw[0] & LengthMask)
+				// extract status (at hdrLen+1)
+				status = raw[hdrLen+1]
+				// first payload chunk after header and status
+				chunk := raw[hdrLen+2:]
+				fullPayload = append(fullPayload, chunk...)
+				// expected payload length = length-2 (cmdID+status)
+				expectedLen = length - 2
+			} else {
+				// subsequent fragments contain payload only
+				fullPayload = append(fullPayload, raw...)
+			}
+			m.log.Debugf("Reassembly for command 0x%02X: got %d/%d bytes", commandID, len(fullPayload), expectedLen)
+			if len(fullPayload) >= expectedLen {
+				return Response{CommandID: commandID, Status: status, Data: fullPayload, Timestamp: time.Now()}, nil
+			}
+		case <-timeout:
+			m.log.Warnf("Command 0x%02X timed out after 5 seconds", commandID)
+			return Response{}, fmt.Errorf("command timeout")
 		}
-	case <-time.After(5 * time.Second):
-		m.log.Warnf("Command 0x%02X timed out after 5 seconds", commandID)
-		return Response{}, fmt.Errorf("command timeout")
 	}
 }
 
@@ -509,7 +545,7 @@ func (m *Manager) sendSetting(macAddress string, settingID byte, data []byte) (R
 	// Build TLV setting command according to OpenGoPro BLE specification
 	// Format: [Length, SettingID, Parameters...]
 	var setting []byte
-	if data == nil || len(data) == 0 {
+	if len(data) == 0 {
 		// Setting without parameters: [Length=1, SettingID]
 		setting = []byte{0x01, settingID}
 	} else {
@@ -552,7 +588,7 @@ func (m *Manager) sendQuery(macAddress string, queryID byte, data []byte) (Respo
 	// Build TLV query according to OpenGoPro BLE specification
 	// Format: [Length, QueryID, Parameters...]
 	var query []byte
-	if data == nil || len(data) == 0 {
+	if len(data) == 0 {
 		// Query without parameters: [Length=1, QueryID]
 		query = []byte{0x01, queryID}
 	} else {
@@ -582,29 +618,26 @@ func (m *Manager) sendQuery(macAddress string, queryID byte, data []byte) (Respo
 }
 
 func (m *Manager) handleNotification(macAddress string, data []byte) {
-	if len(data) < 2 {
+	// TLV notification - forward raw bytes for reassembly
+	if len(data) < 3 {
 		return
 	}
-
 	conn := m.getConnection(macAddress)
 	if conn == nil {
 		return
 	}
-
-	response := Response{
-		CommandID: data[0],
-		Status:    data[1],
-		Data:      data[2:],
+	// Wrap in Response.Data for parser
+	resp := Response{
+		Data:      data,
 		Timestamp: time.Now(),
 	}
-
 	select {
-	case conn.responses <- response:
+	case conn.responses <- resp:
 	default:
 		// Channel full, drop oldest
 		select {
 		case <-conn.responses:
-			conn.responses <- response
+			conn.responses <- resp
 		default:
 		}
 	}

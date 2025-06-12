@@ -252,38 +252,6 @@ func (m *Manager) Sleep(macAddress string) error {
 	// on Command Response UUID like all other TLV commands
 	m.log.Infof("Sending sleep command to device: %s", macAddress)
 
-	// First check if camera is ready to accept commands
-	// According to OpenGoPro spec: "camera may not be ready to accept specific commands
-	// if System Busy or Encoding Active status flags are set"
-	conn := m.getConnection(macAddress)
-	if conn == nil || conn.GetState() != StateReady {
-		return fmt.Errorf("device not ready: %s", macAddress)
-	}
-
-	// Check camera status before sending sleep command
-	statusResponse, err := m.sendQuery(macAddress, QueryGetStatus, nil)
-	if err != nil {
-		if strings.Contains(err.Error(), "no response received") {
-			m.log.Infof("No status response before sleep, proceeding anyway")
-		} else {
-			m.log.Warnf("Could not check camera status before sleep, proceeding anyway: %v", err)
-		}
-	} else {
-		// Check if camera is busy or encoding (this would prevent sleep from working)
-		if len(statusResponse.Data) >= 2 {
-			// Status byte 1: System Busy flag
-			// Status byte 2: Encoding Active flag
-			systemBusy := statusResponse.Data[0] != 0
-			encodingActive := statusResponse.Data[1] != 0
-
-			if systemBusy || encodingActive {
-				m.log.Warnf("Camera is busy (SystemBusy=%v, EncodingActive=%v) - sleep command may not work properly",
-					systemBusy, encodingActive)
-				return fmt.Errorf("camera is busy: SystemBusy=%v, EncodingActive=%v - cannot sleep", systemBusy, encodingActive)
-			}
-		}
-	}
-
 	// Send sleep command and ignore non-zero status or errors (downgrade warnings)
 	response, err := m.sendCommand(macAddress, CmdSleep, nil)
 	if err != nil {

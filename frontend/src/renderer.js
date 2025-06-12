@@ -2079,6 +2079,8 @@ function createGoProElement(device, inSyncQueue = false) {
       syncButton.classList.add('queued');
     } else if (device.isPaired && device.isManaged) {
       syncButton.textContent = "Sync";
+      syncButton.disabled = false;
+      syncButton.classList.remove('in-progress', 'queued');
       syncButton.addEventListener('click', () => {
         syncButton.textContent = "Syncing...";
         syncButton.disabled = true;
@@ -2087,6 +2089,7 @@ function createGoProElement(device, inSyncQueue = false) {
       });
     } else {
       syncButton.disabled = true;
+      syncButton.classList.remove('in-progress', 'queued');
     }
   }
   
@@ -2327,8 +2330,8 @@ function pairDevice(macAddress) {
       updateDeviceLists();
       
       // Check if we should automatically sync
-      if (autoSync) {
-        debugLog(`Auto-sync enabled, adding ${device.name} to sync queue`, LOG_LEVELS.INFO);
+      if (autoSync && device.isManaged) {
+        debugLog(`Auto-sync enabled for managed device, adding ${device.name} to sync queue`, LOG_LEVELS.INFO);
         addToSyncQueue(macAddress);
       }
     });

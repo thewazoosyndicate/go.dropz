@@ -808,6 +808,17 @@ func (db *Database) SetCameraPaired(macAddress string, isPaired bool) error {
 	return db.saveToFile()
 }
 
+// SetCameraMetadata stores hardware metadata for a camera
+func (db *Database) SetCameraMetadata(macAddress string, metadata CameraMetadata) error {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+	if state, exists := db.CameraStates[macAddress]; exists {
+		state.Metadata = metadata
+		return nil
+	}
+	return fmt.Errorf("camera not found: %s", macAddress)
+}
+
 // ToggleCameraManaged toggles a camera's managed status
 func (db *Database) ToggleCameraManaged(macAddress string) error {
 	db.mutex.Lock()
@@ -895,10 +906,10 @@ func (db *Database) GetCamerasForDiscoveredPool() []*DiscoveredCamera {
 	cameras := make([]*DiscoveredCamera, 0)
 
 	// Log all cameras and their states for debugging
-	db.log.Debugf("GetCamerasForDiscoveredPool: examining %d total cameras", len(db.CameraStates))
+	db.log.Tracef("GetCamerasForDiscoveredPool: examining %d total cameras", len(db.CameraStates))
 
 	for macAddress, cameraState := range db.CameraStates {
-		db.log.Debugf("Camera %s (%s): Reachable=%v, Paired=%v, Managed=%v",
+		db.log.Tracef("Camera %s (%s): Reachable=%v, Paired=%v, Managed=%v",
 			cameraState.Camera.Name, macAddress,
 			cameraState.Status.IsReachable,
 			cameraState.Status.IsPaired,
@@ -907,9 +918,9 @@ func (db *Database) GetCamerasForDiscoveredPool() []*DiscoveredCamera {
 		// Camera must be reachable and NOT managed (regardless of pairing status)
 		if cameraState.Status.IsReachable && !cameraState.Status.IsManaged {
 			cameras = append(cameras, &DiscoveredCamera{CameraState: cameraState})
-			db.log.Debugf("✓ Camera %s INCLUDED in discovered pool", cameraState.Camera.Name)
+			db.log.Tracef("✓ Camera %s INCLUDED in discovered pool", cameraState.Camera.Name)
 		} else {
-			db.log.Debugf("✗ Camera %s EXCLUDED from discovered pool (criteria not met)", cameraState.Camera.Name)
+			db.log.Tracef("✗ Camera %s EXCLUDED from discovered pool (criteria not met)", cameraState.Camera.Name)
 		}
 	}
 
@@ -933,9 +944,9 @@ func (db *Database) GetCamerasForManagedPool() []*ManagedCamera {
 	}
 
 	// Log debug info about managed pool criteria
-	db.log.Debugf("GetCamerasForManagedPool returning %d cameras", len(cameras))
+	db.log.Tracef("GetCamerasForManagedPool returning %d cameras", len(cameras))
 	for _, camera := range cameras {
-		db.log.Debugf("Camera in managed pool: %s (Paired=%v, Managed=%v, Reachable=%v)",
+		db.log.Tracef("Camera in managed pool: %s (Paired=%v, Managed=%v, Reachable=%v)",
 			camera.CameraState.Camera.Name,
 			camera.CameraState.Status.IsPaired,
 			camera.CameraState.Status.IsManaged,

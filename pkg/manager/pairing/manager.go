@@ -3,6 +3,7 @@ package pairing
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dropz/dropz/pkg/ble"
@@ -96,10 +97,26 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 			pm.notifier.NotifyUpdate()
 		}
 
-		// IMPROVED PAIRING VERIFICATION STRATEGY:
-		// WiFi credential retrieval is the definitive success indicator for OpenGoPro pairing
-		// But we also verify device state with proper timing to handle camera internal updates
+		// Fetch hardware metadata and store in database
+		pm.log.Infof("Fetching hardware metadata for camera %s", cameraState.Camera.Name)
+		hwMeta, err := pm.ble.GetMetadata(macAddress)
+		if err != nil {
+			pm.log.Warnf("Failed to fetch hardware metadata: %v", err)
+		} else {
+			meta := database.CameraMetadata{
+				ID:              cameraState.Camera.ID,
+				Model:           hwMeta["model_name"],
+				FirmwareVersion: hwMeta["firmware_version"],
+				SerialNumber:    hwMeta["serial_number"],
+			}
+			if err := pm.db.SetCameraMetadata(macAddress, meta); err != nil {
+				pm.log.Errorf("Failed to save camera metadata: %v", err)
+			} else if pm.notifier != nil {
+				pm.notifier.NotifyUpdate()
+			}
+		}
 
+		// IMPROVED PAIRING VERIFICATION STRATEGY:
 		pm.log.Infof("Verifying pairing state while still connected for camera %s", cameraState.Camera.Name)
 
 		// Give camera time to update internal pairing state after WiFi credential access
@@ -127,7 +144,11 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 			// Verification failed, but we got WiFi credentials
 			isPaired = true
 			statusReason = "WiFi credentials obtained (verification failed but pairing assumed successful)"
-			pm.log.Warnf("Pairing verification failed: %v - but considering successful since WiFi credentials were obtained", verifyErr)
+			if strings.Contains(verifyErr.Error(), "no response received") {
+				pm.log.Infof("Pairing verification: no response received, proceeding anyway since WiFi credentials were obtained")
+			} else {
+				pm.log.Warnf("Pairing verification failed: %v - but considering successful since WiFi credentials were obtained", verifyErr)
+			}
 		} else {
 			// Verification succeeded, check device state
 			deviceReportsPaired := (devicePairingState == 4) // PairingStateCompleted

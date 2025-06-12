@@ -182,7 +182,7 @@ func (s *DropzServer) streamUpdateHandler() {
 
 			// Since NotifyUpdate() now only sends notifications for actual changes,
 			// we can directly send updates to all streams without redundant counter checks
-			s.log.Debug("Sending updates to all active streams")
+			s.log.Trace("Sending updates to all active streams")
 			s.sendDiscoveredCamerasUpdates()
 			s.sendManagedCamerasUpdates()
 			s.sendSyncQueueUpdates()
@@ -387,7 +387,7 @@ func (s *DropzServer) sendSyncQueueHeartbeats() {
 
 // NotifyUpdate implements the common.UpdateNotifier interface
 func (s *DropzServer) NotifyUpdate() {
-	s.log.Debug("NotifyUpdate called - sending update to clients")
+	s.log.Trace("NotifyUpdate called - sending update to clients")
 
 	// Send notification to stream handler
 	select {

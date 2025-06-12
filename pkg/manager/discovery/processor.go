@@ -187,7 +187,7 @@ func (p *Processor) updateExistingCamera(discoveredCamera *database.DiscoveredCa
 	rssiChanged := cameraState.Camera.RSSI != rssi
 	if rssiChanged {
 		cameraState.Camera.RSSI = rssi
-		p.log.Debugf("RSSI updated for %s (%s): %d -> %d (last seen %v ago)",
+		p.log.Tracef("RSSI updated for %s (%s): %d -> %d (last seen %v ago)",
 			cameraState.Camera.Name, cameraState.Camera.MACAddress, previousRSSI, rssi, timeSinceLastSeen.Truncate(time.Millisecond))
 	}
 
@@ -225,7 +225,7 @@ func (p *Processor) updateExistingCamera(discoveredCamera *database.DiscoveredCa
 			changes = append(changes, fmt.Sprintf("LastSeen:%v ago", timeSinceLastSeen.Truncate(time.Millisecond)))
 		}
 
-		p.log.Debugf("Rediscovered camera %s (%s) with changes: %s",
+		p.log.Tracef("Rediscovered camera %s (%s) with changes: %s",
 			cameraState.Camera.Name, cameraState.Camera.MACAddress, strings.Join(changes, ", "))
 	} else {
 		p.log.Tracef("Rediscovered camera %s (%s) RSSI:%d (no significant changes)",

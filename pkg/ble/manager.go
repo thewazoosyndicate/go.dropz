@@ -2,7 +2,9 @@ package ble
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -261,7 +263,11 @@ func (m *Manager) Sleep(macAddress string) error {
 	// Check camera status before sending sleep command
 	statusResponse, err := m.sendQuery(macAddress, QueryGetStatus, nil)
 	if err != nil {
-		m.log.Warnf("Could not check camera status before sleep, proceeding anyway: %v", err)
+		if strings.Contains(err.Error(), "no response received") {
+			m.log.Infof("No status response before sleep, proceeding anyway")
+		} else {
+			m.log.Warnf("Could not check camera status before sleep, proceeding anyway: %v", err)
+		}
 	} else {
 		// Check if camera is busy or encoding (this would prevent sleep from working)
 		if len(statusResponse.Data) >= 2 {
@@ -278,19 +284,18 @@ func (m *Manager) Sleep(macAddress string) error {
 		}
 	}
 
-	// Send the sleep command using standard method
+	// Send sleep command and ignore non-zero status or errors (downgrade warnings)
 	response, err := m.sendCommand(macAddress, CmdSleep, nil)
 	if err != nil {
-		return fmt.Errorf("failed to send sleep command: %v", err)
-	}
-
-	if response.Status == 0 {
-		m.log.Infof("Sleep command completed successfully for device: %s", macAddress)
+		m.log.Infof("Sleep command error (ignored): %v", err)
 		return nil
-	} else {
-		m.log.Warnf("Sleep command returned error status 0x%02X for device: %s", response.Status, macAddress)
-		return fmt.Errorf("sleep command failed with status: 0x%02X", response.Status)
 	}
+	if response.Status != 0 {
+		m.log.Infof("Sleep command returned non-zero status 0x%02X (ignored) for device: %s", response.Status, macAddress)
+		return nil
+	}
+	m.log.Infof("Sleep command completed successfully for device: %s", macAddress)
+	return nil
 }
 
 // KeepAlive sends a keep-alive command using Settings characteristic with parameter 0x42
@@ -309,10 +314,45 @@ func (m *Manager) GetMetadata(macAddress string) (map[string]string, error) {
 	}
 
 	metadata := make(map[string]string)
-	if len(response.Data) >= 1 {
-		modelID := int(response.Data[0])
-		metadata["model_id"] = fmt.Sprintf("%d", modelID)
-		metadata["model_name"] = m.getModelName(modelID)
+	d := response.Data
+	// Payload format:
+	// [0] padding, [1:5] model_number (uint32), [5] name_len, [6:6+name_len] name,
+	// next padding, next 4 bytes board_type, [..] firmware_version_len, firmware_version bytes,
+	// serial_number_len and serial_number bytes
+	if len(d) < 6 {
+		return metadata, nil
+	}
+	// model_number
+	modelNum := int(binary.BigEndian.Uint32(d[1:5]))
+	metadata["model_id"] = fmt.Sprintf("%d", modelNum)
+	// model_name
+	nameLen := int(d[5])
+	if len(d) >= 6+nameLen {
+		metadata["model_name"] = string(d[6 : 6+nameLen])
+	}
+	// skip past name and padding and board_type
+	idx := 6 + nameLen
+	if len(d) < idx+1+4+1 {
+		return metadata, nil
+	}
+	// skip padding
+	idx++
+	// skip board_type uint32
+	idx += 4
+	// firmware_version
+	fwLen := int(d[idx])
+	idx++
+	if len(d) >= idx+fwLen {
+		metadata["firmware_version"] = string(d[idx : idx+fwLen])
+		idx += fwLen
+	}
+	// serial_number
+	if len(d) > idx {
+		snLen := int(d[idx])
+		idx++
+		if len(d) >= idx+snLen {
+			metadata["serial_number"] = string(d[idx : idx+snLen])
+		}
 	}
 
 	return metadata, nil
@@ -491,34 +531,38 @@ flushLoop:
 		case resp := <-conn.responses:
 			// raw TLV fragment in resp.Data
 			raw := resp.Data
-			// parse header on first fragment
+			// parse header on first fragment: detect start-of-multi-packet and compute total length
 			if first {
 				first = false
-				// determine header length
-				hdrType := raw[0] >> 6
 				var hdrLen int
-				switch hdrType {
-				case 0:
-					hdrLen = 1
-				case 2:
+				var totalLen int
+				// Check start flag for multi-packet
+				if raw[0]&HeaderStart != 0 {
+					// multi-packet TLV start: next byte holds full length bits
 					hdrLen = 2
-				case 3:
-					hdrLen = 3
-				default:
+					// combine lower 5 bits of first byte as MSB and second byte as LSB
+					totalLen = (int(raw[0]&LengthMask) << 8) | int(raw[1])
+				} else {
+					// single-packet TLV: length in lower 5 bits
 					hdrLen = 1
+					totalLen = int(raw[0] & LengthMask)
 				}
-				// read total length excluding header bytes
-				length := int(raw[0] & LengthMask)
-				// extract status (at hdrLen+1)
+				// extract status (after command ID)
 				status = raw[hdrLen+1]
-				// first payload chunk after header and status
-				chunk := raw[hdrLen+2:]
-				fullPayload = append(fullPayload, chunk...)
-				// expected payload length = length-2 (cmdID+status)
-				expectedLen = length - 2
+				// append payload chunk after header, command ID, and status
+				fullPayload = append(fullPayload, raw[hdrLen+2:]...)
+				// expected payload length = totalLen - 2 (command ID + status)
+				expectedLen = totalLen - 2
 			} else {
 				// subsequent fragments contain payload only
-				fullPayload = append(fullPayload, raw...)
+				// strip continuation header on multi-packet fragments
+				if raw[0]&HeaderCont != 0 {
+					// skip header byte
+					fullPayload = append(fullPayload, raw[1:]...)
+				} else {
+					// no header flag, append all bytes
+					fullPayload = append(fullPayload, raw...)
+				}
 			}
 			m.log.Debugf("Reassembly for command 0x%02X: got %d/%d bytes", commandID, len(fullPayload), expectedLen)
 			if len(fullPayload) >= expectedLen {
@@ -598,23 +642,60 @@ func (m *Manager) sendQuery(macAddress string, queryID byte, data []byte) (Respo
 		query = append(query, data...)
 	}
 
+	// Flush any stale responses before sending query
+flushLoopQuery:
+	for {
+		select {
+		case <-conn.responses:
+			// drop stale
+		default:
+			break flushLoopQuery
+		}
+	}
+	m.log.Debugf("Sending TLV query 0x%02X to device: %s", queryID, macAddress)
 	// Send query
 	_, err := queryChar.WriteWithoutResponse(query)
 	if err != nil {
 		return Response{}, fmt.Errorf("failed to send query: %v", err)
 	}
 
-	// Wait for response
-	select {
-	case response := <-conn.responses:
-		if response.CommandID == queryID {
-			return response, nil
+	// Wait for response and parse TLV
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case resp := <-conn.responses:
+			raw := resp.Data
+			if len(raw) < 3 {
+				continue // ignore invalid fragment
+			}
+			// determine header length
+			hdrType := raw[0] >> 6
+			var hdrLen int
+			switch hdrType {
+			case 0:
+				hdrLen = 1
+			case 2:
+				hdrLen = 2
+			case 3:
+				hdrLen = 3
+			default:
+				hdrLen = 1
+			}
+			// parse fields: byte hdrLen is QueryID, byte hdrLen+1 is status
+			cmdID := raw[hdrLen]
+			status := raw[hdrLen+1]
+			if cmdID != queryID {
+				continue
+			}
+			// payload is remaining bytes
+			payload := raw[hdrLen+2:]
+			return Response{CommandID: cmdID, Status: status, Data: payload, Timestamp: resp.Timestamp}, nil
+		case <-timeout:
+			return Response{}, fmt.Errorf("query timeout")
 		}
-	case <-time.After(5 * time.Second):
-		return Response{}, fmt.Errorf("query timeout")
 	}
 
-	return Response{}, fmt.Errorf("no response received")
+	// unreachable
 }
 
 func (m *Manager) handleNotification(macAddress string, data []byte) {
@@ -669,23 +750,6 @@ func (m *Manager) validateMAC(macAddress string) error {
 	return nil
 }
 
-func (m *Manager) getModelName(modelID int) string {
-	switch modelID {
-	case 50:
-		return "HERO9"
-	case 55:
-		return "HERO10"
-	case 62:
-		return "HERO11"
-	case 63:
-		return "HERO12"
-	case 64:
-		return "HERO13"
-	default:
-		return fmt.Sprintf("Unknown (%d)", modelID)
-	}
-}
-
 // ConnectWithEnhancedPairing connects and performs enhanced pairing with the device
 func (m *Manager) ConnectWithEnhancedPairing(macAddress string) error {
 	// First connect normally
@@ -699,6 +763,31 @@ func (m *Manager) ConnectWithEnhancedPairing(macAddress string) error {
 		// Disconnect on failure
 		m.Disconnect(macAddress)
 		return fmt.Errorf("failed to get WiFi credentials during pairing: %v", err)
+	}
+
+	// Retrieve hardware metadata (model, firmware, serial)
+	metadata, err := m.GetMetadata(macAddress)
+	if err != nil {
+		m.log.Warnf("failed to get hardware metadata: %v", err)
+	} else {
+		// Update cached device info
+		m.mutex.Lock()
+		if dev, exists := m.devices[macAddress]; exists {
+			if id, ok := metadata["model_id"]; ok {
+				// update existing modelID
+				dev.ModelID, _ = strconv.Atoi(id)
+			}
+			if name, ok := metadata["model_name"]; ok {
+				dev.ModelName = name
+			}
+			if fw, ok := metadata["firmware_version"]; ok {
+				dev.FirmwareVersion = fw
+			}
+			if sn, ok := metadata["serial_number"]; ok {
+				dev.SerialNumber = sn
+			}
+		}
+		m.mutex.Unlock()
 	}
 
 	return nil

@@ -120,7 +120,7 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 		// Use the callback-based scanning for live updates
 		err := s.ble.StartScanningWithCallback(scanCtx, func(device ble.Device) {
 			// Process device immediately when discovered for real-time RSSI updates
-			s.log.Debugf("Live discovery: %s (%s) RSSI:%d", device.Name, device.MACAddress, device.RSSI)
+			s.log.Tracef("Live discovery: %s (%s) RSSI:%d", device.Name, device.MACAddress, device.RSSI)
 			if s.processDeviceFunc != nil {
 				s.processDeviceFunc(device)
 			}

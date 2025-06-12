@@ -246,34 +246,56 @@ func (m *Manager) SetDateTime(macAddress string, t time.Time) error {
 
 // Sleep puts the device to sleep
 func (m *Manager) Sleep(macAddress string) error {
-	// According to OpenGoPro BLE spec, Sleep command (ID 0x05) might not send a response
-	// or the camera may go to sleep immediately, so we don't wait for a response
+	// According to OpenGoPro BLE spec, Sleep command (ID 0x05) sends a response
+	// on Command Response UUID like all other TLV commands
+	m.log.Infof("Sending sleep command to device: %s", macAddress)
+
+	// First check if camera is ready to accept commands
+	// According to OpenGoPro spec: "camera may not be ready to accept specific commands
+	// if System Busy or Encoding Active status flags are set"
 	conn := m.getConnection(macAddress)
 	if conn == nil || conn.GetState() != StateReady {
 		return fmt.Errorf("device not ready: %s", macAddress)
 	}
 
-	cmdChar, exists := conn.GetCharacteristic(CharCommand)
-	if !exists {
-		return fmt.Errorf("command characteristic not found")
+	// Check camera status before sending sleep command
+	statusResponse, err := m.sendQuery(macAddress, QueryGetStatus, nil)
+	if err != nil {
+		m.log.Warnf("Could not check camera status before sleep, proceeding anyway: %v", err)
+	} else {
+		// Check if camera is busy or encoding (this would prevent sleep from working)
+		if len(statusResponse.Data) >= 2 {
+			// Status byte 1: System Busy flag
+			// Status byte 2: Encoding Active flag
+			systemBusy := statusResponse.Data[0] != 0
+			encodingActive := statusResponse.Data[1] != 0
+
+			if systemBusy || encodingActive {
+				m.log.Warnf("Camera is busy (SystemBusy=%v, EncodingActive=%v) - sleep command may not work properly",
+					systemBusy, encodingActive)
+				return fmt.Errorf("camera is busy: SystemBusy=%v, EncodingActive=%v - cannot sleep", systemBusy, encodingActive)
+			}
+		}
 	}
 
-	// Build sleep command
-	cmd := []byte{CmdSleep}
-
-	m.log.Infof("Sending sleep command to device: %s", macAddress)
-
-	// Send command without waiting for response (camera may go to sleep immediately)
-	_, err := cmdChar.WriteWithoutResponse(cmd)
+	// Send the sleep command using standard method
+	response, err := m.sendCommand(macAddress, CmdSleep, nil)
 	if err != nil {
+		// Check for the specific case where camera responds with invalid CommandID 0x02
+		if err.Error() == "unexpected response CommandID: 0x02" {
+			m.log.Errorf("Camera responded with invalid CommandID 0x02 - this indicates camera was busy/encoding and rejected the sleep command")
+			return fmt.Errorf("sleep command rejected: camera is busy or encoding (received invalid response 0x02)")
+		}
 		return fmt.Errorf("failed to send sleep command: %v", err)
 	}
 
-	// Give the camera a moment to process the sleep command
-	time.Sleep(500 * time.Millisecond)
-
-	m.log.Infof("Sleep command sent successfully to device: %s", macAddress)
-	return nil
+	if response.Status == 0 {
+		m.log.Infof("Sleep command completed successfully for device: %s", macAddress)
+		return nil
+	} else {
+		m.log.Warnf("Sleep command returned error status 0x%02X for device: %s", response.Status, macAddress)
+		return fmt.Errorf("sleep command failed with status: 0x%02X", response.Status)
+	}
 }
 
 // KeepAlive sends a keep-alive command using Settings characteristic with parameter 0x42
@@ -434,11 +456,20 @@ func (m *Manager) sendCommand(macAddress string, commandID byte, data []byte) (R
 		return Response{}, fmt.Errorf("command characteristic not found")
 	}
 
-	// Build command
-	cmd := []byte{commandID}
-	if data != nil {
+	// Build TLV command according to OpenGoPro BLE specification
+	// Format: [Length, CommandID, Parameters...]
+	var cmd []byte
+	if data == nil || len(data) == 0 {
+		// Command without parameters: [Length=1, CommandID]
+		cmd = []byte{0x01, commandID}
+	} else {
+		// Command with parameters: [Length=1+len(data), CommandID, Parameters...]
+		length := byte(1 + len(data))
+		cmd = []byte{length, commandID}
 		cmd = append(cmd, data...)
 	}
+
+	m.log.Debugf("Sending TLV command 0x%02X (length=%d) to device: %s", commandID, len(cmd)-1, macAddress)
 
 	// Send command
 	_, err := cmdChar.WriteWithoutResponse(cmd)
@@ -449,14 +480,19 @@ func (m *Manager) sendCommand(macAddress string, commandID byte, data []byte) (R
 	// Wait for response
 	select {
 	case response := <-conn.responses:
+		m.log.Debugf("Received response for command 0x%02X - CommandID: 0x%02X, Status: 0x%02X, DataLen: %d",
+			commandID, response.CommandID, response.Status, len(response.Data))
+
 		if response.CommandID == commandID {
 			return response, nil
+		} else {
+			m.log.Warnf("Command 0x%02X received unexpected response CommandID 0x%02X", commandID, response.CommandID)
+			return Response{}, fmt.Errorf("unexpected response CommandID: 0x%02X", response.CommandID)
 		}
 	case <-time.After(5 * time.Second):
+		m.log.Warnf("Command 0x%02X timed out after 5 seconds", commandID)
 		return Response{}, fmt.Errorf("command timeout")
 	}
-
-	return Response{}, fmt.Errorf("no response received")
 }
 
 func (m *Manager) sendSetting(macAddress string, settingID byte, data []byte) (Response, error) {
@@ -470,9 +506,16 @@ func (m *Manager) sendSetting(macAddress string, settingID byte, data []byte) (R
 		return Response{}, fmt.Errorf("settings characteristic not found")
 	}
 
-	// Build setting command
-	setting := []byte{settingID}
-	if data != nil {
+	// Build TLV setting command according to OpenGoPro BLE specification
+	// Format: [Length, SettingID, Parameters...]
+	var setting []byte
+	if data == nil || len(data) == 0 {
+		// Setting without parameters: [Length=1, SettingID]
+		setting = []byte{0x01, settingID}
+	} else {
+		// Setting with parameters: [Length=1+len(data), SettingID, Parameters...]
+		length := byte(1 + len(data))
+		setting = []byte{length, settingID}
 		setting = append(setting, data...)
 	}
 
@@ -506,9 +549,16 @@ func (m *Manager) sendQuery(macAddress string, queryID byte, data []byte) (Respo
 		return Response{}, fmt.Errorf("query characteristic not found")
 	}
 
-	// Build query
-	query := []byte{queryID}
-	if data != nil {
+	// Build TLV query according to OpenGoPro BLE specification
+	// Format: [Length, QueryID, Parameters...]
+	var query []byte
+	if data == nil || len(data) == 0 {
+		// Query without parameters: [Length=1, QueryID]
+		query = []byte{0x01, queryID}
+	} else {
+		// Query with parameters: [Length=1+len(data), QueryID, Parameters...]
+		length := byte(1 + len(data))
+		query = []byte{length, queryID}
 		query = append(query, data...)
 	}
 

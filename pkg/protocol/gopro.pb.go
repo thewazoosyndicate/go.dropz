@@ -465,6 +465,7 @@ type SyncQueueEntry struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	CameraId         string                 `protobuf:"bytes,1,opt,name=camera_id,json=cameraId,proto3" json:"camera_id,omitempty"` // References the camera ID
 	QueuedAt         *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=queued_at,json=queuedAt,proto3" json:"queued_at,omitempty"`
+	Priority         int32                  `protobuf:"varint,3,opt,name=priority,proto3" json:"priority,omitempty"` // Higher numbers = higher priority (manual sync = 10, auto sync = 5)
 	ProgressPercent  int32                  `protobuf:"varint,4,opt,name=progress_percent,json=progressPercent,proto3" json:"progress_percent,omitempty"`
 	CurrentOperation string                 `protobuf:"bytes,5,opt,name=current_operation,json=currentOperation,proto3" json:"current_operation,omitempty"` // Text description of current operation
 	unknownFields    protoimpl.UnknownFields
@@ -513,6 +514,13 @@ func (x *SyncQueueEntry) GetQueuedAt() *timestamppb.Timestamp {
 		return x.QueuedAt
 	}
 	return nil
+}
+
+func (x *SyncQueueEntry) GetPriority() int32 {
+	if x != nil {
+		return x.Priority
+	}
+	return 0
 }
 
 func (x *SyncQueueEntry) GetProgressPercent() int32 {
@@ -1643,10 +1651,11 @@ const file_gopro_proto_rawDesc = "" +
 	"\x10DiscoveredCamera\x129\n" +
 	"\fcamera_state\x18\x01 \x01(\v2\x16.dropz.CameraWithStateR\vcameraState\"J\n" +
 	"\rManagedCamera\x129\n" +
-	"\fcamera_state\x18\x01 \x01(\v2\x16.dropz.CameraWithStateR\vcameraState\"\xbe\x01\n" +
+	"\fcamera_state\x18\x01 \x01(\v2\x16.dropz.CameraWithStateR\vcameraState\"\xda\x01\n" +
 	"\x0eSyncQueueEntry\x12\x1b\n" +
 	"\tcamera_id\x18\x01 \x01(\tR\bcameraId\x127\n" +
-	"\tqueued_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\bqueuedAt\x12)\n" +
+	"\tqueued_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\bqueuedAt\x12\x1a\n" +
+	"\bpriority\x18\x03 \x01(\x05R\bpriority\x12)\n" +
 	"\x10progress_percent\x18\x04 \x01(\x05R\x0fprogressPercent\x12+\n" +
 	"\x11current_operation\x18\x05 \x01(\tR\x10currentOperation\"\xc0\x01\n" +
 	"\x05Group\x12\x0e\n" +

@@ -15,6 +15,12 @@ import (
 	"github.com/dropz/dropz/pkg/wifi"
 )
 
+// Sync priority constants
+const (
+	SyncPriorityManual = 10 // High priority for manually requested syncs
+	SyncPriorityAuto   = 5  // Normal priority for automatic syncs
+)
+
 // SyncTask represents a camera sync task
 type SyncTask struct {
 	CameraID     string
@@ -133,6 +139,7 @@ func (c *Coordinator) ForceSync(cameraID string, notifier common.UpdateNotifier)
 	syncEntry := &database.SyncQueueEntry{
 		CameraID:         cameraID,
 		QueuedAt:         time.Now(),
+		Priority:         SyncPriorityManual, // High priority for manual sync requests
 		ProgressPercent:  0,
 		CurrentOperation: "Waiting to start",
 	}

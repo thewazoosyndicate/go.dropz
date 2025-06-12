@@ -2210,6 +2210,7 @@ proto.dropz.SyncQueueEntry.toObject = function(includeInstance, msg) {
   var f, obj = {
     cameraId: jspb.Message.getFieldWithDefault(msg, 1, ""),
     queuedAt: (f = msg.getQueuedAt()) && google_protobuf_timestamp_pb.Timestamp.toObject(includeInstance, f),
+    priority: jspb.Message.getFieldWithDefault(msg, 3, 0),
     progressPercent: jspb.Message.getFieldWithDefault(msg, 4, 0),
     currentOperation: jspb.Message.getFieldWithDefault(msg, 5, "")
   };
@@ -2256,6 +2257,10 @@ proto.dropz.SyncQueueEntry.deserializeBinaryFromReader = function(msg, reader) {
       var value = new google_protobuf_timestamp_pb.Timestamp;
       reader.readMessage(value,google_protobuf_timestamp_pb.Timestamp.deserializeBinaryFromReader);
       msg.setQueuedAt(value);
+      break;
+    case 3:
+      var value = /** @type {number} */ (reader.readInt32());
+      msg.setPriority(value);
       break;
     case 4:
       var value = /** @type {number} */ (reader.readInt32());
@@ -2307,6 +2312,13 @@ proto.dropz.SyncQueueEntry.serializeBinaryToWriter = function(message, writer) {
       2,
       f,
       google_protobuf_timestamp_pb.Timestamp.serializeBinaryToWriter
+    );
+  }
+  f = message.getPriority();
+  if (f !== 0) {
+    writer.writeInt32(
+      3,
+      f
     );
   }
   f = message.getProgressPercent();
@@ -2378,6 +2390,24 @@ proto.dropz.SyncQueueEntry.prototype.clearQueuedAt = function() {
  */
 proto.dropz.SyncQueueEntry.prototype.hasQueuedAt = function() {
   return jspb.Message.getField(this, 2) != null;
+};
+
+
+/**
+ * optional int32 priority = 3;
+ * @return {number}
+ */
+proto.dropz.SyncQueueEntry.prototype.getPriority = function() {
+  return /** @type {number} */ (jspb.Message.getFieldWithDefault(this, 3, 0));
+};
+
+
+/**
+ * @param {number} value
+ * @return {!proto.dropz.SyncQueueEntry} returns this
+ */
+proto.dropz.SyncQueueEntry.prototype.setPriority = function(value) {
+  return jspb.Message.setProto3IntField(this, 3, value);
 };
 
 

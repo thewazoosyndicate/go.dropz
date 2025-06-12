@@ -695,6 +695,7 @@ function processSyncQueueEntry(entry) {
     return {
       cameraId: entry.getCameraId(),
       queuedAt: entry.getQueuedAt()?.toDate(),
+      priority: entry.getPriority(),
       progressPercent: entry.getProgressPercent(),
       currentOperation: entry.getCurrentOperation()
     };
@@ -817,7 +818,7 @@ function getLogLevelName(level) {
 // Clean up devices that haven't been seen in a while
 function cleanupDisconnectedDevices() {
   const now = new Date();
-  const timeout = 60000; // 60 seconds
+  const timeout = 5000; // 5 seconds
   
   for (const mac in allDevices) {
     const device = allDevices[mac];

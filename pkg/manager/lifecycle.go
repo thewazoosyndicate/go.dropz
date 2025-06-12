@@ -95,6 +95,10 @@ func (m *GoProManager) deviceManager() {
 			m.checkManagedDevices()
 			// Process sync queue to start sync tasks for pending cameras
 			m.processSyncQueue()
+		case <-m.immediateSyncTrigger:
+			// Immediate sync requested - process sync queue immediately
+			m.log.Debug("Immediate sync triggered - processing sync queue")
+			m.processSyncQueue()
 		case <-unreachableTicker.C:
 			// Mark unreachable devices (since we're no longer doing batch processing)
 			m.markUnreachableDevicesBackground()
@@ -151,6 +155,7 @@ func (m *GoProManager) checkManagedDevices() {
 			syncEntry := &database.SyncQueueEntry{
 				CameraID:         camera.CameraState.Camera.ID,
 				QueuedAt:         time.Now(),
+				Priority:         SyncPriorityAuto, // Normal priority for automatic syncs
 				ProgressPercent:  0,
 				CurrentOperation: "Waiting to start",
 			}

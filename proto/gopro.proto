@@ -61,6 +61,7 @@ message ManagedCamera {
 message SyncQueueEntry {
   string camera_id = 1;  // References the camera ID
   google.protobuf.Timestamp queued_at = 2;
+  int32 priority = 3;  // Higher numbers = higher priority (manual sync = 10, auto sync = 5)
   int32 progress_percent = 4;
   string current_operation = 5;  // Text description of current operation
 }

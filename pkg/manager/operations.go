@@ -18,7 +18,20 @@ func (m *GoProManager) processSyncQueue() {
 
 // ForceSync adds a camera to the sync queue for immediate synchronization
 func (m *GoProManager) ForceSync(cameraID string) (*database.SyncQueueEntry, error) {
-	return m.syncCoordinator.ForceSync(cameraID, m.notifier)
+	syncEntry, err := m.syncCoordinator.ForceSync(cameraID, m.notifier)
+	if err != nil {
+		return nil, err
+	}
+
+	// Trigger immediate sync processing by sending signal to immediateSyncTrigger channel
+	select {
+	case m.immediateSyncTrigger <- struct{}{}:
+		m.log.Debug("Immediate sync trigger sent for manual sync request")
+	default:
+		m.log.Debug("Immediate sync trigger channel full, sync will be picked up by next cycle")
+	}
+
+	return syncEntry, nil
 }
 
 // performCameraSync handles the actual syncing of a camera

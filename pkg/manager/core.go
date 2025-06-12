@@ -31,6 +31,10 @@ const (
 	PriorityHigh   = 3
 	PriorityNormal = 2
 	PriorityLow    = 1
+
+	// Sync priorities
+	SyncPriorityManual = 10 // Manual sync requests (ForceSync)
+	SyncPriorityAuto   = 5  // Automatic sync requests
 )
 
 // Device represents a BLE device
@@ -73,6 +77,9 @@ type GoProManager struct {
 
 	// Processing devices
 	processingDevices map[string]struct{}
+
+	// Immediate sync trigger channel
+	immediateSyncTrigger chan struct{}
 
 	// Component managers
 	syncCoordinator    *syncpkg.Coordinator
@@ -158,6 +165,8 @@ func NewGoProManager(dbPath, destinationDir string) (*GoProManager, error) {
 		activeSyncTasks: make(map[string]*syncpkg.SyncTask),
 		// Initialize processing devices
 		processingDevices: make(map[string]struct{}),
+		// Initialize immediate sync trigger channel
+		immediateSyncTrigger: make(chan struct{}, 1),
 	}
 
 	// Initialize component managers

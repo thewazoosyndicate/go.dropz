@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -69,6 +70,7 @@ type ManagedCamera struct {
 type SyncQueueEntry struct {
 	CameraID         string    `json:"camera_id"` // References the camera ID
 	QueuedAt         time.Time `json:"queued_at"`
+	Priority         int32     `json:"priority"` // Higher numbers = higher priority (manual sync = 10, auto sync = 5)
 	ProgressPercent  int32     `json:"progress_percent"`
 	CurrentOperation string    `json:"current_operation"`
 }
@@ -375,13 +377,22 @@ func (db *Database) AddSyncQueueEntry(entry *SyncQueueEntry) error {
 	return db.saveToFile()
 }
 
-// GetSyncQueue returns the current sync queue
+// GetSyncQueue returns the current sync queue, sorted by priority (highest first) then by queued time
 func (db *Database) GetSyncQueue() []*SyncQueueEntry {
 	db.mutex.RLock()
 	defer db.mutex.RUnlock()
 
 	queue := make([]*SyncQueueEntry, len(db.SyncQueue))
 	copy(queue, db.SyncQueue)
+
+	// Sort by priority (highest first), then by queued time (oldest first)
+	sort.Slice(queue, func(i, j int) bool {
+		if queue[i].Priority != queue[j].Priority {
+			return queue[i].Priority > queue[j].Priority // Higher priority first
+		}
+		return queue[i].QueuedAt.Before(queue[j].QueuedAt) // Older entries first for same priority
+	})
+
 	return queue
 }
 
@@ -657,6 +668,7 @@ func (e *SyncQueueEntry) ToProtoSyncQueueEntry() *protocol.SyncQueueEntry {
 	return &protocol.SyncQueueEntry{
 		CameraId:         e.CameraID,
 		QueuedAt:         timestamppb.New(e.QueuedAt),
+		Priority:         e.Priority,
 		ProgressPercent:  e.ProgressPercent,
 		CurrentOperation: e.CurrentOperation,
 	}

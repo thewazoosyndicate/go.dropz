@@ -193,7 +193,7 @@ func (c *Coordinator) CancelSync(cameraID string, activeSyncTasks map[string]*Sy
 			task.Cancel()
 			c.log.Infof("Cancelled sync context for camera %s", cameraState.Camera.Name)
 		}
-		// Remove the active sync task 
+		// Remove the active sync task
 		delete(activeSyncTasks, cameraID)
 		c.log.Infof("Removed active sync task for camera %s", cameraState.Camera.Name)
 	}
@@ -201,7 +201,7 @@ func (c *Coordinator) CancelSync(cameraID string, activeSyncTasks map[string]*Sy
 
 	// Remove from sync queue regardless
 	c.db.RemoveSyncQueueEntry(cameraID)
-	
+
 	// Reset camera syncing status
 	c.db.UpdateCameraSyncingStatus(cameraState.Camera.MACAddress, false)
 
@@ -259,7 +259,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 	// Create a context for the sync operation - use the task's context if available, otherwise the provided context
 	var syncCtx context.Context
 	var cancel context.CancelFunc
-	
+
 	if task.Ctx != nil {
 		// Create a timeout context that also respects the task's cancellation context
 		syncCtx, cancel = context.WithTimeout(task.Ctx, 30*time.Minute)
@@ -531,6 +531,6 @@ func (c *Coordinator) updateSyncQueueEntrySafely(task *SyncTask, syncEntry *data
 			// Task is still active, proceed with update
 		}
 	}
-	
+
 	return c.db.UpdateSyncQueueEntry(syncEntry)
 }

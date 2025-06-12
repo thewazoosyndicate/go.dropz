@@ -697,6 +697,15 @@ input:checked + .toggle-slider:before {
   background-color: var(--secondary-color);
 }
 
+/* Offline/unreachable device signal styling */
+.device-card.status-unreachable .signal-bar {
+  background-color: #e74c3c; /* Red for offline devices */
+}
+
+[data-theme="dark"] .device-card.status-unreachable .signal-bar {
+  background-color: #c0392b; /* Darker red for dark theme */
+}
+
 /* Battery indicators */
 .battery-indicator {
   display: flex;

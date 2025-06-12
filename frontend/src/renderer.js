@@ -818,35 +818,68 @@ function getLogLevelName(level) {
 // Clean up devices that haven't been seen in a while
 function cleanupDisconnectedDevices() {
   const now = new Date();
-  const timeout = 5000; // 5 seconds
+  const timeout = 30000; // 30 seconds - increased timeout for better stability
   
   for (const mac in allDevices) {
     const device = allDevices[mac];
     const lastSeen = new Date(device.lastSeen);
     
     if (now - lastSeen > timeout) {
-      addLogEntry(`Device ${device.name} (${mac}) has not been seen for a while and may be offline.`, 'info');
-      
-      // Remove from UI pools using targeted removal
       const membership = uiState.poolMembership[mac] || {};
-      if (membership.discovered) {
-        removeDeviceFromPool(mac, 'discovered');
-      }
-      if (membership.managed) {
-        removeDeviceFromPool(mac, 'managed');
-      }
-      if (membership.sync) {
-        removeDeviceFromPool(mac, 'sync');
-      }
       
-      // Clean up tracking
-      delete allDevices[mac];
-      delete uiState.poolMembership[mac];
-      delete uiState.deviceElements[mac];
+      // Check if this is a managed camera
+      if (device.isManaged && device.isPaired) {
+        // For managed cameras, just mark as offline but keep them visible
+        debugLog(`Managed camera ${device.name} (${mac}) is offline but keeping visible`, LOG_LEVELS.DEBUG);
+        
+        // Update device state to show as unreachable
+        device.isReachable = false;
+        device.rssi = -100; // Set to minimum RSSI to show red signal
+        device.visualStatus = 'Unreachable';
+        
+        // Update the device element to show offline status
+        if (membership.managed && uiState.deviceElements[mac] && uiState.deviceElements[mac].managed) {
+          updateDeviceElement(uiState.deviceElements[mac].managed, device, false);
+        }
+        
+        // Remove from discovery and sync pools only
+        if (membership.discovered) {
+          removeDeviceFromPool(mac, 'discovered');
+        }
+        if (membership.sync) {
+          removeDeviceFromPool(mac, 'sync');
+        }
+        
+        // Update pool membership to reflect changes
+        uiState.poolMembership[mac] = {
+          discovered: false,
+          managed: true, // Keep managed status
+          sync: false
+        };
+      } else {
+        // For non-managed cameras, remove completely
+        addLogEntry(`Device ${device.name} (${mac}) has not been seen for a while and was removed.`, 'info');
+        
+        // Remove from all UI pools
+        if (membership.discovered) {
+          removeDeviceFromPool(mac, 'discovered');
+        }
+        if (membership.managed) {
+          removeDeviceFromPool(mac, 'managed');
+        }
+        if (membership.sync) {
+          removeDeviceFromPool(mac, 'sync');
+        }
+        
+        // Clean up tracking completely
+        delete allDevices[mac];
+        delete uiState.poolMembership[mac];
+        delete uiState.deviceElements[mac];
+      }
       
       // Remove from other collections as needed
-      if (syncQueue.includes(mac)) {
-        syncQueue = syncQueue.filter(m => m !== mac);
+      if (syncQueue.some(entry => entry.cameraId === device.id)) {
+        syncQueue = syncQueue.filter(entry => entry.cameraId !== device.id);
       }
       
       if (pairingInProgress[mac]) {

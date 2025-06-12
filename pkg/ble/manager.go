@@ -145,6 +145,12 @@ func (m *Manager) Connect(macAddress string) error {
 	}
 
 	conn.SetState(StateReady)
+	// Fetch and log battery status on connect
+	if battery, err := m.GetBatteryLevel(macAddress); err != nil {
+		m.log.Warnf("Failed to read battery level for device %s: %v", macAddress, err)
+	} else {
+		m.log.Infof("Battery level for device %s: %d%%", macAddress, battery)
+	}
 	m.log.Infof("Successfully connected to GoPro device: %s", macAddress)
 	return nil
 }
@@ -222,15 +228,15 @@ func (m *Manager) EnableWifi(macAddress string) error {
 
 // GetBatteryLevel queries the battery level from the device
 func (m *Manager) GetBatteryLevel(macAddress string) (int, error) {
-	response, err := m.sendQuery(macAddress, QueryGetStatus, []byte{StatusBatteryLevel})
+	response, err := m.sendQuery(macAddress, QueryGetStatus, []byte{StatusBatteryPercentage})
 	if err != nil {
 		return 0, err
 	}
 
-	if len(response.Data) < 2 || response.Data[0] != StatusBatteryLevel {
+	if len(response.Data) < 2 || response.Data[0] != StatusBatteryPercentage {
 		return 0, fmt.Errorf("invalid battery response")
 	}
-
+	// Return the percentage value directly
 	return int(response.Data[1]), nil
 }
 

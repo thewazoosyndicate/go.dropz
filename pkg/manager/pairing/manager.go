@@ -103,11 +103,19 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 		if err != nil {
 			pm.log.Warnf("Failed to fetch hardware metadata: %v", err)
 		} else {
+			// Also fetch battery level
+			var batteryLevel int32
+			if bl, err2 := pm.ble.GetBatteryLevel(macAddress); err2 != nil {
+				pm.log.Warnf("Failed to fetch battery level for camera %s: %v", cameraState.Camera.Name, err2)
+			} else {
+				batteryLevel = int32(bl)
+			}
 			meta := database.CameraMetadata{
 				ID:              cameraState.Camera.ID,
 				Model:           hwMeta["model_name"],
 				FirmwareVersion: hwMeta["firmware_version"],
 				SerialNumber:    hwMeta["serial_number"],
+				BatteryLevel:    batteryLevel,
 			}
 			if err := pm.db.SetCameraMetadata(macAddress, meta); err != nil {
 				pm.log.Errorf("Failed to save camera metadata: %v", err)

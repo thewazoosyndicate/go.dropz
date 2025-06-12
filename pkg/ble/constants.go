@@ -46,9 +46,10 @@ const (
 	QueryGetStatus   = 0x13
 
 	// Status IDs
-	StatusBatteryLevel = 2
-	StatusPairingState = 19
-	StatusSystemReady  = 82
+	StatusBatteryLevel      = 2
+	StatusBatteryPercentage = 70 // Internal Battery Percentage (OpenGoPro spec)
+	StatusPairingState      = 19
+	StatusSystemReady       = 82
 
 	// Pairing States
 	PairingNotPaired  = 0

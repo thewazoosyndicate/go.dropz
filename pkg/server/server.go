@@ -21,6 +21,7 @@ type Manager interface {
 	UnmanageCamera(cameraID string) error
 	PairCamera(cameraID string) (*database.ManagedCamera, error)
 	ForceSync(cameraID string) (*database.SyncQueueEntry, error)
+	CancelSync(cameraID string) error
 	CreateGroup(name string, cameraIDs []string) (*database.Group, error)
 	UpdateGroup(groupID, name string, cameraIDs []string) (*database.Group, error)
 	DeleteGroup(groupID string) error
@@ -744,6 +745,30 @@ func (s *DropzServer) ForceSync(ctx context.Context, req *protocol.ForceSyncRequ
 		Success:    true,
 		Message:    fmt.Sprintf("Camera %s added to sync queue", req.CameraId),
 		QueueEntry: queueEntry.ToProtoSyncQueueEntry(),
+	}, nil
+}
+
+// CancelSync implements the CancelSync RPC method
+func (s *DropzServer) CancelSync(ctx context.Context, req *protocol.CancelSyncRequest) (*protocol.CancelSyncResponse, error) {
+	if s.ctx.Err() != nil {
+		return &protocol.CancelSyncResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
+	}
+	s.log.Debugf("Handling CancelSync request for camera %s", req.CameraId)
+
+	err := s.manager.CancelSync(req.CameraId)
+	if err != nil {
+		return &protocol.CancelSyncResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	// Notify about updates
+	s.NotifyUpdate()
+
+	return &protocol.CancelSyncResponse{
+		Success: true,
+		Message: fmt.Sprintf("Camera %s sync cancelled and removed from queue", req.CameraId),
 	}, nil
 }
 

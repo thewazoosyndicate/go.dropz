@@ -8,6 +8,28 @@ var logs_pb = require('./logs_pb.js');
 var config_pb = require('./config_pb.js');
 var common_pb = require('./common_pb.js');
 
+function serialize_dropz_CancelSyncRequest(arg) {
+  if (!(arg instanceof gopro_pb.CancelSyncRequest)) {
+    throw new Error('Expected argument of type dropz.CancelSyncRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_CancelSyncRequest(buffer_arg) {
+  return gopro_pb.CancelSyncRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_CancelSyncResponse(arg) {
+  if (!(arg instanceof gopro_pb.CancelSyncResponse)) {
+    throw new Error('Expected argument of type dropz.CancelSyncResponse');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_CancelSyncResponse(buffer_arg) {
+  return gopro_pb.CancelSyncResponse.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
 function serialize_dropz_Config(arg) {
   if (!(arg instanceof config_pb.Config)) {
     throw new Error('Expected argument of type dropz.Config');
@@ -498,6 +520,17 @@ getSyncQueue: {
     requestDeserialize: deserialize_dropz_ForceSyncRequest,
     responseSerialize: serialize_dropz_ForceSyncResponse,
     responseDeserialize: deserialize_dropz_ForceSyncResponse,
+  },
+  cancelSync: {
+    path: '/dropz.DropzService/CancelSync',
+    requestStream: false,
+    responseStream: false,
+    requestType: gopro_pb.CancelSyncRequest,
+    responseType: gopro_pb.CancelSyncResponse,
+    requestSerialize: serialize_dropz_CancelSyncRequest,
+    requestDeserialize: deserialize_dropz_CancelSyncRequest,
+    responseSerialize: serialize_dropz_CancelSyncResponse,
+    responseDeserialize: deserialize_dropz_CancelSyncResponse,
   },
   // Group management
 getGroups: {

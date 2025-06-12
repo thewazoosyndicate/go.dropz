@@ -161,6 +161,17 @@ message ForceSyncResponse {
   SyncQueueEntry queue_entry = 3;
 }
 
+// Request to cancel sync for a specific camera
+message CancelSyncRequest {
+  string camera_id = 1;
+}
+
+// Response for cancel sync request
+message CancelSyncResponse {
+  bool success = 1;
+  string message = 2;
+}
+
 // Group related requests and responses
 message GetGroupsRequest {}
 

@@ -13,7 +13,7 @@ import (
 // processSyncQueue checks the sync queue and processes cameras that need syncing
 func (m *GoProManager) processSyncQueue() {
 	// Delegate to sync coordinator
-	m.syncCoordinator.ProcessSyncQueue(m.activeSyncTasks, &m.mutex, m.notifier, m.performCameraSync)
+	m.syncCoordinator.ProcessSyncQueue(m.activeSyncTasks, &m.mutex, m.notifier, m.performCameraSync, m.ctx)
 }
 
 // ForceSync adds a camera to the sync queue for immediate synchronization
@@ -32,6 +32,11 @@ func (m *GoProManager) ForceSync(cameraID string) (*database.SyncQueueEntry, err
 	}
 
 	return syncEntry, nil
+}
+
+// CancelSync cancels an ongoing sync operation and removes the camera from the sync queue
+func (m *GoProManager) CancelSync(cameraID string) error {
+	return m.syncCoordinator.CancelSync(cameraID, m.activeSyncTasks, &m.mutex, m.notifier)
 }
 
 // performCameraSync handles the actual syncing of a camera

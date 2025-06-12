@@ -30,6 +30,8 @@ type SyncTask struct {
 	CompletedAt  time.Time
 	Success      bool
 	ErrorMessage string
+	Cancel       context.CancelFunc
+	Ctx          context.Context
 }
 
 // Coordinator handles sync orchestration
@@ -49,7 +51,7 @@ func NewCoordinator(db *database.Database, ble ble.BLEInterface, log logger.Logg
 }
 
 // ProcessSyncQueue checks the sync queue and processes cameras that need syncing
-func (c *Coordinator) ProcessSyncQueue(activeSyncTasks map[string]*SyncTask, mutex *sync.RWMutex, notifier common.UpdateNotifier, performSync func(*SyncTask)) {
+func (c *Coordinator) ProcessSyncQueue(activeSyncTasks map[string]*SyncTask, mutex *sync.RWMutex, notifier common.UpdateNotifier, performSync func(*SyncTask), ctx context.Context) {
 	if !c.db.GetConfig().SyncEnabled {
 		c.log.Debug("Sync is disabled, skipping sync queue processing")
 		return
@@ -94,11 +96,14 @@ func (c *Coordinator) ProcessSyncQueue(activeSyncTasks map[string]*SyncTask, mut
 		c.db.UpdateCameraSyncingStatus(camera.CameraState.Camera.MACAddress, true)
 
 		// Create and start a sync task
+		taskCtx, taskCancel := context.WithCancel(ctx)
 		syncTask := &SyncTask{
 			CameraID:   camera.CameraState.Camera.ID,
 			MACAddress: camera.CameraState.Camera.MACAddress,
 			CameraName: camera.CameraState.Camera.Name,
 			StartedAt:  time.Now(),
+			Cancel:     taskCancel,
+			Ctx:        taskCtx,
 		}
 
 		mutex.Lock()
@@ -162,6 +167,54 @@ func (c *Coordinator) ForceSync(cameraID string, notifier common.UpdateNotifier)
 	return syncEntry, nil
 }
 
+// CancelSync cancels an ongoing sync operation and removes the camera from the sync queue
+func (c *Coordinator) CancelSync(cameraID string, activeSyncTasks map[string]*SyncTask, mutex *sync.RWMutex, notifier common.UpdateNotifier) error {
+	// Find the camera
+	var cameraState *database.CameraWithState
+	for _, state := range c.db.CameraStates {
+		if state.Camera.ID == cameraID {
+			cameraState = state
+			break
+		}
+	}
+
+	if cameraState == nil {
+		return fmt.Errorf("camera with ID %s not found", cameraID)
+	}
+
+	c.log.Infof("Canceling sync for camera %s", cameraState.Camera.Name)
+
+	// Check if there's an active sync task
+	mutex.Lock()
+	task, exists := activeSyncTasks[cameraID]
+	if exists {
+		// Cancel the sync task's context first
+		if task.Cancel != nil {
+			task.Cancel()
+			c.log.Infof("Cancelled sync context for camera %s", cameraState.Camera.Name)
+		}
+		// Remove the active sync task 
+		delete(activeSyncTasks, cameraID)
+		c.log.Infof("Removed active sync task for camera %s", cameraState.Camera.Name)
+	}
+	mutex.Unlock()
+
+	// Remove from sync queue regardless
+	c.db.RemoveSyncQueueEntry(cameraID)
+	
+	// Reset camera syncing status
+	c.db.UpdateCameraSyncingStatus(cameraState.Camera.MACAddress, false)
+
+	c.log.Infof("Cancelled sync for camera %s", cameraState.Camera.Name)
+
+	// Notify immediately
+	if notifier != nil {
+		notifier.NotifyUpdate()
+	}
+
+	return nil
+}
+
 // PerformCameraSync handles the actual syncing of a camera
 func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[string]*SyncTask, mutex *sync.RWMutex, notifier common.UpdateNotifier, bleOperation func(context.Context, string, func() error) error, ctx context.Context) {
 	// Remove task when done
@@ -203,15 +256,24 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 	// Get the current config
 	config := c.db.GetConfig()
 
-	// Create a context for the sync operation
-	syncCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	// Create a context for the sync operation - use the task's context if available, otherwise the provided context
+	var syncCtx context.Context
+	var cancel context.CancelFunc
+	
+	if task.Ctx != nil {
+		// Create a timeout context that also respects the task's cancellation context
+		syncCtx, cancel = context.WithTimeout(task.Ctx, 30*time.Minute)
+	} else {
+		// Fallback to the provided context
+		syncCtx, cancel = context.WithTimeout(ctx, 30*time.Minute)
+	}
 	defer cancel()
 
 	// Real implementation of camera sync process
 	// Step 1: Connect to camera via BLE
 	syncEntry.CurrentOperation = "Connecting via BLE"
 	syncEntry.ProgressPercent = 10
-	if err := c.db.UpdateSyncQueueEntry(syncEntry); err != nil {
+	if err := c.updateSyncQueueEntrySafely(task, syncEntry); err != nil {
 		c.log.Errorf("Failed to update sync queue entry progress: %v", err)
 	}
 
@@ -231,7 +293,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 	if connErr != nil {
 		syncEntry.CurrentOperation = "BLE Connection Failed"
 		// Just update the entry without setting a status enum
-		if err := c.db.UpdateSyncQueueEntry(syncEntry); err != nil {
+		if err := c.updateSyncQueueEntrySafely(task, syncEntry); err != nil {
 			c.log.Errorf("Failed to update sync queue entry: %v", err)
 		}
 		c.log.Errorf("Failed to connect to camera via BLE: %v", connErr)
@@ -251,7 +313,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 	// Step 2: Enable WiFi on the camera
 	syncEntry.CurrentOperation = "Enabling WiFi"
 	syncEntry.ProgressPercent = 30
-	if err := c.db.UpdateSyncQueueEntry(syncEntry); err != nil {
+	if err := c.updateSyncQueueEntrySafely(task, syncEntry); err != nil {
 		c.log.Errorf("Failed to update sync queue entry progress: %v", err)
 	}
 
@@ -268,7 +330,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 
 	if wifiErr != nil {
 		syncEntry.CurrentOperation = "WiFi Enabling Failed"
-		if err := c.db.UpdateSyncQueueEntry(syncEntry); err != nil {
+		if err := c.updateSyncQueueEntrySafely(task, syncEntry); err != nil {
 			c.log.Errorf("Failed to update sync queue entry: %v", err)
 		}
 		c.log.Errorf("Failed to enable WiFi: %v", wifiErr)
@@ -287,7 +349,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 	// Step 3: Connect to WiFi
 	syncEntry.CurrentOperation = "Connecting to WiFi"
 	syncEntry.ProgressPercent = 50
-	if err := c.db.UpdateSyncQueueEntry(syncEntry); err != nil {
+	if err := c.updateSyncQueueEntrySafely(task, syncEntry); err != nil {
 		c.log.Errorf("Failed to update sync queue entry progress: %v", err)
 	}
 
@@ -409,7 +471,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 	// Update completion status in sync entry
 	syncEntry.ProgressPercent = 100
 	syncEntry.CurrentOperation = "Completed"
-	if err := c.db.UpdateSyncQueueEntry(syncEntry); err != nil {
+	if err := c.updateSyncQueueEntrySafely(task, syncEntry); err != nil {
 		c.log.Errorf("Failed to update sync queue entry on completion: %v", err)
 	}
 
@@ -454,4 +516,21 @@ func (c *Coordinator) GetVideosByCamera(cameraID string, startDate, endDate time
 	}
 
 	return filtered[offset:end], totalCount
+}
+
+// updateSyncQueueEntrySafely updates the sync queue entry only if the task hasn't been cancelled
+func (c *Coordinator) updateSyncQueueEntrySafely(task *SyncTask, syncEntry *database.SyncQueueEntry) error {
+	// Check if the task has been cancelled
+	if task.Ctx != nil {
+		select {
+		case <-task.Ctx.Done():
+			// Task has been cancelled, don't update the database
+			c.log.Debugf("Skipping sync queue update for cancelled task: %s", task.CameraID)
+			return nil
+		default:
+			// Task is still active, proceed with update
+		}
+	}
+	
+	return c.db.UpdateSyncQueueEntry(syncEntry)
 }

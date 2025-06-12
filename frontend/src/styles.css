@@ -770,6 +770,14 @@ input:checked + .toggle-slider:before {
   background-color: var(--primary-dark);
 }
 
+.cancel-button {
+  background-color: var(--danger-color) !important;
+}
+
+.cancel-button:hover {
+  background-color: var(--danger-dark) !important;
+}
+
 .sync-button {
   background-color: var(--secondary-color);
 }

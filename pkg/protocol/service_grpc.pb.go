@@ -29,6 +29,7 @@ const (
 	DropzService_GetSyncQueue_FullMethodName           = "/dropz.DropzService/GetSyncQueue"
 	DropzService_WatchSyncQueue_FullMethodName         = "/dropz.DropzService/WatchSyncQueue"
 	DropzService_ForceSync_FullMethodName              = "/dropz.DropzService/ForceSync"
+	DropzService_CancelSync_FullMethodName             = "/dropz.DropzService/CancelSync"
 	DropzService_GetGroups_FullMethodName              = "/dropz.DropzService/GetGroups"
 	DropzService_CreateGroup_FullMethodName            = "/dropz.DropzService/CreateGroup"
 	DropzService_UpdateGroup_FullMethodName            = "/dropz.DropzService/UpdateGroup"
@@ -62,6 +63,7 @@ type DropzServiceClient interface {
 	GetSyncQueue(ctx context.Context, in *GetSyncQueueRequest, opts ...grpc.CallOption) (*GetSyncQueueResponse, error)
 	WatchSyncQueue(ctx context.Context, in *GetSyncQueueRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetSyncQueueResponse], error)
 	ForceSync(ctx context.Context, in *ForceSyncRequest, opts ...grpc.CallOption) (*ForceSyncResponse, error)
+	CancelSync(ctx context.Context, in *CancelSyncRequest, opts ...grpc.CallOption) (*CancelSyncResponse, error)
 	// Group management
 	GetGroups(ctx context.Context, in *GetGroupsRequest, opts ...grpc.CallOption) (*GetGroupsResponse, error)
 	CreateGroup(ctx context.Context, in *CreateGroupRequest, opts ...grpc.CallOption) (*Group, error)
@@ -214,6 +216,16 @@ func (c *dropzServiceClient) ForceSync(ctx context.Context, in *ForceSyncRequest
 	return out, nil
 }
 
+func (c *dropzServiceClient) CancelSync(ctx context.Context, in *CancelSyncRequest, opts ...grpc.CallOption) (*CancelSyncResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CancelSyncResponse)
+	err := c.cc.Invoke(ctx, DropzService_CancelSync_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *dropzServiceClient) GetGroups(ctx context.Context, in *GetGroupsRequest, opts ...grpc.CallOption) (*GetGroupsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetGroupsResponse)
@@ -344,6 +356,7 @@ type DropzServiceServer interface {
 	GetSyncQueue(context.Context, *GetSyncQueueRequest) (*GetSyncQueueResponse, error)
 	WatchSyncQueue(*GetSyncQueueRequest, grpc.ServerStreamingServer[GetSyncQueueResponse]) error
 	ForceSync(context.Context, *ForceSyncRequest) (*ForceSyncResponse, error)
+	CancelSync(context.Context, *CancelSyncRequest) (*CancelSyncResponse, error)
 	// Group management
 	GetGroups(context.Context, *GetGroupsRequest) (*GetGroupsResponse, error)
 	CreateGroup(context.Context, *CreateGroupRequest) (*Group, error)
@@ -398,6 +411,9 @@ func (UnimplementedDropzServiceServer) WatchSyncQueue(*GetSyncQueueRequest, grpc
 }
 func (UnimplementedDropzServiceServer) ForceSync(context.Context, *ForceSyncRequest) (*ForceSyncResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ForceSync not implemented")
+}
+func (UnimplementedDropzServiceServer) CancelSync(context.Context, *CancelSyncRequest) (*CancelSyncResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelSync not implemented")
 }
 func (UnimplementedDropzServiceServer) GetGroups(context.Context, *GetGroupsRequest) (*GetGroupsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetGroups not implemented")
@@ -608,6 +624,24 @@ func _DropzService_ForceSync_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(DropzServiceServer).ForceSync(ctx, req.(*ForceSyncRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DropzService_CancelSync_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelSyncRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).CancelSync(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_CancelSync_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).CancelSync(ctx, req.(*CancelSyncRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -844,6 +878,10 @@ var DropzService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ForceSync",
 			Handler:    _DropzService_ForceSync_Handler,
+		},
+		{
+			MethodName: "CancelSync",
+			Handler:    _DropzService_CancelSync_Handler,
 		},
 		{
 			MethodName: "GetGroups",

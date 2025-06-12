@@ -1569,20 +1569,36 @@ function updateDeviceControls(element, device, inSyncQueue = false) {
   const syncButton = element.querySelector('.sync-button');
   const manageToggle = element.querySelector('.manage-toggle');
   
+  // Check if device is in sync queue (has an entry in syncQueue array)
+  const isInSyncQueue = syncQueue.some(entry => entry.cameraId === device.id);
+  
   // Configure pair button
   if (pairButton) {
     // Clear existing event listeners by cloning the element
     const newPairButton = pairButton.cloneNode(true);
     pairButton.parentNode.replaceChild(newPairButton, pairButton);
     
-    if (pairingInProgress[macAddress]) {
+    if (isInSyncQueue) {
+      // Device is in sync queue - show Cancel button
+      newPairButton.textContent = "Cancel";
+      newPairButton.disabled = false;
+      newPairButton.classList.remove('in-progress');
+      newPairButton.classList.add('cancel-button');
+      newPairButton.addEventListener('click', () => {
+        newPairButton.textContent = "Cancelling...";
+        newPairButton.disabled = true;
+        newPairButton.classList.add('in-progress');
+        cancelSync(macAddress);
+      });
+    } else if (pairingInProgress[macAddress]) {
       newPairButton.textContent = "Pairing...";
       newPairButton.disabled = true;
       newPairButton.classList.add('in-progress');
+      newPairButton.classList.remove('cancel-button');
     } else if (!device.isPaired) {
       newPairButton.textContent = "Pair";
       newPairButton.disabled = false;
-      newPairButton.classList.remove('in-progress');
+      newPairButton.classList.remove('in-progress', 'cancel-button');
       newPairButton.addEventListener('click', () => {
         newPairButton.textContent = "Pairing...";
         newPairButton.disabled = true;
@@ -1592,7 +1608,7 @@ function updateDeviceControls(element, device, inSyncQueue = false) {
     } else {
       newPairButton.textContent = "Paired";
       newPairButton.disabled = true;
-      newPairButton.classList.remove('in-progress');
+      newPairButton.classList.remove('in-progress', 'cancel-button');
     }
   }
   
@@ -1974,14 +1990,34 @@ function createGoProElement(device, inSyncQueue = false) {
   
   // Configure pair button
   if (pairButton) {
+    // Check if device is in sync queue (has an entry in syncQueue array)
+    const isInSyncQueue = syncQueue.some(entry => entry.cameraId === device.id);
+    
+    if (isInSyncQueue) {
+      // Device is in sync queue - show Cancel button
+      pairButton.textContent = "Cancel";
+      pairButton.disabled = false;
+      pairButton.classList.remove('in-progress');
+      pairButton.classList.add('cancel-button');
+      pairButton.addEventListener('click', () => {
+        pairButton.textContent = "Cancelling...";
+        pairButton.disabled = true;
+        pairButton.classList.add('in-progress');
+        cancelSync(device.macAddress);
+      });
+    }
     // Check if we're already pairing this device
-    if (pairingInProgress[device.macAddress]) {
+    else if (pairingInProgress[device.macAddress]) {
       pairButton.textContent = "Pairing...";
       pairButton.disabled = true;
       pairButton.classList.add('in-progress');
+      pairButton.classList.remove('cancel-button');
     }
     // Check if device is discovered (not paired)
     else if (!device.isPaired) {
+      pairButton.textContent = "Pair";
+      pairButton.disabled = false;
+      pairButton.classList.remove('in-progress', 'cancel-button');
       pairButton.addEventListener('click', () => {
         // Update button state immediately
         pairButton.textContent = "Pairing...";
@@ -1994,8 +2030,11 @@ function createGoProElement(device, inSyncQueue = false) {
       pairButton.textContent = "Pairing...";
       pairButton.disabled = true;
       pairButton.classList.add('in-progress');
+      pairButton.classList.remove('cancel-button');
     } else {
+      pairButton.textContent = "Paired";
       pairButton.disabled = true;
+      pairButton.classList.remove('in-progress', 'cancel-button');
     }
   }
   
@@ -2371,6 +2410,67 @@ function resetSyncButtonState(macAddress) {
       syncButton.disabled = false;
       syncButton.classList.remove('in-progress');
     }
+  }
+}
+
+// Cancel sync for a device and remove from sync queue
+function cancelSync(macAddress) {
+  const device = allDevices[macAddress];
+  if (!device || !device.id) {
+    debugLog(`Cannot cancel sync, no device ID found for ${macAddress}`, LOG_LEVELS.ERROR);
+    addLogEntry(`Failed to cancel sync: device not found or missing ID`, 'error');
+    return;
+  }
+  
+  debugLog(`Cancelling sync for device: ${device.name} (${device.id})`, LOG_LEVELS.INFO);
+  addLogEntry(`Cancelling sync for ${device.name}`, 'info');
+  
+  try {
+    const grpcUtils = require('./grpc-utils');
+    const client = grpcUtils.getClient();
+    
+    // Create the request
+    const request = new grpcUtils.CancelSyncRequest();
+    request.setCameraId(device.id);
+    
+    debugLog(`Sending CancelSync request for camera ID: ${device.id}`, LOG_LEVELS.DEBUG);
+    
+    // Call the service
+    client.cancelSync(request, (error, response) => {
+      if (error) {
+        debugLog(`Error cancelling sync: ${error.message}`, LOG_LEVELS.ERROR);
+        addLogEntry(`Failed to cancel sync for ${device.name}: ${error.message}`, 'error');
+        return;
+      }
+      
+      if (!response.getSuccess()) {
+        debugLog(`Cancelling sync failed: ${response.getMessage()}`, LOG_LEVELS.ERROR);
+        addLogEntry(`Failed to cancel sync for ${device.name}: ${response.getMessage()}`, 'error');
+        return;
+      }
+      
+      // Successfully cancelled sync
+      debugLog(`Successfully cancelled sync for device: ${device.name}`, LOG_LEVELS.INFO);
+      addLogEntry(`Cancelled sync for ${device.name}`, 'success');
+      
+      // Update local device state - device should be synced now (removed from queue)
+      device.isSynced = true;
+      device.isSyncing = false;
+      
+      // Remove from sync queue if present
+      const existingIndex = syncQueue.findIndex(entry => entry.cameraId === device.id);
+      if (existingIndex >= 0) {
+        syncQueue.splice(existingIndex, 1);
+      }
+      
+      // Update UI
+      addOrUpdateDevice(device);
+      updateSyncQueueUI();
+      updateCounters();
+    });
+  } catch (error) {
+    debugLog(`Exception during cancelling sync: ${error.message}`, LOG_LEVELS.ERROR);
+    addLogEntry(`Error cancelling sync for ${device.name}: ${error.message}`, 'error');
   }
 }
 

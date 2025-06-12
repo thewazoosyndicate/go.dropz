@@ -28,6 +28,7 @@ service DropzService {
   rpc GetSyncQueue(GetSyncQueueRequest) returns (GetSyncQueueResponse);
   rpc WatchSyncQueue(GetSyncQueueRequest) returns (stream GetSyncQueueResponse);
   rpc ForceSync(ForceSyncRequest) returns (ForceSyncResponse);
+  rpc CancelSync(CancelSyncRequest) returns (CancelSyncResponse);
   
   // Group management
   rpc GetGroups(GetGroupsRequest) returns (GetGroupsResponse);

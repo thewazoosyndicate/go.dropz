@@ -56,6 +56,8 @@ module.exports = {
   GetSyncQueueResponse: goProProto.GetSyncQueueResponse,
   ForceSyncRequest: goProProto.ForceSyncRequest,
   ForceSyncResponse: goProProto.ForceSyncResponse,
+  CancelSyncRequest: goProProto.CancelSyncRequest,
+  CancelSyncResponse: goProProto.CancelSyncResponse,
   
   // Request/Response types for Group operations
   GetGroupsRequest: goProProto.GetGroupsRequest,

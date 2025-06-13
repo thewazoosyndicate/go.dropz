@@ -672,15 +672,15 @@ function determineVisualStatus(status) {
 }
 
 // Check if a camera should be in the discovered pool
-// For a camera to appear in "Discovered pool" she will have to be reachable and NOT managed (regardless of pairing status)
+// For a camera to appear in "Discovered" it must either not be paired or not be managed (reachability not required)
 function shouldShowInDiscoveredPool(device) {
-  return device.isReachable && !device.isManaged;
+  return !device.isPaired || !device.isManaged;
 }
 
 // Check if a camera should be in the managed pool
-// For a camera to appear in "Managed pool" she will have to have is_managed and is_paired to true (reachability is not required)
+// For a camera to appear in "Managed pool" it must be reachable, paired, and managed
 function shouldShowInManagedPool(device) {
-  return device.isPaired && device.isManaged;
+  return device.isReachable && device.isPaired && device.isManaged;
 }
 
 // Check if a camera should be in the sync queue
@@ -1393,7 +1393,12 @@ function updateDeviceInPools(device, poolMembership, isNewDevice, membershipChan
   if (poolMembership.sync) {
     updateDeviceInPool(device, 'sync');
   }
-  
+
+  // Ensure discovered element is removed if device should no longer appear
+  if (!poolMembership.discovered) {
+    removeDeviceFromPool(device.macAddress, 'discovered');
+  }
+
   // Clean up tracking for elements that are no longer needed
   if (membershipChanged) {
     cleanupDeviceElements(macAddress, poolMembership);
@@ -2514,7 +2519,7 @@ function cancelSync(macAddress) {
 function toggleDeviceManaged(macAddress, isManaged) {
   const device = allDevices[macAddress];
   if (!device || !device.id) {
-    debugLog(`Cannot ${isManaged ? 'manage' : 'unmanage'} device, no device ID found for ${macAddress}`, LOG_LEVELS.ERROR);
+    debugLog(`Cannot ${isManaged ? 'manage' : 'unmanaging'} device, no device ID found for ${macAddress}`, LOG_LEVELS.ERROR);
     return;
   }
   
@@ -2558,6 +2563,10 @@ function toggleDeviceManaged(macAddress, isManaged) {
       
       // Update local device state immediately to ensure UI reflects the change
       device.isManaged = isManaged;
+      if (isManaged) {
+        // Managing implies paired
+        device.isPaired = true;
+      }
       
       // If this was a manage request, process the returned camera
       if (isManaged && response.getCamera) {
@@ -3845,25 +3854,22 @@ function updateSignalStrengthForDevice(macAddress, rssi) {
 
 // Update a device's status in the tracking
 function updateDeviceStatus(macAddress, status) {
-  if (!allDevices[macAddress]) {
+  const device = allDevices[macAddress];
+  if (!device) {
     debugLog(`Cannot update status for unknown device: ${macAddress}`, LOG_LEVELS.ERROR);
     return;
   }
-  
-  // Store previous status for comparison
-  const previousStatus = allDevices[macAddress].visualStatus;
-  
-  // Set the new visualStatus for UI purposes
-  allDevices[macAddress].visualStatus = status;
-  
-  // Use targeted update instead of full rebuild
-  const device = allDevices[macAddress];
-  updateDeviceElementInPlace(device);
-  
-  // Apply status change animation if status actually changed
-  if (previousStatus !== status) {
-    highlightStatusChange(macAddress);
+  // Update pairing flags
+  if (status === 'paired') {
+    device.isPairing = false;
+    device.isPaired = true;
   }
+  // Update visual status
+  device.visualStatus = status;
+  // Rerun pool logic to remove from Discovered and place into Available/Managed
+  addOrUpdateDevice(device);
+  // Highlight status change
+  highlightStatusChange(macAddress);
 }
 
 // Add debug function to log device state and pool memberships

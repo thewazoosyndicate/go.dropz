@@ -19,12 +19,13 @@ var _ BLEInterface = (*Manager)(nil)
 // Manager provides a clean, simple BLE interface for GoPro devices
 // following the OpenGoPro BLE specification exactly
 type Manager struct {
-	adapter           *bluetooth.Adapter
-	devices           map[string]*Device           // discovered devices
-	connections       map[string]*DeviceConnection // active connections
-	mutex             sync.RWMutex
-	log               logger.Logger
-	isScanning        bool
+	adapter     *bluetooth.Adapter
+	devices     map[string]*Device           // discovered devices
+	connections map[string]*DeviceConnection // active connections
+	mutex       sync.RWMutex
+	log         logger.Logger
+	isScanning  bool
+	// callback for live discovery updates
 	discoveryCallback DeviceDiscoveryCallback // callback for live discovery updates
 }
 
@@ -54,31 +55,42 @@ func (m *Manager) StartScanningWithCallback(ctx context.Context, callback Device
 	m.discoveryCallback = callback
 	m.mutex.Unlock()
 
-	defer func() {
-		m.mutex.Lock()
-		m.isScanning = false
-		m.discoveryCallback = nil
-		m.mutex.Unlock()
-	}()
-
-	m.log.Info("Starting BLE scan for GoPro devices")
-
-	return m.adapter.Scan(func(adapter *bluetooth.Adapter, result bluetooth.ScanResult) {
-		if strings.Contains(strings.ToLower(result.LocalName()), "gopro") {
-			m.addDiscoveredDevice(result)
+	// Start scanning in background and restart if interrupted
+	go func() {
+		m.log.Info("Starting BLE scan for GoPro devices")
+		for {
+			m.mutex.RLock()
+			if !m.isScanning {
+				m.mutex.RUnlock()
+				break
+			}
+			m.mutex.RUnlock()
+			// run scan session (blocks until StopScan or error)
+			_ = m.adapter.Scan(func(adapter *bluetooth.Adapter, result bluetooth.ScanResult) {
+				if strings.Contains(strings.ToLower(result.LocalName()), "gopro") {
+					m.addDiscoveredDevice(result)
+				}
+			})
+			// loop to restart scanning if still enabled
 		}
-	})
+		m.log.Info("Stopped BLE scanning")
+	}()
+	return nil
 }
 
 // StopScanning stops the current scan
 func (m *Manager) StopScanning() error {
 	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
 	if !m.isScanning {
+		m.mutex.Unlock()
 		return nil
 	}
+	// clear scanning flag and discovery callback
+	m.isScanning = false
+	m.discoveryCallback = nil
+	m.mutex.Unlock()
 
+	m.log.Info("Stopping BLE scan")
 	return m.adapter.StopScan()
 }
 

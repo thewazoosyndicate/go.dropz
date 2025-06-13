@@ -3,7 +3,6 @@ package database
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -206,7 +205,7 @@ func (db *Database) saveToFile() error {
 		return fmt.Errorf("failed to marshal database: %v", err)
 	}
 
-	if err := ioutil.WriteFile(db.filePath, data, 0644); err != nil {
+	if err := os.WriteFile(db.filePath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write database file: %v", err)
 	}
 
@@ -915,8 +914,9 @@ func (db *Database) GetCamerasForDiscoveredPool() []*DiscoveredCamera {
 			cameraState.Status.IsPaired,
 			cameraState.Status.IsManaged)
 
-		// Camera must be reachable and NOT managed (regardless of pairing status)
-		if cameraState.Status.IsReachable && !cameraState.Status.IsManaged {
+		// Camera must be reachable and NOT paired (managed cameras still appear until paired)
+		// Camera appears in Discovered pool if either not paired or not managed (reachability not required)
+		if !cameraState.Status.IsPaired || !cameraState.Status.IsManaged {
 			cameras = append(cameras, &DiscoveredCamera{CameraState: cameraState})
 			db.log.Tracef("✓ Camera %s INCLUDED in discovered pool", cameraState.Camera.Name)
 		} else {
@@ -936,8 +936,8 @@ func (db *Database) GetCamerasForManagedPool() []*ManagedCamera {
 	cameras := make([]*ManagedCamera, 0)
 	for _, cameraState := range db.CameraStates {
 		// Camera must be paired and managed (reachability is not required for managed pool)
-		if cameraState.Status.IsPaired &&
-			cameraState.Status.IsManaged {
+		// Camera appears in Managed pool if paired and managed
+		if cameraState.Status.IsPaired && cameraState.Status.IsManaged {
 			cameras = append(cameras, &ManagedCamera{CameraState: cameraState})
 		}
 	}

@@ -935,9 +935,8 @@ func (db *Database) GetCamerasForManagedPool() []*ManagedCamera {
 
 	cameras := make([]*ManagedCamera, 0)
 	for _, cameraState := range db.CameraStates {
-		// Camera must be reachable, paired, and managed
-		if cameraState.Status.IsReachable &&
-			cameraState.Status.IsPaired &&
+		// Camera must be paired and managed (reachability is not required for managed pool)
+		if cameraState.Status.IsPaired &&
 			cameraState.Status.IsManaged {
 			cameras = append(cameras, &ManagedCamera{CameraState: cameraState})
 		}

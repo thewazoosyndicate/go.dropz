@@ -678,9 +678,9 @@ function shouldShowInDiscoveredPool(device) {
 }
 
 // Check if a camera should be in the managed pool
-// For a camera to appear in "Managed pool" she will have to have is_managed and is_paired to true and is_reachable to true
+// For a camera to appear in "Managed pool" she will have to have is_managed and is_paired to true (reachability is not required)
 function shouldShowInManagedPool(device) {
-  return device.isReachable && device.isPaired && device.isManaged;
+  return device.isPaired && device.isManaged;
 }
 
 // Check if a camera should be in the sync queue

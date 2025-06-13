@@ -1,8 +1,9 @@
 // Simple file logger for debugging with log levels
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
-const logFilePath = path.join(__dirname, '..', 'logs', 'debug.log');
+const logFilePath = path.join(os.homedir(), '.dropz', 'logs', 'debug.log');
 
 // Log levels: 0 = ERROR, 1 = WARN, 2 = INFO, 3 = DEBUG, 4 = TRACE
 const LOG_LEVELS = {
@@ -37,6 +38,10 @@ function setLogLevel(level) {
 
 // Clear the log file on startup
 try {
+  // Ensure the log directory exists
+  const logDir = path.dirname(logFilePath);
+  fs.mkdirSync(logDir, { recursive: true });
+  
   fs.writeFileSync(logFilePath, `Debug log started: ${new Date().toISOString()}, Log level: ${getLogLevelName(currentLogLevel)}\n`);
 } catch (error) {
   console.error(`Failed to create log file: ${error.message}`);
@@ -51,6 +56,10 @@ function logToFile(message, level = LOG_LEVELS.INFO) {
   if (level > currentLogLevel) return;
   
   try {
+    // Ensure the log directory exists
+    const logDir = path.dirname(logFilePath);
+    fs.mkdirSync(logDir, { recursive: true });
+    
     const timestamp = new Date().toISOString();
     const levelName = getLogLevelName(level);
     const logMessage = `[${timestamp}][${levelName}] ${message}\n`;

@@ -60,7 +60,7 @@ func (p *Processor) ProcessDiscoveredDevices(devices []ble.Device, notifier comm
 	// This ensures we don't send unnecessary notifications
 	if changesMade.Load() {
 		if notifier != nil {
-			p.log.Debug("Notifying observers about device updates")
+			p.log.Trace("Notifying observers about device updates")
 			notifier.NotifyUpdate()
 		}
 	}

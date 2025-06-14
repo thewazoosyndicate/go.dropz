@@ -416,7 +416,7 @@ func (s *DropzServer) GetDiscoveredCameras(ctx context.Context, req *protocol.Ge
 		protoCameras[i] = cam.ToProtoDiscoveredCamera()
 	}
 
-	s.log.Debug("Returning discovered cameras", "camera_count", len(protoCameras))
+	s.log.Trace("Returning discovered cameras", "camera_count", len(protoCameras))
 	return &protocol.GetDiscoveredCamerasResponse{
 		Cameras:   protoCameras,
 		NoChanges: false,
@@ -465,7 +465,7 @@ func (s *DropzServer) WatchDiscoveredCameras(req *protocol.GetDiscoveredCamerasR
 		s.log.Errorf("WatchDiscoveredCameras: Error sending initial discovered cameras for stream %p: %v", stream, err)
 		return err
 	}
-	s.log.Debugf("WatchDiscoveredCameras: Initial data sent to stream %p.", stream)
+	s.log.Tracef("WatchDiscoveredCameras: Initial data sent to stream %p.", stream)
 
 	select {
 	case <-done:
@@ -484,7 +484,7 @@ func (s *DropzServer) GetManagedCameras(ctx context.Context, req *protocol.GetMa
 	if s.ctx.Err() != nil {
 		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
 	}
-	s.log.Debug("Handling GetManagedCameras request")
+	s.log.Trace("Handling GetManagedCameras request")
 
 	db := database.GetDatabase()
 
@@ -541,7 +541,7 @@ func (s *DropzServer) WatchManagedCameras(req *protocol.GetManagedCamerasRequest
 		s.log.Errorf("WatchManagedCameras: Error sending initial managed cameras for stream %p: %v", stream, err)
 		return err
 	}
-	s.log.Debugf("WatchManagedCameras: Initial data sent to stream %p.", stream)
+	s.log.Tracef("WatchManagedCameras: Initial data sent to stream %p.", stream)
 
 	select {
 	case <-done:

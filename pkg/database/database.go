@@ -924,7 +924,7 @@ func (db *Database) GetCamerasForDiscoveredPool() []*DiscoveredCamera {
 		}
 	}
 
-	db.log.Debugf("GetCamerasForDiscoveredPool returning %d cameras", len(cameras))
+	db.log.Tracef("GetCamerasForDiscoveredPool returning %d cameras", len(cameras))
 	return cameras
 }
 

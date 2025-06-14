@@ -221,7 +221,7 @@ func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, e
 	notifier := m.notifier
 	m.mutex.RUnlock()
 	if notifier != nil {
-		m.log.Debug("Notifying observers about managed camera addition")
+		m.log.Trace("Notifying observers about managed camera addition")
 		notifier.NotifyUpdate()
 	}
 
@@ -286,7 +286,7 @@ func (m *GoProManager) UnmanageCamera(cameraID string) error {
 	notifier := m.notifier
 	m.mutex.RUnlock()
 	if notifier != nil {
-		m.log.Debug("Notifying observers about camera pool change")
+		m.log.Trace("Notifying observers about camera pool change")
 		notifier.NotifyUpdate()
 	}
 

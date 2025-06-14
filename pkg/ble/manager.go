@@ -99,9 +99,9 @@ func (m *Manager) GetDiscoveredDevices() []Device {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
 
-	m.log.Debugf("GetDiscoveredDevices called - internal map has %d devices", len(m.devices))
+	m.log.Tracef("GetDiscoveredDevices called - internal map has %d devices", len(m.devices))
 	for macAddr, device := range m.devices {
-		m.log.Debugf("Internal device: %s (%s) RSSI:%d LastSeen:%s",
+		m.log.Tracef("Internal device: %s (%s) RSSI:%d LastSeen:%s",
 			device.Name, macAddr, device.RSSI, device.LastSeen.Format(time.RFC3339))
 	}
 
@@ -110,7 +110,7 @@ func (m *Manager) GetDiscoveredDevices() []Device {
 		devices = append(devices, *device)
 	}
 
-	m.log.Debugf("Returning %d devices to caller", len(devices))
+	m.log.Tracef("Returning %d devices to caller", len(devices))
 	return devices
 }
 
@@ -376,7 +376,7 @@ func (m *Manager) addDiscoveredDevice(result bluetooth.ScanResult) {
 
 		// Log rediscovery with detailed information
 		if previousRSSI != rssi || previousName != existingDevice.Name || timeSinceLastSeen > 5*time.Second {
-			m.log.Debugf("Rediscovered GoPro device: %s (%s) RSSI:%d->%d, LastSeen updated (was %v ago)",
+			m.log.Tracef("Rediscovered GoPro device: %s (%s) RSSI:%d->%d, LastSeen updated (was %v ago)",
 				existingDevice.Name, macAddress, previousRSSI, rssi, timeSinceLastSeen.Truncate(time.Millisecond))
 		} else {
 			m.log.Tracef("Rediscovered GoPro device: %s (%s) RSSI:%d", existingDevice.Name, macAddress, rssi)

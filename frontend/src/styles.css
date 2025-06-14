@@ -395,7 +395,8 @@ input:checked + .toggle-slider:before {
   transition: all var(--transition-speed);
   position: relative;
   min-height: 250px;
-  gap: 12px;
+  max-height: 280px;
+  gap: 8px;
   transition: background-color 0.3s ease, border-color 0.3s ease;
   border-left: 4px solid var(--border-color);
 }
@@ -619,10 +620,12 @@ input:checked + .toggle-slider:before {
 .device-info {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   font-size: 0.85rem;
   color: var(--text-secondary);
   transition: color 0.3s ease;
+  flex: 1;
+  min-height: 0;
 }
 
 .info-row {
@@ -765,6 +768,7 @@ input:checked + .toggle-slider:before {
   display: flex;
   gap: 8px;
   margin-top: auto;
+  flex-shrink: 0;
 }
 
 .action-button {
@@ -793,6 +797,74 @@ input:checked + .toggle-slider:before {
 
 .sync-button:hover {
   background-color: var(--secondary-dark);
+}
+
+/* Sync Progress Bar */
+.sync-progress {
+  display: none;
+  flex-direction: column;
+  gap: 3px;
+  margin: 4px 0 0 0;
+  padding: 0;
+  transition: all 0.3s ease;
+}
+
+.sync-progress.active {
+  display: flex;
+}
+
+.sync-progress-bar {
+  width: 100%;
+  height: 4px;
+  background-color: rgba(0, 0, 0, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+[data-theme="dark"] .sync-progress-bar {
+  background-color: rgba(255, 255, 255, 0.15);
+}
+
+.sync-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--warning-color), var(--secondary-color));
+  border-radius: 2px;
+  transition: width 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.sync-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -50%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  animation: sync-progress-shimmer 1.5s infinite;
+}
+
+@keyframes sync-progress-shimmer {
+  0% { left: -50%; }
+  100% { left: 100%; }
+}
+
+.sync-progress-operation {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  text-align: center;
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.1;
+}
+
+/* Hide progress bar in list view to maintain compact layout */
+.devices-list .sync-progress {
+  display: none !important;
 }
 
 /* Define camera pool specific styling */

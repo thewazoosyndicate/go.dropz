@@ -473,6 +473,9 @@ function startSyncQueueStream(client) {
       // Update sync queue
       syncQueue = queueEntries.map(entry => processSyncQueueEntry(entry));
       
+      // Update progress bars for all devices that are currently syncing
+      updateAllSyncProgressBars();
+      
       // Only update UI if the queue changed
       if (oldQueueLength !== syncQueue.length || queueEntries.length > 0) {
         debugLog('Updating UI with new sync queue data', LOG_LEVELS.TRACE);
@@ -1596,8 +1599,71 @@ function updateDeviceElement(element, device, inSyncQueue = false) {
   element.className = element.className.replace(/status-\w+/g, '');
   element.classList.add(`status-${statusCode.toLowerCase()}`);
   
+  // Update sync progress bar
+  updateSyncProgress(element, device, inSyncQueue);
+  
   // Update buttons and toggles
   updateDeviceControls(element, device, inSyncQueue);
+}
+
+// Update sync progress bar for a device
+function updateSyncProgress(element, device, inSyncQueue = false) {
+  const progressContainer = element.querySelector('.sync-progress');
+  const progressBar = element.querySelector('.sync-progress-fill');
+  const progressOperation = element.querySelector('.sync-progress-operation');
+  
+  if (!progressContainer || !progressBar || !progressOperation) {
+    return; // Progress elements not found
+  }
+  
+  // Check if device is currently syncing
+  const isSyncing = device.isSyncing;
+  
+  if (isSyncing) {
+    // Find the sync queue entry for this device to get progress details
+    const syncEntry = syncQueue.find(entry => entry.cameraId === device.id);
+    
+    if (syncEntry) {
+      const progressPercent = syncEntry.progressPercent || 0;
+      const currentOperation = syncEntry.currentOperation || 'Preparing...';
+      
+      // Update progress bar
+      progressBar.style.width = `${progressPercent}%`;
+      
+      // Show current operation
+      progressOperation.textContent = currentOperation;
+      
+      // Show progress container
+      progressContainer.classList.add('active');
+      
+      debugLog(`Updated sync progress for ${device.name}: ${progressPercent}% - ${currentOperation}`, LOG_LEVELS.TRACE);
+    } else {
+      // Device is syncing but no queue entry found, show indeterminate state
+      progressBar.style.width = '100%';
+      progressOperation.textContent = 'Processing...';
+      progressContainer.classList.add('active');
+    }
+  } else {
+    // Hide progress container when not syncing
+    progressContainer.classList.remove('active');
+  }
+}
+
+// Update sync progress bars for all syncing devices
+function updateAllSyncProgressBars() {
+  // Find all device cards that currently exist in the DOM
+  const deviceCards = document.querySelectorAll('.device-card[data-mac]');
+  
+  deviceCards.forEach(card => {
+    const macAddress = card.getAttribute('data-mac');
+    const device = allDevices[macAddress];
+    
+    if (device && device.isSyncing) {
+      // Check if we're in the sync queue (this determines if we use inSyncQueue parameter)
+      const inSyncQueue = shouldShowInSyncQueue(device);
+      updateSyncProgress(card, device, inSyncQueue);
+    }
+  });
 }
 
 // Update device controls (buttons and toggles)
@@ -2105,6 +2171,9 @@ function createGoProElement(device, inSyncQueue = false) {
       toggleDeviceManaged(device.macAddress, event.target.checked);
     });
   }
+  
+  // Initialize sync progress bar
+  updateSyncProgress(element, device, inSyncQueue);
   
   return element;
 }

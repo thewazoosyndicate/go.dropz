@@ -9,8 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -191,6 +189,11 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	semaphore := make(chan struct{}, maxWorkers)
 	var mu sync.Mutex
 	downloadedFiles := make([]string, 0, len(filteredMedia))
+	skippedCount := 0
+
+	// Track files currently being downloaded to prevent race conditions
+	downloadingFiles := make(map[string]bool)
+	var downloadMutex sync.Mutex
 
 	// Process each media file
 	for _, media := range filteredMedia {
@@ -205,17 +208,36 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 
 		outputPath := filepath.Join(destDir, media.Name)
 
-		// Skip if file already exists with same size
-		if fi, err := os.Stat(outputPath); err == nil {
-			if fi.Size() == media.Size {
-				m.log.Debugf("File %s already exists with same size, skipping", media.Name)
-				mu.Lock()
-				downloadedFiles = append(downloadedFiles, outputPath)
-				mu.Unlock()
-				continue
-			}
+		// Check if file already exists with correct size
+		exists, err := m.fileExistsWithSize(outputPath, media.Size)
+		if err != nil {
+			m.log.Warnf("Error checking if file exists: file=%s error=%v", media.Name, err)
+		}
+		if exists {
+			m.log.Infof("File already exists with correct size, skipping download: file=%s size=%d bytes",
+				media.Name, media.Size)
+			mu.Lock()
+			downloadedFiles = append(downloadedFiles, outputPath)
+			skippedCount++
+			mu.Unlock()
+			m.log.Debugf("Added existing file to results: total_files_so_far=%d skipped_so_far=%d",
+				len(downloadedFiles), skippedCount)
+			continue
 		}
 
+		// Check if this file is already being downloaded by another goroutine
+		downloadMutex.Lock()
+		if downloadingFiles[media.Name] {
+			m.log.Infof("File %s is already being downloaded by another operation, skipping to avoid duplicate download", media.Name)
+			downloadMutex.Unlock()
+			continue
+		}
+		// Mark this file as being downloaded
+		downloadingFiles[media.Name] = true
+		m.log.Debugf("Marked file %s as being downloaded to prevent concurrent downloads", media.Name)
+		downloadMutex.Unlock()
+
+		// File doesn't exist or has wrong size - proceed with download
 		// Acquire semaphore slot
 		semaphore <- struct{}{}
 		wg.Add(1)
@@ -224,6 +246,29 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 		go func(media MediaFile, outputPath string) {
 			defer wg.Done()
 			defer func() { <-semaphore }()
+			defer func() {
+				// Remove from downloading files map when done
+				downloadMutex.Lock()
+				delete(downloadingFiles, media.Name)
+				downloadMutex.Unlock()
+			}()
+
+			// Double-check: verify file doesn't exist just before downloading
+			// This prevents race conditions where the file was created between
+			// the initial check and when this goroutine starts
+			existsDouble, errDouble := m.fileExistsWithSize(outputPath, media.Size)
+			if errDouble != nil {
+				m.log.Warnf("Error double-checking file existence for %s: %v", media.Name, errDouble)
+			}
+			if existsDouble {
+				m.log.Infof("File already exists with correct size (double-check), skipping download: file=%s size=%d bytes",
+					media.Name, media.Size)
+				mu.Lock()
+				downloadedFiles = append(downloadedFiles, outputPath)
+				skippedCount++
+				mu.Unlock()
+				return
+			}
 
 			m.log.Debugf("Downloading %s to %s", media.Name, outputPath)
 
@@ -250,7 +295,13 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	// Wait for all downloads to complete
 	wg.Wait()
 
-	m.log.Infof("Video download completed: total_downloaded=%d destination=%s", len(downloadedFiles), destDir)
+	actualDownloads := len(downloadedFiles) - skippedCount
+	if skippedCount > 0 {
+		m.log.Infof("Video download completed: total_files=%d downloaded=%d skipped=%d destination=%s",
+			len(downloadedFiles), actualDownloads, skippedCount, destDir)
+	} else {
+		m.log.Infof("Video download completed: total_downloaded=%d destination=%s", len(downloadedFiles), destDir)
+	}
 	return downloadedFiles, nil
 }
 
@@ -566,39 +617,18 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 	return result, nil
 }
 
-// parseGoProdateFormat parses the date format from GoPro media files
-// Format example: "YYYYMMDD_HHMMSS"
-func parseGoProdateFormat(dateStr string) (time.Time, error) {
-	// The format may vary, so we use a regex to extract components
-	re := regexp.MustCompile(`(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})`)
-	matches := re.FindStringSubmatch(dateStr)
-
-	if len(matches) != 7 {
-		return time.Time{}, fmt.Errorf("invalid date format: %s", dateStr)
-	}
-
-	// Parse components
-	year, _ := strconv.Atoi(matches[1])
-	month, _ := strconv.Atoi(matches[2])
-	day, _ := strconv.Atoi(matches[3])
-	hour, _ := strconv.Atoi(matches[4])
-	minute, _ := strconv.Atoi(matches[5])
-	second, _ := strconv.Atoi(matches[6])
-
-	return time.Date(year, time.Month(month), day, hour, minute, second, 0, time.Local), nil
-}
-
-// verifyFileSize checks if the file has the expected size
-func verifyFileSize(filePath string, expectedSize int64) (bool, error) {
-	fi, err := os.Stat(filePath)
-	if err != nil {
-		return false, err
-	}
-	return fi.Size() == expectedSize, nil
-}
-
 // downloadFileWithResume downloads a file with resume capability
+// This function assumes the caller has already checked if the file exists
 func (m *WiFiManager) downloadFileWithResume(ctx context.Context, url, outputPath string, createdAt time.Time, totalSize int64) error {
+	// Skip if file already exists with correct size
+	exists, err := m.fileExistsWithSize(outputPath, totalSize)
+	if err != nil {
+		m.log.Warnf("Error checking file existence for %s: %v", filepath.Base(outputPath), err)
+	}
+	if exists {
+		return nil // already downloaded
+	}
+
 	maxRetries := 3
 	var lastErr error
 
@@ -712,12 +742,14 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 		return fmt.Errorf("failed to rename temp file: %v", err)
 	}
 
-	// After renaming the file, verify its size
-	isValid, err := verifyFileSize(outputPath, totalSize)
-	if err != nil {
-		m.log.Warnf("Failed to verify file size for %s: %v", outputPath, err)
-	} else if !isValid {
-		return fmt.Errorf("file size verification failed for %s: expected %d bytes", outputPath, totalSize)
+	// After renaming the file, verify its size (silent check)
+	{
+		fi, err := os.Stat(outputPath)
+		if err != nil {
+			m.log.Warnf("Failed to stat downloaded file %s: %v", outputPath, err)
+		} else if fi.Size() != totalSize {
+			return fmt.Errorf("file size verification failed for %s: expected %d bytes, got %d bytes", outputPath, totalSize, fi.Size())
+		}
 	}
 
 	// Set the file timestamps to match the creation time
@@ -849,8 +881,18 @@ func (m *WiFiManager) downloadChunkOnce(ctx context.Context, url, chunkPath stri
 	return nil
 }
 
-// Update downloadChunked to use the new downloadChunk function instead of the old one
+// downloadChunked downloads large files using chunked approach
+// This function assumes the caller has already checked if the file exists
 func (m *WiFiManager) downloadChunked(ctx context.Context, url, outputPath string, createdAt time.Time, totalSize int64) error {
+	// Skip if file already exists with correct size
+	exists, err := m.fileExistsWithSize(outputPath, totalSize)
+	if err != nil {
+		m.log.Warnf("Error checking file existence for %s: %v", filepath.Base(outputPath), err)
+	}
+	if exists {
+		return nil // already downloaded
+	}
+
 	// Only use chunked download for files larger than 10MB
 	if totalSize < 10*1024*1024 {
 		return m.downloadFileWithResume(ctx, url, outputPath, createdAt, totalSize)
@@ -956,12 +998,14 @@ func (m *WiFiManager) downloadChunked(ctx context.Context, url, outputPath strin
 		}
 	}
 
-	// After combining all chunks, verify the final file size
-	isValid, err := verifyFileSize(outputPath, totalSize)
-	if err != nil {
-		m.log.Warnf("Failed to verify file size for %s: %v", outputPath, err)
-	} else if !isValid {
-		return fmt.Errorf("file size verification failed for %s: expected %d bytes", outputPath, totalSize)
+	// After combining all chunks, verify the final file size (silent check)
+	{
+		fi, err := os.Stat(outputPath)
+		if err != nil {
+			m.log.Warnf("Failed to stat combined file %s: %v", outputPath, err)
+		} else if fi.Size() != totalSize {
+			return fmt.Errorf("file size verification failed for %s: expected %d bytes, got %d bytes", outputPath, totalSize, fi.Size())
+		}
 	}
 
 	// Set the file timestamps to match the creation time
@@ -1116,4 +1160,38 @@ func (m *WiFiManager) ExitWebcam(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// fileExistsWithSize checks if a file exists and has the expected size
+func (m *WiFiManager) fileExistsWithSize(filePath string, expectedSize int64) (bool, error) {
+	fi, err := os.Stat(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			m.log.Debugf("File does not exist: file=%s - WILL DOWNLOAD", filepath.Base(filePath))
+			// Try searching in immediate subdirectories
+			rootDir := filepath.Dir(filePath)
+			pattern := filepath.Join(rootDir, "*", filepath.Base(filePath))
+			matches, _ := filepath.Glob(pattern)
+			for _, p := range matches {
+				if info, e := os.Stat(p); e == nil && info.Size() == expectedSize {
+					m.log.Infof("File exists in subfolder, skipping download: file=%s path=%s size=%d bytes",
+						filepath.Base(filePath), p, expectedSize)
+					return true, nil
+				}
+			}
+			return false, nil // File doesn't exist
+		}
+		m.log.Warnf("Error checking file existence: file=%s error=%v", filepath.Base(filePath), err)
+		return false, err
+	}
+
+	if fi.Size() == expectedSize {
+		m.log.Infof("File exists with correct size: file=%s size=%d bytes - WILL SKIP",
+			filepath.Base(filePath), expectedSize)
+		return true, nil
+	}
+
+	m.log.Infof("File exists but size mismatch: file=%s actual_size=%d expected_size=%d - WILL DOWNLOAD",
+		filepath.Base(filePath), fi.Size(), expectedSize)
+	return false, nil
 }

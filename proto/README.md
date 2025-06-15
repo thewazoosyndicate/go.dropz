@@ -1,54 +1,176 @@
 # Dropz Protocol Buffers
 
-This directory contains the Protocol Buffer definitions for the Dropz application, which manages a pool of GoPro cameras. The files have been organized by domain for better maintainability.
+[![Protocol Buffers](https://img.shields.io/badge/protobuf-3.15%2B-blue.svg)](https://developers.google.com/protocol-buffers)
+[![gRPC](https://img.shields.io/badge/gRPC-1.40%2B-green.svg)](https://grpc.io/)
 
-## File Organization
+This directory contains the Protocol Buffer definitions that serve as the API contract between the Dropz backend service and frontend applications. The files are organized by domain for better maintainability and clear separation of concerns.
 
-- `common.proto`: Common package definitions, status enums, and shared types
-- `gopro.proto`: Camera data models, lists, and related operations
-- `video.proto`: Video file data models and related operations
-- `logs.proto`: Logging data models and related operations
-- `config.proto`: Configuration data models and settings
-- `service.proto`: Main service definition that combines all domains
+## 📁 File Organization
 
-## Core Concepts and Workflow
+### Domain-Specific Schemas
 
-### Camera Lists and Workflow
+| File | Domain | Description |
+|------|---------|-------------|
+| `common.proto` | Core Types | Shared enums, status codes, and base types used across all domains |
+| `gopro.proto` | Camera Management | Camera models, device lists, discovery, and management operations |  
+| `video.proto` | Media Operations | Video file metadata, download status, and media-related operations |
+| `logs.proto` | System Logging | Log entries, severity levels, and logging configuration |
+| `config.proto` | Configuration | Application settings, user preferences, and system configuration |
+| `service.proto` | Main API | Primary service definition that combines all domains into a unified API |
 
-Dropz manages cameras through three distinct lists that represent different stages in the camera lifecycle:
+### Schema Dependencies
 
-1. **Discovered Cameras**: All reachable GoPro cameras detected by the system
-   - A camera in this list has status `STATUS_DISCOVERED`
-   - This is the entry point for all cameras into the system
+```
+service.proto (Main API)
+    ├── common.proto (Base types)
+    ├── gopro.proto (Camera operations)
+    ├── video.proto (Media operations)  
+    ├── logs.proto (Logging)
+    └── config.proto (Configuration)
+```
 
-2. **Camera Pool**: All cameras that are both managed and paired
-   - Cameras here can have various statuses (`STATUS_MANAGED`, `STATUS_PAIRING`, `STATUS_PAIRED_REACHABLE`, etc.)
-   - This list represents all cameras the system knows about and intends to manage
-   - Cameras may be unreachable but remain in this list if they have been previously paired
+## 🔄 Core Concepts and Workflow
 
-3. **Sync Queue**: Cameras waiting to be synced
-   - A camera in this list has status `STATUS_SYNC_PENDING` or `STATUS_SYNCING`
-   - This is a subset of the Camera Pool
+### Camera Lifecycle Management
 
-### Camera Status Lifecycle
+Dropz manages GoPro cameras through a sophisticated state machine with three primary lists representing different stages in the camera lifecycle:
 
-Cameras progress through the following statuses:
+#### 1. **Discovered Cameras** (`DiscoveredCamera`)
+- **Purpose**: Registry of all reachable GoPro cameras detected by the system
+- **Status**: `STATUS_DISCOVERED`
+- **Characteristics**: 
+  - Entry point for all cameras into the system
+  - Contains basic device information (MAC address, signal strength, etc.)
+  - Automatically populated by the discovery scanner
+  - No user management or pairing has occurred
 
-- `STATUS_DISCOVERED`: Initial status when a camera is first detected
-- `STATUS_MANAGED`: Camera has been added to the management pool
-- `STATUS_PAIRING`: Camera is in the process of being paired
-- `STATUS_PAIRED_REACHABLE`: Camera is paired and currently reachable
-- `STATUS_PAIRED_UNREACHABLE`: Camera is paired but currently not reachable
-- `STATUS_SYNC_PENDING`: Camera is in the sync queue waiting to be synced
-- `STATUS_SYNCING`: Camera is actively being synced
-- `STATUS_ERROR`: Camera has encountered an error
+#### 2. **Camera Pool** (`ManagedCamera`)  
+- **Purpose**: All cameras that are actively managed and paired by the user
+- **Status Range**: `STATUS_MANAGED`, `STATUS_PAIRING`, `STATUS_PAIRED_REACHABLE`, `STATUS_PAIRED_UNREACHABLE`
+- **Characteristics**:
+  - Represents cameras the system is responsible for managing
+  - Includes both reachable and temporarily unreachable devices
+  - Maintains pairing information and connection history
+  - Persisted across application restarts
 
-### Service Operations
+#### 3. **Sync Queue** (`SyncQueueEntry`)
+- **Purpose**: Queue of cameras waiting for video synchronization
+- **Status Range**: `STATUS_SYNC_PENDING`, `STATUS_SYNCING`
+- **Characteristics**:
+  - Subset of the Camera Pool
+  - Prioritized queue for video download operations
+  - Tracks sync progress and retry attempts
+  - Automatically managed based on camera availability
 
-The system provides operations for:
+### Camera Status State Machine
 
-- Camera discovery and management
-- Camera pairing
+```
+┌─────────────────┐    Add to Pool    ┌─────────────────┐
+│ STATUS_DISCOVERED│ ──────────────────►│ STATUS_MANAGED  │
+└─────────────────┘                    └─────────────────┘
+                                                │
+                                                │ Start Pairing
+                                                ▼
+                                       ┌─────────────────┐
+                                       │ STATUS_PAIRING  │
+                                       └─────────────────┘
+                                                │
+                                ┌───────────────┼───────────────┐
+                         Success│               │               │Failure
+                                ▼               ▼               ▼
+                ┌─────────────────────┐     ┌─────────────────┐   ┌─────────────────┐
+                │STATUS_PAIRED_       │     │ STATUS_ERROR    │   │ Retry Pairing   │
+                │     REACHABLE       │     └─────────────────┘   └─────────────────┘
+                └─────────────────────┘              │                     │
+                           │                         │                     │
+           Connection Lost │                         │ User Action         │
+                           ▼                         ▼                     │
+                ┌─────────────────────┐     ┌─────────────────┐            │
+                │STATUS_PAIRED_       │     │ Remove/Reset    │◄───────────┘
+                │   UNREACHABLE       │     └─────────────────┘
+                └─────────────────────┘              
+                           │                         
+            Reconnected    │                         
+                           ▼                         
+                ┌─────────────────────┐              
+                │ STATUS_SYNC_PENDING │              
+                └─────────────────────┘              
+                           │                         
+                Start Sync │                         
+                           ▼                         
+                ┌─────────────────────┐              
+                │ STATUS_SYNCING      │              
+                └─────────────────────┘
+```
+
+### Operational Workflows
+
+#### Device Discovery Flow
+```
+BLE Scanner → Discovered Camera → User Selection → Camera Pool → Pairing Process
+```
+
+#### Video Synchronization Flow  
+```
+Camera Pool → Sync Queue → Download Coordination → Storage Management → Completion
+```
+
+#### Error Recovery Flow
+```
+Error Detection → Status Update → Retry Logic → User Notification → Recovery Action
+```
+
+### 🎯 Service Operations
+
+The Dropz API provides comprehensive operations across multiple domains:
+
+#### Camera Management Operations
+```protobuf
+// Device Discovery
+rpc GetDiscoveredCameras(GetDiscoveredCamerasRequest) returns (GetDiscoveredCamerasResponse);
+rpc WatchDiscoveredCameras(WatchDiscoveredCamerasRequest) returns (stream WatchDiscoveredCamerasResponse);
+
+// Camera Pool Management  
+rpc GetManagedCameras(GetManagedCamerasRequest) returns (GetManagedCamerasResponse);
+rpc AddCameraToPool(AddCameraToPoolRequest) returns (AddCameraToPoolResponse);
+rpc RemoveCameraFromPool(RemoveCameraFromPoolRequest) returns (RemoveCameraFromPoolResponse);
+
+// Pairing Operations
+rpc PairCamera(PairCameraRequest) returns (PairCameraResponse);
+rpc UnpairCamera(UnpairCameraRequest) returns (UnpairCameraResponse);
+```
+
+#### Video Synchronization Operations
+```protobuf
+// Sync Queue Management
+rpc GetSyncQueue(GetSyncQueueRequest) returns (GetSyncQueueResponse);
+rpc WatchSyncQueue(WatchSyncQueueRequest) returns (stream WatchSyncQueueResponse);
+rpc AddCameraToSyncQueue(AddCameraToSyncQueueRequest) returns (AddCameraToSyncQueueResponse);
+
+// Video Operations
+rpc GetVideoFiles(GetVideoFilesRequest) returns (GetVideoFilesResponse);
+rpc DownloadVideo(DownloadVideoRequest) returns (stream DownloadVideoResponse);
+```
+
+#### Configuration & System Operations
+```protobuf
+// Configuration Management
+rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse);
+
+// System Monitoring
+rpc GetSystemStatus(GetSystemStatusRequest) returns (GetSystemStatusResponse);
+rpc WatchLogs(WatchLogsRequest) returns (stream WatchLogsResponse);
+```
+
+#### Group Management Operations
+```protobuf
+// Camera Grouping
+rpc CreateGroup(CreateGroupRequest) returns (CreateGroupResponse);
+rpc GetGroups(GetGroupsRequest) returns (GetGroupsResponse);
+rpc AddCameraToGroup(AddCameraToGroupRequest) returns (AddCameraToGroupResponse);
+rpc SyncGroup(SyncGroupRequest) returns (SyncGroupResponse);
+```
 - Content synchronization
 - Group management
 - Video access
@@ -57,32 +179,189 @@ The system provides operations for:
 
 ## Data Structure Overview
 
-### Core Types
+## 📊 Data Structure Overview
 
-- **Camera**: Base information about a camera including ID, name, connectivity details
-- **CameraMetadata**: Technical details about a camera (firmware, model, etc.)
-- **DiscoveredCamera**: A camera that has been discovered but may not be managed
-- **ManagedCamera**: A camera in the management pool
-- **SyncQueueEntry**: A record in the sync queue
-- **Group**: A collection of cameras that can be managed together
-- **VideoFile**: Metadata about a synchronized video file
-- **Config**: System-wide configuration settings
-- **LogEntry**: System logs
+### Core Message Types
 
-### Real-time Updates
+#### Camera Types
+```protobuf
+// Base camera information
+message Camera {
+  string id = 1;                    // Unique camera identifier (MAC address)
+  string name = 2;                  // User-friendly camera name
+  CameraMetadata metadata = 3;      // Technical specifications
+  google.protobuf.Timestamp last_seen = 4;  // Last successful connection
+}
 
-The protocol supports real-time updates through streaming RPCs for:
-- Discovered cameras (`WatchDiscoveredCameras`)
-- Managed cameras (`WatchManagedCameras`)
-- Sync queue (`WatchSyncQueue`)
+// Technical camera details
+message CameraMetadata {
+  string model = 1;                 // GoPro model (Hero11, Hero12, etc.)
+  string firmware_version = 2;      // Firmware version string
+  string serial_number = 3;         // Device serial number
+  int32 battery_level = 4;          // Battery percentage (0-100)
+  string wifi_ssid = 5;            // WiFi network name
+  string wifi_password = 6;        // WiFi network password
+}
 
-This allows the client to maintain up-to-date information without polling.
+// Discovery-specific camera information
+message DiscoveredCamera {
+  Camera camera = 1;               // Base camera information
+  int32 signal_strength = 2;       // BLE signal strength (RSSI)
+  google.protobuf.Timestamp discovered_at = 3;  // Discovery timestamp
+  CameraStatus status = 4;         // Current camera status
+}
 
-## Implementation Notes
+// Management-specific camera information  
+message ManagedCamera {
+  Camera camera = 1;               // Base camera information
+  google.protobuf.Timestamp added_at = 2;       // When added to pool
+  google.protobuf.Timestamp last_sync = 3;      // Last successful sync
+  CameraStatus status = 4;         // Current management status
+  repeated string group_ids = 5;   // Associated group memberships
+}
+```
 
-- All timestamps use `google.protobuf.Timestamp` for standardization
-- Change counters are used for tracking updates efficiently
-- Camera IDs are used as references between different message types
+#### Video and Media Types
+```protobuf
+// Video file metadata
+message VideoFile {
+  string id = 1;                   // Unique file identifier
+  string camera_id = 2;            // Source camera ID
+  string filename = 3;             // Original filename on camera
+  int64 size_bytes = 4;           // File size in bytes
+  google.protobuf.Timestamp created_at = 5;     // Creation timestamp
+  google.protobuf.Timestamp downloaded_at = 6;  // Download timestamp
+  string local_path = 7;          // Local storage path
+  VideoMetadata metadata = 8;      // Video-specific metadata
+}
+
+// Video technical details
+message VideoMetadata {
+  int32 duration_seconds = 1;      // Video duration
+  string resolution = 2;           // Video resolution (1920x1080, etc.)
+  int32 framerate = 3;            // Frames per second
+  string codec = 4;               // Video codec (H.264, H.265, etc.)
+  int64 bitrate = 5;              // Video bitrate
+}
+```
+
+#### Configuration Types
+```protobuf
+// System configuration
+message Config {
+  ScannerConfig scanner = 1;       // Device discovery settings
+  SyncConfig sync = 2;            // Video synchronization settings
+  StorageConfig storage = 3;       // Storage management settings
+  LoggingConfig logging = 4;       // Logging configuration
+  ServerConfig server = 5;         // gRPC server settings
+}
+
+// Scanner-specific configuration
+message ScannerConfig {
+  google.protobuf.Duration interval = 1;        // Scan frequency
+  google.protobuf.Duration timeout = 2;         // Connection timeout
+  bool auto_add_discovered = 3;    // Automatically add new cameras
+}
+```
+
+#### Logging Types
+```protobuf
+// Log entry structure
+message LogEntry {
+  google.protobuf.Timestamp timestamp = 1;      // Log timestamp
+  LogLevel level = 2;             // Severity level
+  string component = 3;           // Source component
+  string message = 4;             // Log message
+  string camera_id = 5;           // Related camera (optional)
+  map<string, string> metadata = 6;  // Additional context
+}
+
+// Log severity levels
+enum LogLevel {
+  LOG_LEVEL_UNSPECIFIED = 0;
+  LOG_LEVEL_DEBUG = 1;
+  LOG_LEVEL_INFO = 2;
+  LOG_LEVEL_WARN = 3;
+  LOG_LEVEL_ERROR = 4;
+}
+```
+
+### Real-time Update Streams
+
+The protocol supports efficient real-time updates through streaming RPCs:
+
+#### Camera Discovery Updates
+```protobuf
+message WatchDiscoveredCamerasResponse {
+  repeated DiscoveredCamera cameras = 1;    // Current camera list
+  int64 change_counter = 2;                // Version for change detection
+  google.protobuf.Timestamp timestamp = 3; // Update timestamp
+}
+```
+
+#### Sync Progress Updates
+```protobuf
+message WatchSyncQueueResponse {
+  repeated SyncQueueEntry entries = 1;     // Current sync queue
+  SyncProgress progress = 2;               // Overall progress
+  int64 change_counter = 3;               // Version tracking
+}
+
+message SyncProgress {
+  int32 total_cameras = 1;                // Total cameras in queue
+  int32 completed_cameras = 2;            // Successfully synced cameras
+  int32 failed_cameras = 3;               // Failed sync attempts
+  int64 total_bytes = 4;                  // Total data to download
+  int64 downloaded_bytes = 5;             // Data downloaded so far
+}
+```
+
+### Implementation Patterns
+
+#### Change Detection
+All list-based responses include a `change_counter` field for efficient change detection:
+```protobuf
+message GetManagedCamerasResponse {
+  repeated ManagedCamera cameras = 1;
+  int64 change_counter = 2;                // Increment on any list change
+}
+```
+
+#### Error Handling
+Consistent error reporting across all operations:
+```protobuf
+message AddCameraToPoolResponse {
+  bool success = 1;
+  string error_message = 2;               // Human-readable error
+  ErrorCode error_code = 3;               // Machine-readable error code
+}
+```
+
+#### Pagination Support
+Large datasets support pagination for performance:
+```protobuf
+message GetVideoFilesRequest {
+  string camera_id = 1;
+  int32 page_size = 2;                    // Number of results per page
+  string page_token = 3;                  // Pagination token
+}
+```
+
+## 🔧 Implementation Notes
+
+### Design Principles
+- **Type Safety**: All timestamps use `google.protobuf.Timestamp` for standardization
+- **Efficiency**: Change counters enable efficient change detection without full data transfers
+- **Consistency**: Camera IDs serve as consistent references across all message types
+- **Scalability**: Streaming RPCs provide real-time updates without polling overhead
+- **Reliability**: Comprehensive error codes and retry mechanisms for robust communication
+
+### Best Practices
+- Always include change counters in list responses for client-side caching
+- Use streaming RPCs for real-time data that changes frequently
+- Implement proper error handling with both human and machine-readable error information
+- Design messages with forward compatibility in mind
+- Use consistent naming conventions across all proto files
 
 ## Compilation
 

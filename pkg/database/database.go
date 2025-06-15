@@ -291,7 +291,7 @@ func (db *Database) AddOrUpdateManagedCamera(camera *ManagedCamera) error {
 	defer db.mutex.Unlock()
 
 	db.CameraStates[camera.CameraState.Camera.MACAddress] = camera.CameraState
-	db.log.Info("Managed camera added/updated", "camera_name", camera.CameraState.Camera.Name, "mac_address", camera.CameraState.Camera.MACAddress)
+	// Caller will log this operation if needed
 	return db.saveToFile()
 }
 

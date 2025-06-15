@@ -77,7 +77,7 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 	}
 
 	// Verify connection with detailed progress tracking
-	m.log.Debugf("Verifying WiFi connection establishment: ssid=%s max_attempts=10", ssid)
+	m.log.Tracef("Verifying WiFi connection establishment: ssid=%s max_attempts=10", ssid)
 	for i := 0; i < 10; i++ {
 		if m.isConnectedTo(ssid) {
 			m.log.Infof("WiFi connection established successfully: ssid=%s verification_attempts=%d", ssid, i+1)
@@ -234,7 +234,7 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 		}
 		// Mark this file as being downloaded
 		downloadingFiles[media.Name] = true
-		m.log.Debugf("Marked file %s as being downloaded to prevent concurrent downloads", media.Name)
+		m.log.Tracef("Marked file %s as being downloaded to prevent concurrent downloads", media.Name)
 		downloadMutex.Unlock()
 
 		// File doesn't exist or has wrong size - proceed with download
@@ -544,7 +544,7 @@ func (m *WiFiManager) SleepCamera(ctx context.Context) error {
 
 // getMediaList retrieves the list of media files from a GoPro device via HTTP API
 func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
-	m.log.Debug("Getting media list from GoPro")
+	m.log.Trace("Getting media list from GoPro")
 
 	url := fmt.Sprintf("%s%s", GoProBaseURL, MediaListURL)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -574,7 +574,7 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 
 	// For debugging
 	responseBytes, _ := json.Marshal(mediaList)
-	m.log.Debugf("Received media list response: %s", string(responseBytes))
+	m.log.Tracef("Received media list response: %s", string(responseBytes))
 
 	// Convert to our internal format
 	result := make([]MediaFile, 0)
@@ -634,7 +634,7 @@ func (m *WiFiManager) downloadFileWithResume(ctx context.Context, url, outputPat
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			m.log.Debugf("Retrying download (attempt %d/%d) for %s", attempt+1, maxRetries, outputPath)
+			m.log.Tracef("Retrying download (attempt %d/%d) for %s", attempt+1, maxRetries, outputPath)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -649,7 +649,7 @@ func (m *WiFiManager) downloadFileWithResume(ctx context.Context, url, outputPat
 		}
 
 		lastErr = err
-		m.log.Debugf("Download failed for %s: %v", outputPath, err)
+		m.log.Warnf("Download failed for %s: %v", outputPath, err)
 	}
 
 	return fmt.Errorf("failed after %d attempts: %v", maxRetries, lastErr)
@@ -664,7 +664,7 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 	fileInfo, err := os.Stat(tempFilePath)
 	if err == nil {
 		startOffset = fileInfo.Size()
-		m.log.Debugf("Resuming download of %s from offset %d", outputPath, startOffset)
+		m.log.Tracef("Resuming download of %s from offset %d", outputPath, startOffset)
 	}
 
 	// Create/open the file for appending
@@ -682,7 +682,7 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 
 	// If file is already complete, just rename it
 	if startOffset == totalSize {
-		m.log.Debugf("File %s is already complete", outputPath)
+		m.log.Tracef("File %s is already complete", outputPath)
 		return os.Rename(tempFilePath, outputPath)
 	}
 
@@ -795,7 +795,7 @@ func (m *WiFiManager) downloadChunk(ctx context.Context, url, chunkPath string, 
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			m.log.Debugf("Retrying chunk download (attempt %d/%d) for range %d-%d", attempt+1, maxRetries, startOffset, endOffset)
+			m.log.Tracef("Retrying chunk download (attempt %d/%d) for range %d-%d", attempt+1, maxRetries, startOffset, endOffset)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -810,7 +810,7 @@ func (m *WiFiManager) downloadChunk(ctx context.Context, url, chunkPath string, 
 		}
 
 		lastErr = err
-		m.log.Debugf("Chunk download failed for range %d-%d: %v", startOffset, endOffset, err)
+		m.log.Warnf("Chunk download failed for range %d-%d: %v", startOffset, endOffset, err)
 	}
 
 	return fmt.Errorf("failed after %d attempts: %v", maxRetries, lastErr)
@@ -940,13 +940,13 @@ func (m *WiFiManager) downloadChunked(ctx context.Context, url, outputPath strin
 			defer func() { <-semaphore }()
 
 			chunkSize := endOffset - startOffset + 1
-			m.log.Debugf("Downloading chunk %d/%d (%d bytes) to %s",
+			m.log.Tracef("Downloading chunk %d/%d (%d bytes) to %s",
 				i+1, chunkCount, chunkSize, filepath.Base(chunkPath))
 
 			// Skip if chunk already exists and has the right size
 			expectedSize := endOffset - startOffset + 1
 			if fi, err := os.Stat(chunkPath); err == nil && fi.Size() == expectedSize {
-				m.log.Debugf("Chunk %d/%d already exists with right size, skipping", i+1, chunkCount)
+				m.log.Tracef("Chunk %d/%d already exists with right size, skipping", i+1, chunkCount)
 				return
 			}
 
@@ -957,7 +957,7 @@ func (m *WiFiManager) downloadChunked(ctx context.Context, url, outputPath strin
 				default:
 				}
 			} else {
-				m.log.Debugf("Successfully downloaded chunk %d/%d", i+1, chunkCount)
+				m.log.Tracef("Successfully downloaded chunk %d/%d", i+1, chunkCount)
 			}
 		}(i, startOffset, endOffset, chunkPath)
 	}
@@ -1103,7 +1103,7 @@ func (m *WiFiManager) StopWebcam(ctx context.Context) (*WebcamState, error) {
 
 // GetWebcamStatus retrieves the current webcam status
 func (m *WiFiManager) GetWebcamStatus(ctx context.Context) (*WebcamState, error) {
-	m.log.Debug("Getting webcam status")
+	m.log.Trace("Getting webcam status")
 
 	url := fmt.Sprintf("%s%s", GoProBaseURL, WebcamStatusURL)
 

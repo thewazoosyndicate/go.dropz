@@ -138,7 +138,7 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 			if verifyErr == nil {
 				break
 			}
-			pm.log.Debugf("Pairing state verification attempt %d failed: %v", attempt, verifyErr)
+			pm.log.Tracef("Pairing state verification attempt %d failed: %v", attempt, verifyErr)
 			if attempt < 3 {
 				time.Sleep(1 * time.Second) // Brief delay between retries
 			}

@@ -16,13 +16,13 @@ func (pm *Manager) SyncDevicePairingStates() {
 
 		// Skip if camera is not reachable
 		if !camera.CameraState.Status.IsReachable {
-			pm.log.Debugf("Skipping pairing sync for unreachable camera %s", camera.CameraState.Camera.Name)
+			pm.log.Tracef("Skipping pairing sync for unreachable camera %s", camera.CameraState.Camera.Name)
 			continue
 		}
 
 		// Skip if camera is currently pairing to avoid interference
 		if camera.CameraState.Status.IsPairing {
-			pm.log.Debugf("Skipping pairing sync for camera %s currently being paired", camera.CameraState.Camera.Name)
+			pm.log.Tracef("Skipping pairing sync for camera %s currently being paired", camera.CameraState.Camera.Name)
 			continue
 		}
 
@@ -55,7 +55,7 @@ func (pm *Manager) SyncDevicePairingStates() {
 				pm.log.Warnf("Device reports unpaired for camera %s; skipping database update to avoid losing pairing", camera.CameraState.Camera.Name)
 			}
 		} else {
-			pm.log.Debugf("Pairing state already in sync for camera %s: %v",
+			pm.log.Tracef("Pairing state already in sync for camera %s: %v",
 				camera.CameraState.Camera.Name, devicePaired)
 		}
 	}
@@ -102,6 +102,6 @@ func (pm *Manager) VerifyAndFixPairingState(cameraID string) error {
 		return nil
 	}
 
-	pm.log.Debugf("Pairing state verified for camera %s: %v", cameraState.Camera.Name, devicePaired)
+	pm.log.Tracef("Pairing state verified for camera %s: %v", cameraState.Camera.Name, devicePaired)
 	return nil
 }

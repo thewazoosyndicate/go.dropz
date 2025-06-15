@@ -68,7 +68,7 @@ func (c *Coordinator) ProcessSyncQueue(activeSyncTasks map[string]*SyncTask, mut
 
 		if exists {
 			// Skip this entry, it's already being synced
-			c.log.Debugf("Camera %s is already being synced, skipping", entry.CameraID)
+			c.log.Tracef("Camera %s is already being synced, skipping", entry.CameraID)
 			continue
 		}
 
@@ -82,12 +82,12 @@ func (c *Coordinator) ProcessSyncQueue(activeSyncTasks map[string]*SyncTask, mut
 
 		// Check if the camera is suitable for syncing
 		if !camera.CameraState.Status.IsReachable {
-			c.log.Debugf("Camera %s is not reachable, skipping sync", entry.CameraID)
+			c.log.Tracef("Camera %s is not reachable, skipping sync", entry.CameraID)
 			continue
 		}
 
 		if camera.CameraState.Status.IsSyncing {
-			c.log.Debugf("Camera %s is already marked as syncing, skipping", entry.CameraID)
+			c.log.Tracef("Camera %s is already marked as syncing, skipping", entry.CameraID)
 			continue
 		}
 

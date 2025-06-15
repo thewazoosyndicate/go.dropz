@@ -27,7 +27,7 @@ func (qm *QueueManager) AddToQueue(cameraID string) (*database.SyncQueueEntry, e
 	// Check if camera is already in the queue
 	for _, entry := range qm.db.GetSyncQueue() {
 		if entry.CameraID == cameraID {
-			qm.log.Infof("Camera %s is already in the sync queue", cameraID)
+			qm.log.Tracef("Camera %s is already in the sync queue", cameraID)
 			return entry, nil
 		}
 	}
@@ -45,14 +45,14 @@ func (qm *QueueManager) AddToQueue(cameraID string) (*database.SyncQueueEntry, e
 		return nil, fmt.Errorf("failed to add camera to sync queue: %v", err)
 	}
 
-	qm.log.Infof("Added camera %s to sync queue", cameraID)
+	// Database already logs this operation, no need to duplicate
 	return syncEntry, nil
 }
 
 // RemoveFromQueue removes a camera from the sync queue
 func (qm *QueueManager) RemoveFromQueue(cameraID string) error {
 	qm.db.RemoveSyncQueueEntry(cameraID)
-	qm.log.Infof("Removed camera %s from sync queue", cameraID)
+	// Database already logs this operation, no need to duplicate
 	return nil
 }
 
@@ -101,7 +101,7 @@ func (qm *QueueManager) ClearQueue() error {
 // GetQueueStats returns statistics about the sync queue
 func (qm *QueueManager) GetQueueStats() map[string]interface{} {
 	queue := qm.db.GetSyncQueue()
-	
+
 	stats := map[string]interface{}{
 		"total_items": len(queue),
 		"waiting":     0,

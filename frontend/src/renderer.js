@@ -3851,7 +3851,7 @@ function updateSettingsUI() {
     }
   }
   
-  debugLog('Settings UI updated', LOG_LEVELS.TRACE);
+  debugLog('Settings UI updated', LOG_LEVELS.DEBUG);
 }
 
 // Update a single setting element in the UI

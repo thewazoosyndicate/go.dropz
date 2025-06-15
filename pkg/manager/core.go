@@ -234,7 +234,7 @@ func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, e
 
 		if err != nil {
 			// If we can't check device state, fall back to database state
-			m.log.Debugf("Failed to check device pairing state for %s, using database state: %v",
+			m.log.Tracef("Failed to check device pairing state for %s, using database state: %v",
 				cameraState.Camera.Name, err)
 			devicePaired = cameraState.Status.IsPaired
 		} else if devicePaired != cameraState.Status.IsPaired {
@@ -295,7 +295,7 @@ func (m *GoProManager) UnmanageCamera(cameraID string) error {
 
 // BLEOperation executes a BLE operation with retry logic
 func (m *GoProManager) BLEOperation(ctx context.Context, operationName string, operation func() error) error {
-	m.log.Debugf("Starting BLE operation: %s", operationName)
+	m.log.Tracef("Starting BLE operation: %s", operationName)
 
 	// Execute the operation with retry logic for specific errors
 	var opErr error

@@ -148,7 +148,7 @@ func (p *Processor) createNewCamera(name, macAddress string, rssi int32, dbMutex
 		CameraState: cameraState,
 	}
 
-	p.log.Infof("New camera discovered: %s (%s) RSSI:%d", name, macAddress, rssi)
+	// Database will log the new camera discovery
 
 	// Add to database
 	dbMutex.Lock()

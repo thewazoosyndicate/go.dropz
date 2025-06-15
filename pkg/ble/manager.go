@@ -161,9 +161,8 @@ func (m *Manager) Connect(macAddress string) error {
 	if battery, err := m.GetBatteryLevel(macAddress); err != nil {
 		m.log.Warnf("Failed to read battery level for device %s: %v", macAddress, err)
 	} else {
-		m.log.Infof("Battery level for device %s: %d%%", macAddress, battery)
+		m.log.Infof("Connected to GoPro %s: battery %d%%", macAddress, battery)
 	}
-	m.log.Infof("Successfully connected to GoPro device: %s", macAddress)
 	return nil
 }
 
@@ -273,14 +272,14 @@ func (m *Manager) Sleep(macAddress string) error {
 	// Send sleep command and ignore non-zero status or errors (downgrade warnings)
 	response, err := m.sendCommand(macAddress, CmdSleep, nil)
 	if err != nil {
-		m.log.Infof("Sleep command error (ignored): %v", err)
+		m.log.Tracef("Sleep command error (ignored): %v", err)
 		return nil
 	}
 	if response.Status != 0 {
-		m.log.Infof("Sleep command returned non-zero status 0x%02X (ignored) for device: %s", response.Status, macAddress)
+		m.log.Tracef("Sleep command returned non-zero status 0x%02X (ignored) for device: %s", response.Status, macAddress)
 		return nil
 	}
-	m.log.Infof("Sleep command completed successfully for device: %s", macAddress)
+	m.log.Tracef("Sleep command completed for device: %s", macAddress)
 	return nil
 }
 

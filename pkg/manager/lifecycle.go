@@ -119,14 +119,14 @@ func (m *GoProManager) checkManagedDevices() {
 	for _, camera := range syncCandidates {
 		// Never change status for cameras that are actively syncing or pairing
 		if camera.CameraState.Status.IsSyncing || camera.CameraState.Status.IsPairing {
-			m.log.Debugf("Camera %s is actively syncing or pairing, preserving status during check",
+			m.log.Tracef("Camera %s is actively syncing or pairing, preserving status during check",
 				camera.CameraState.Camera.Name)
 			continue
 		}
 
 		// Check if sync is needed based on timestamp
 		if !config.SyncEnabled {
-			m.log.Debugf("Sync is disabled, not checking camera %s", camera.CameraState.Camera.Name)
+			m.log.Tracef("Sync is disabled, not checking camera %s", camera.CameraState.Camera.Name)
 			continue
 		}
 
@@ -135,7 +135,7 @@ func (m *GoProManager) checkManagedDevices() {
 		devicePaired, err := m.ble.IsPaired(macAddress)
 		if err != nil {
 			// If we can't check device state, fall back to database state
-			m.log.Debugf("Failed to check device pairing state for %s, using database state: %v",
+			m.log.Tracef("Failed to check device pairing state for %s, using database state: %v",
 				camera.CameraState.Camera.Name, err)
 			devicePaired = camera.CameraState.Status.IsPaired
 		}

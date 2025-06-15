@@ -99,7 +99,7 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 	scanInProgress.Store(true)
 	defer scanInProgress.Store(false)
 
-	s.log.Debug("Starting continuous BLE scanning process with live device callbacks")
+	s.log.Tracef("Starting continuous BLE scanning process with live device callbacks")
 
 	// Loop until context is canceled or other conditions stop the scan
 	for {
@@ -140,13 +140,13 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 			continue
 		}
 
-		s.log.Debug("BLE scan started with live processing, waiting for scan to complete...")
+		s.log.Tracef("BLE scan started with live processing, waiting for scan to complete...")
 
 		// Wait for scan to complete or context cancellation
 		select {
 		case <-scanCtx.Done():
 			if scanCtx.Err() != context.Canceled {
-				s.log.Debug("Scan cycle completed (5 minute timeout)")
+				s.log.Tracef("Scan cycle completed (5 minute timeout)")
 			}
 		case <-ctx.Done():
 			cancel()

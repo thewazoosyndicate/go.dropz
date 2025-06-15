@@ -319,7 +319,7 @@ func (s *DropzServer) sendDiscoveredCamerasHeartbeats() {
 		select {
 		case <-doneCh: // Stream explicitly closed by Stop()
 			delete(s.discoveredStreams, stream)
-			s.log.Debugf("Cleaned up discovered stream %p (closed by Stop)", stream)
+			s.log.Tracef("Cleaned up discovered stream %p (closed by Stop)", stream)
 			continue
 		default:
 		}
@@ -346,7 +346,7 @@ func (s *DropzServer) sendManagedCamerasHeartbeats() {
 		select {
 		case <-doneCh:
 			delete(s.managedStreams, stream)
-			s.log.Debugf("Cleaned up managed stream %p (closed by Stop)", stream)
+			s.log.Tracef("Cleaned up managed stream %p (closed by Stop)", stream)
 			continue
 		default:
 		}
@@ -373,7 +373,7 @@ func (s *DropzServer) sendSyncQueueHeartbeats() {
 		select {
 		case <-doneCh:
 			delete(s.syncQueueStreams, stream)
-			s.log.Debugf("Cleaned up sync queue stream %p (closed by Stop)", stream)
+			s.log.Tracef("Cleaned up sync queue stream %p (closed by Stop)", stream)
 			continue
 		default:
 		}
@@ -404,7 +404,7 @@ func (s *DropzServer) GetDiscoveredCameras(ctx context.Context, req *protocol.Ge
 	if s.ctx.Err() != nil {
 		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
 	}
-	s.log.Trace("Handling GetDiscoveredCameras request")
+	s.log.Debug("Handling GetDiscoveredCameras request")
 
 	db := database.GetDatabase()
 
@@ -426,18 +426,18 @@ func (s *DropzServer) GetDiscoveredCameras(ctx context.Context, req *protocol.Ge
 
 // WatchDiscoveredCameras implements the streaming RPC to watch for discovered camera changes
 func (s *DropzServer) WatchDiscoveredCameras(req *protocol.GetDiscoveredCamerasRequest, stream protocol.DropzService_WatchDiscoveredCamerasServer) error {
-	s.log.Debugf("WatchDiscoveredCameras: New stream request from %p", stream)
+	s.log.Tracef("WatchDiscoveredCameras: New stream request from %p", stream)
 	done := make(chan bool)
 
 	s.streamMutex.Lock()
 	select {
 	case <-s.ctx.Done():
 		s.streamMutex.Unlock()
-		s.log.Debugf("WatchDiscoveredCameras: Server shutting down, stream %p not started.", stream)
+		s.log.Tracef("WatchDiscoveredCameras: Server shutting down, stream %p not started.", stream)
 		return s.ctx.Err()
 	default:
 		s.discoveredStreams[stream] = done
-		s.log.Debugf("WatchDiscoveredCameras: Stream %p added to discoveredStreams.", stream)
+		s.log.Tracef("WatchDiscoveredCameras: Stream %p added to discoveredStreams.", stream)
 	}
 	s.streamMutex.Unlock()
 
@@ -446,16 +446,16 @@ func (s *DropzServer) WatchDiscoveredCameras(req *protocol.GetDiscoveredCamerasR
 		if currentDone, ok := s.discoveredStreams[stream]; ok {
 			if currentDone == done { // Ensure we are deleting the correct stream instance's channel
 				delete(s.discoveredStreams, stream)
-				s.log.Debugf("WatchDiscoveredCameras: Stream %p removed from discoveredStreams.", stream)
+				s.log.Tracef("WatchDiscoveredCameras: Stream %p removed from discoveredStreams.", stream)
 			}
 		}
 		// Note: 'done' channel is closed by Stop() or by heartbeat sender on error.
 		// Avoid closing 'done' here directly unless logic guarantees it's safe and not already closed.
 		s.streamMutex.Unlock()
-		s.log.Debugf("WatchDiscoveredCameras: Stream %p defer cleanup finished.", stream)
+		s.log.Tracef("WatchDiscoveredCameras: Stream %p defer cleanup finished.", stream)
 	}()
 
-	s.log.Debugf("WatchDiscoveredCameras: Sending initial data to stream %p.", stream)
+	s.log.Tracef("WatchDiscoveredCameras: Sending initial data to stream %p.", stream)
 	initialResponse, err := s.GetDiscoveredCameras(stream.Context(), req)
 	if err != nil {
 		s.log.Errorf("WatchDiscoveredCameras: Error getting initial discovered cameras for stream %p: %v", stream, err)
@@ -469,13 +469,13 @@ func (s *DropzServer) WatchDiscoveredCameras(req *protocol.GetDiscoveredCamerasR
 
 	select {
 	case <-done:
-		s.log.Debugf("WatchDiscoveredCameras: Stream %p stopping via internal 'done' channel.", stream)
+		s.log.Tracef("WatchDiscoveredCameras: Stream %p stopping via internal 'done' channel.", stream)
 	case <-stream.Context().Done():
-		s.log.Debugf("WatchDiscoveredCameras: Stream %p stopping via RPC context done: %v", stream, stream.Context().Err())
+		s.log.Tracef("WatchDiscoveredCameras: Stream %p stopping via RPC context done: %v", stream, stream.Context().Err())
 	case <-s.ctx.Done(): // Also listen for server shutdown context
-		s.log.Debugf("WatchDiscoveredCameras: Stream %p stopping via server context done.", stream)
+		s.log.Tracef("WatchDiscoveredCameras: Stream %p stopping via server context done.", stream)
 	}
-	s.log.Debugf("WatchDiscoveredCameras: Stream %p finished.", stream)
+	s.log.Tracef("WatchDiscoveredCameras: Stream %p finished.", stream)
 	return nil
 }
 
@@ -484,7 +484,7 @@ func (s *DropzServer) GetManagedCameras(ctx context.Context, req *protocol.GetMa
 	if s.ctx.Err() != nil {
 		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
 	}
-	s.log.Trace("Handling GetManagedCameras request")
+	s.log.Debug("Handling GetManagedCameras request")
 
 	db := database.GetDatabase()
 
@@ -505,17 +505,17 @@ func (s *DropzServer) GetManagedCameras(ctx context.Context, req *protocol.GetMa
 
 // WatchManagedCameras implements the streaming RPC to watch for managed camera changes
 func (s *DropzServer) WatchManagedCameras(req *protocol.GetManagedCamerasRequest, stream protocol.DropzService_WatchManagedCamerasServer) error {
-	s.log.Debugf("WatchManagedCameras: New stream request from %p", stream)
+	s.log.Tracef("WatchManagedCameras: New stream request from %p", stream)
 	done := make(chan bool)
 	s.streamMutex.Lock()
 	select {
 	case <-s.ctx.Done():
 		s.streamMutex.Unlock()
-		s.log.Debugf("WatchManagedCameras: Server shutting down, stream %p not started.", stream)
+		s.log.Tracef("WatchManagedCameras: Server shutting down, stream %p not started.", stream)
 		return s.ctx.Err()
 	default:
 		s.managedStreams[stream] = done
-		s.log.Debugf("WatchManagedCameras: Stream %p added to managedStreams.", stream)
+		s.log.Tracef("WatchManagedCameras: Stream %p added to managedStreams.", stream)
 	}
 	s.streamMutex.Unlock()
 
@@ -524,14 +524,14 @@ func (s *DropzServer) WatchManagedCameras(req *protocol.GetManagedCamerasRequest
 		if currentDone, ok := s.managedStreams[stream]; ok {
 			if currentDone == done {
 				delete(s.managedStreams, stream)
-				s.log.Debugf("WatchManagedCameras: Stream %p removed from managedStreams.", stream)
+				s.log.Tracef("WatchManagedCameras: Stream %p removed from managedStreams.", stream)
 			}
 		}
 		s.streamMutex.Unlock()
-		s.log.Debugf("WatchManagedCameras: Stream %p defer cleanup finished.", stream)
+		s.log.Tracef("WatchManagedCameras: Stream %p defer cleanup finished.", stream)
 	}()
 
-	s.log.Debugf("WatchManagedCameras: Sending initial data to stream %p.", stream)
+	s.log.Tracef("WatchManagedCameras: Sending initial data to stream %p.", stream)
 	initialResponse, err := s.GetManagedCameras(stream.Context(), req)
 	if err != nil {
 		s.log.Errorf("WatchManagedCameras: Error getting initial managed cameras for stream %p: %v", stream, err)
@@ -545,13 +545,13 @@ func (s *DropzServer) WatchManagedCameras(req *protocol.GetManagedCamerasRequest
 
 	select {
 	case <-done:
-		s.log.Debugf("WatchManagedCameras: Stream %p stopping via internal 'done' channel.", stream)
+		s.log.Tracef("WatchManagedCameras: Stream %p stopping via internal 'done' channel.", stream)
 	case <-stream.Context().Done():
-		s.log.Debugf("WatchManagedCameras: Stream %p stopping via RPC context done: %v", stream, stream.Context().Err())
+		s.log.Tracef("WatchManagedCameras: Stream %p stopping via RPC context done: %v", stream, stream.Context().Err())
 	case <-s.ctx.Done():
-		s.log.Debugf("WatchManagedCameras: Stream %p stopping via server context done.", stream)
+		s.log.Tracef("WatchManagedCameras: Stream %p stopping via server context done.", stream)
 	}
-	s.log.Debugf("WatchManagedCameras: Stream %p finished.", stream)
+	s.log.Tracef("WatchManagedCameras: Stream %p finished.", stream)
 	return nil
 }
 
@@ -581,17 +581,17 @@ func (s *DropzServer) GetSyncQueue(ctx context.Context, req *protocol.GetSyncQue
 
 // WatchSyncQueue implements the streaming RPC to watch for sync queue changes
 func (s *DropzServer) WatchSyncQueue(req *protocol.GetSyncQueueRequest, stream protocol.DropzService_WatchSyncQueueServer) error {
-	s.log.Debugf("WatchSyncQueue: New stream request from %p", stream)
+	s.log.Tracef("WatchSyncQueue: New stream request from %p", stream)
 	done := make(chan bool)
 	s.streamMutex.Lock()
 	select {
 	case <-s.ctx.Done():
 		s.streamMutex.Unlock()
-		s.log.Debugf("WatchSyncQueue: Server shutting down, stream %p not started.", stream)
+		s.log.Tracef("WatchSyncQueue: Server shutting down, stream %p not started.", stream)
 		return s.ctx.Err()
 	default:
 		s.syncQueueStreams[stream] = done
-		s.log.Debugf("WatchSyncQueue: Stream %p added to syncQueueStreams.", stream)
+		s.log.Tracef("WatchSyncQueue: Stream %p added to syncQueueStreams.", stream)
 	}
 	s.streamMutex.Unlock()
 
@@ -600,14 +600,14 @@ func (s *DropzServer) WatchSyncQueue(req *protocol.GetSyncQueueRequest, stream p
 		if currentDone, ok := s.syncQueueStreams[stream]; ok {
 			if currentDone == done {
 				delete(s.syncQueueStreams, stream)
-				s.log.Debugf("WatchSyncQueue: Stream %p removed from syncQueueStreams.", stream)
+				s.log.Tracef("WatchSyncQueue: Stream %p removed from syncQueueStreams.", stream)
 			}
 		}
 		s.streamMutex.Unlock()
-		s.log.Debugf("WatchSyncQueue: Stream %p defer cleanup finished.", stream)
+		s.log.Tracef("WatchSyncQueue: Stream %p defer cleanup finished.", stream)
 	}()
 
-	s.log.Debugf("WatchSyncQueue: Sending initial data to stream %p.", stream)
+	s.log.Tracef("WatchSyncQueue: Sending initial data to stream %p.", stream)
 	initialResponse, err := s.GetSyncQueue(stream.Context(), req)
 	if err != nil {
 		s.log.Errorf("WatchSyncQueue: Error getting initial sync queue for stream %p: %v", stream, err)
@@ -617,17 +617,17 @@ func (s *DropzServer) WatchSyncQueue(req *protocol.GetSyncQueueRequest, stream p
 		s.log.Errorf("WatchSyncQueue: Error sending initial sync queue for stream %p: %v", stream, err)
 		return err
 	}
-	s.log.Debugf("WatchSyncQueue: Initial data sent to stream %p.", stream)
+	s.log.Tracef("Watch Initial data sent to stream %p.", stream)
 
 	select {
 	case <-done:
-		s.log.Debugf("WatchSyncQueue: Stream %p stopping via internal 'done' channel.", stream)
+		s.log.Tracef("WatchSyncQueue: Stream %p stopping via internal 'done' channel.", stream)
 	case <-stream.Context().Done():
-		s.log.Debugf("WatchSyncQueue: Stream %p stopping via RPC context done: %v", stream, stream.Context().Err())
+		s.log.Tracef("WatchSyncQueue: Stream %p stopping via RPC context done: %v", stream, stream.Context().Err())
 	case <-s.ctx.Done():
-		s.log.Debugf("WatchSyncQueue: Stream %p stopping via server context done.", stream)
+		s.log.Tracef("WatchSyncQueue: Stream %p stopping via server context done.", stream)
 	}
-	s.log.Debugf("WatchSyncQueue: Stream %p finished.", stream)
+	s.log.Tracef("WatchSyncQueue: Stream %p finished.", stream)
 	return nil
 }
 
@@ -658,7 +658,7 @@ func (s *DropzServer) ManageCamera(ctx context.Context, req *protocol.ManageCame
 	// Notify about updates
 	s.NotifyUpdate()
 
-	s.log.Info("Camera managed successfully", "camera_id", req.CameraId, "camera_name", managedCamera.CameraState.Camera.Name)
+	// Core manager already logs the success, no need to duplicate
 	return &protocol.ManageCameraResponse{
 		Success: true,
 		Message: fmt.Sprintf("Camera %s is now managed", req.CameraId),
@@ -671,7 +671,7 @@ func (s *DropzServer) UnmanageCamera(ctx context.Context, req *protocol.Unmanage
 	if s.ctx.Err() != nil {
 		return &protocol.UnmanageCameraResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
 	}
-	s.log.Debugf("Handling UnmanageCamera request for camera %s", req.CameraId)
+	s.log.Infof("Handling UnmanageCamera request for camera %s", req.CameraId)
 
 	err := s.manager.UnmanageCamera(req.CameraId)
 	if err != nil {
@@ -695,7 +695,7 @@ func (s *DropzServer) PairCamera(ctx context.Context, req *protocol.PairCameraRe
 	if s.ctx.Err() != nil {
 		return &protocol.PairCameraResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
 	}
-	s.log.Debugf("Handling PairCamera request for camera %s", req.CameraId)
+	s.log.Infof("Handling PairCamera request for camera %s", req.CameraId)
 
 	managedCamera, err := s.manager.PairCamera(req.CameraId)
 	if err != nil {
@@ -728,7 +728,7 @@ func (s *DropzServer) ForceSync(ctx context.Context, req *protocol.ForceSyncRequ
 	if s.ctx.Err() != nil {
 		return &protocol.ForceSyncResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
 	}
-	s.log.Debugf("Handling ForceSync request for camera %s", req.CameraId)
+	s.log.Infof("Handling ForceSync request for camera %s", req.CameraId)
 
 	queueEntry, err := s.manager.ForceSync(req.CameraId)
 	if err != nil {
@@ -753,7 +753,7 @@ func (s *DropzServer) CancelSync(ctx context.Context, req *protocol.CancelSyncRe
 	if s.ctx.Err() != nil {
 		return &protocol.CancelSyncResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
 	}
-	s.log.Debugf("Handling CancelSync request for camera %s", req.CameraId)
+	s.log.Infof("Handling CancelSync request for camera %s", req.CameraId)
 
 	err := s.manager.CancelSync(req.CameraId)
 	if err != nil {

@@ -1168,17 +1168,6 @@ func (m *WiFiManager) fileExistsWithSize(filePath string, expectedSize int64) (b
 	if err != nil {
 		if os.IsNotExist(err) {
 			m.log.Debugf("File does not exist: file=%s - WILL DOWNLOAD", filepath.Base(filePath))
-			// Try searching in immediate subdirectories
-			rootDir := filepath.Dir(filePath)
-			pattern := filepath.Join(rootDir, "*", filepath.Base(filePath))
-			matches, _ := filepath.Glob(pattern)
-			for _, p := range matches {
-				if info, e := os.Stat(p); e == nil && info.Size() == expectedSize {
-					m.log.Infof("File exists in subfolder, skipping download: file=%s path=%s size=%d bytes",
-						filepath.Base(filePath), p, expectedSize)
-					return true, nil
-				}
-			}
 			return false, nil // File doesn't exist
 		}
 		m.log.Warnf("Error checking file existence: file=%s error=%v", filepath.Base(filePath), err)
@@ -1186,7 +1175,7 @@ func (m *WiFiManager) fileExistsWithSize(filePath string, expectedSize int64) (b
 	}
 
 	if fi.Size() == expectedSize {
-		m.log.Infof("File exists with correct size: file=%s size=%d bytes - WILL SKIP",
+		m.log.Infof("File already exists with correct size, skipping download: file=%s size=%d bytes",
 			filepath.Base(filePath), expectedSize)
 		return true, nil
 	}

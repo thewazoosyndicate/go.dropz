@@ -417,11 +417,22 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 		return
 	}
 
-	// Download videos from the last X days
+	// Create a folder for the camera if it doesn't exist
+	cameraFolder := filepath.Join(config.DestinationFolder, camera.CameraState.Camera.Name)
+	if err := os.MkdirAll(cameraFolder, 0755); err != nil {
+		c.log.Errorf("Failed to create camera-specific folder: %v", err)
+		syncEntry.CurrentOperation = "Failed to create camera folder"
+		if err := c.db.UpdateSyncQueueEntry(syncEntry); err != nil {
+			c.log.Errorf("Failed to update sync queue entry: %v", err)
+		}
+		return
+	}
+
+	// Download videos directly to the camera folder
 	downloadCtx, downloadCancel := context.WithTimeout(syncCtx, 20*time.Minute)
 	defer downloadCancel()
 
-	downloadedFiles, err := wifiManager.DownloadVideos(downloadCtx, config.DestinationFolder, int(config.DaysThreshold))
+	downloadedFiles, err := wifiManager.DownloadVideos(downloadCtx, cameraFolder, int(config.DaysThreshold))
 	if err != nil {
 		syncEntry.CurrentOperation = "Media Download Failed"
 		if err := c.db.UpdateSyncQueueEntry(syncEntry); err != nil {
@@ -431,7 +442,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 		return
 	}
 
-	// Step 5: Process files (move to final location, add metadata, etc.)
+	// Step 5: Process files (add metadata, etc.)
 	syncEntry.CurrentOperation = "Processing files"
 	syncEntry.ProgressPercent = 90
 	if err := c.db.UpdateSyncQueueEntry(syncEntry); err != nil {
@@ -444,25 +455,6 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 
 	c.log.Infof("Sync for camera %s: %s (%d%%), downloaded %d files",
 		camera.CameraState.Camera.Name, syncEntry.CurrentOperation, syncEntry.ProgressPercent, len(downloadedFiles))
-
-	// Create a folder for the camera if it doesn't exist
-	cameraFolder := filepath.Join(config.DestinationFolder, camera.CameraState.Camera.Name)
-	if err := os.MkdirAll(cameraFolder, 0755); err != nil {
-		c.log.Warnf("Failed to create camera-specific folder: %v", err)
-		// Continue anyway, use the main destination folder
-	} else {
-		// Move files to camera-specific folder if needed
-		for _, file := range downloadedFiles {
-			if filepath.Dir(file) != cameraFolder {
-				newPath := filepath.Join(cameraFolder, filepath.Base(file))
-				if err := os.Rename(file, newPath); err != nil {
-					c.log.Warnf("Failed to move file %s to camera folder: %v", file, err)
-				} else {
-					c.log.Debugf("Moved file to camera folder: %s -> %s", file, newPath)
-				}
-			}
-		}
-	}
 
 	// Mark sync as complete - set appropriate boolean flags instead of status enum
 	c.db.MarkCameraSynced(task.MACAddress)

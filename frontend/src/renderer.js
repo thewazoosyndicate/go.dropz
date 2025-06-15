@@ -1277,7 +1277,7 @@ function addOrUpdateDevice(device) {
   if (isNewDevice) {
     // Log new device
     debugLog(`New device discovered: ${device.name} (${device.macAddress}) RSSI: ${device.rssi}`, LOG_LEVELS.INFO);
-    addLogEntry(`New device discovered: ${device.name}`, 'info');
+    addLogEntry(`New device discovered: ${getDeviceDisplayName(device)}`, 'info');
     significantChange = true;
   } else if (significantChange) {
     // Log significant changes
@@ -1288,7 +1288,7 @@ function addOrUpdateDevice(device) {
     if (existingDevice.isPaired !== device.isPaired) {
       debugLog(`Device paired status changed: ${device.name} (${device.macAddress}) - now ${device.isPaired ? 'paired' : 'unpaired'}`, LOG_LEVELS.INFO);
       if (device.isPaired) {
-        addLogEntry(`Device paired: ${device.name}`, 'success');
+        addLogEntry(`Device paired: ${getDeviceDisplayName(device)}`, 'success');
       }
     }
     
@@ -1529,7 +1529,7 @@ function insertDeviceInCorrectPosition(gridContainer, deviceElement, device, poo
     for (let i = 0; i < children.length; i++) {
       const childMac = children[i].getAttribute('data-mac');
       const childDevice = allDevices[childMac];
-      if (childDevice && (device.name || '').localeCompare(childDevice.name || '') < 0) {
+      if (childDevice && (getDeviceDisplayName(device) || '').localeCompare(getDeviceDisplayName(childDevice) || '') < 0) {
         insertIndex = i;
         break;
       }
@@ -1552,7 +1552,7 @@ function updateDeviceElement(element, device, inSyncQueue = false) {
   if (nameElement) {
     // Clear existing content
     nameElement.innerHTML = '';
-    nameElement.textContent = device.name || 'Unknown GoPro';
+    nameElement.textContent = getDeviceDisplayName(device);
     
     // Add status badge
     const statusText = formatStatus(getStatusShortcode(device));
@@ -2029,7 +2029,7 @@ function createGoProElement(device, inSyncQueue = false) {
   // Set device name
   const nameElement = element.querySelector('.device-name');
   if (nameElement) {
-    nameElement.textContent = device.name || 'Unknown GoPro';
+    nameElement.textContent = getDeviceDisplayName(device);
     
     // Add status badge next to the device name
     const statusText = formatStatus(getStatusShortcode(device));
@@ -2246,6 +2246,17 @@ function formatMacAddress(macAddress) {
   return macAddress.match(/.{1,2}/g).join(':');
 }
 
+// Helper function to get the display name for a device
+// Uses wifi_ssid (max 12 chars) if available, otherwise falls back to device name
+function getDeviceDisplayName(device) {
+  if (device.wifiSsid && device.wifiSsid.trim() !== '') {
+    // Use WiFi SSID but limit to 12 characters
+    return device.wifiSsid.substring(0, 12);
+  }
+  // Fall back to device name or default
+  return device.name || 'Unknown GoPro';
+}
+
 // Helper function to get a short status code for compact display
 function getStatusShortcode(device) {
   // First check for special statuses
@@ -2332,7 +2343,7 @@ function pairDevice(macAddress) {
   
   console.log("Attempting to pair device:", device.name, "ID:", device.id, "Status:", device.status);
   debugLog(`Pairing device: ${device.name} (${device.id})`, LOG_LEVELS.INFO);
-  addLogEntry(`Attempting to pair ${device.name}`, 'info');
+  addLogEntry(`Attempting to pair ${getDeviceDisplayName(device)}`, 'info');
   
   // Mark device as pairing in progress
   pairingInProgress[macAddress] = true;
@@ -2356,7 +2367,7 @@ function pairDevice(macAddress) {
       
       if (pairError) {
         debugLog(`Error pairing device: ${pairError.message}`, LOG_LEVELS.ERROR);
-        addLogEntry(`Failed to pair ${device.name}: ${pairError.message}`, 'error');
+        addLogEntry(`Failed to pair ${getDeviceDisplayName(device)}: ${pairError.message}`, 'error');
         resetPairButtonState(macAddress);
         updateDeviceStatus(macAddress, 'discovered');
         updateDeviceLists();
@@ -2365,7 +2376,7 @@ function pairDevice(macAddress) {
       
       if (!pairResponse.getSuccess()) {
         debugLog(`Pairing failed: ${pairResponse.getMessage()}`, LOG_LEVELS.ERROR);
-        addLogEntry(`Failed to pair ${device.name}: ${pairResponse.getMessage()}`, 'error');
+        addLogEntry(`Failed to pair ${getDeviceDisplayName(device)}: ${pairResponse.getMessage()}`, 'error');
         resetPairButtonState(macAddress);
         updateDeviceStatus(macAddress, 'discovered');
         updateDeviceLists();
@@ -2374,7 +2385,7 @@ function pairDevice(macAddress) {
       
       // Successfully paired
       debugLog(`Successfully paired device: ${device.name}`, LOG_LEVELS.INFO);
-      addLogEntry(`Successfully paired ${device.name}`, 'success');
+      addLogEntry(`Successfully paired ${getDeviceDisplayName(device)}`, 'success');
       
       // Process the returned camera object
       const pairResultCamera = pairResponse.getCamera();
@@ -2405,13 +2416,13 @@ function pairDevice(macAddress) {
       
       // Check if we should automatically sync
       if (autoSync && device.isManaged) {
-        debugLog(`Auto-sync enabled for managed device, adding ${device.name} to sync queue`, LOG_LEVELS.INFO);
+        debugLog(`Auto-sync enabled for managed device, adding ${getDeviceDisplayName(device)} to sync queue`, LOG_LEVELS.INFO);
         addToSyncQueue(macAddress);
       }
     });
   } catch (error) {
     debugLog(`Exception during pairing: ${error.message}`, LOG_LEVELS.ERROR);
-    addLogEntry(`Error pairing ${device.name}: ${error.message}`, 'error');
+    addLogEntry(`Error pairing ${getDeviceDisplayName(device)}: ${error.message}`, 'error');
     pairingInProgress[macAddress] = false;
     resetPairButtonState(macAddress);
     updateDeviceStatus(macAddress, 'discovered');
@@ -2445,7 +2456,7 @@ function addToSyncQueue(macAddress) {
   
   debugLog(`Adding device to sync queue: ${device.name} (${device.id})`, LOG_LEVELS.INFO);
   debugLog(`Device details - MAC: ${macAddress}, isPaired: ${device.isPaired}, isManaged: ${device.isManaged}, ID: ${device.id}`, LOG_LEVELS.DEBUG);
-  addLogEntry(`Adding ${device.name} to sync queue`, 'info');
+  addLogEntry(`Adding ${getDeviceDisplayName(device)} to sync queue`, 'info');
   
   try {
     const grpcUtils = require('./grpc-utils');
@@ -2461,21 +2472,21 @@ function addToSyncQueue(macAddress) {
     client.forceSync(request, (error, response) => {
       if (error) {
         debugLog(`Error adding to sync queue: ${error.message}`, LOG_LEVELS.ERROR);
-        addLogEntry(`Failed to add ${device.name} to sync queue: ${error.message}`, 'error');
+        addLogEntry(`Failed to add ${getDeviceDisplayName(device)} to sync queue: ${error.message}`, 'error');
         resetSyncButtonState(macAddress);
         return;
       }
       
       if (!response.getSuccess()) {
         debugLog(`Adding to sync queue failed: ${response.getMessage()}`, LOG_LEVELS.ERROR);
-        addLogEntry(`Failed to add ${device.name} to sync queue: ${response.getMessage()}`, 'error');
+        addLogEntry(`Failed to add ${getDeviceDisplayName(device)} to sync queue: ${response.getMessage()}`, 'error');
         resetSyncButtonState(macAddress);
         return;
       }
       
       // Successfully added to sync queue
       debugLog(`Successfully added device to sync queue: ${device.name}`, LOG_LEVELS.INFO);
-      addLogEntry(`Added ${device.name} to sync queue`, 'success');
+      addLogEntry(`Added ${getDeviceDisplayName(device)} to sync queue`, 'success');
       
       // Update local device state
       device.isSynced = false;
@@ -2504,7 +2515,7 @@ function addToSyncQueue(macAddress) {
     });
   } catch (error) {
     debugLog(`Exception during adding to sync queue: ${error.message}`, LOG_LEVELS.ERROR);
-    addLogEntry(`Error adding ${device.name} to sync queue: ${error.message}`, 'error');
+    addLogEntry(`Error adding ${getDeviceDisplayName(device)} to sync queue: ${error.message}`, 'error');
     resetSyncButtonState(macAddress);
   }
 }
@@ -2533,7 +2544,7 @@ function cancelSync(macAddress) {
   }
   
   debugLog(`Cancelling sync for device: ${device.name} (${device.id})`, LOG_LEVELS.INFO);
-  addLogEntry(`Cancelling sync for ${device.name}`, 'info');
+  addLogEntry(`Cancelling sync for ${getDeviceDisplayName(device)}`, 'info');
   
   try {
     const grpcUtils = require('./grpc-utils');
@@ -2549,19 +2560,19 @@ function cancelSync(macAddress) {
     client.cancelSync(request, (error, response) => {
       if (error) {
         debugLog(`Error cancelling sync: ${error.message}`, LOG_LEVELS.ERROR);
-        addLogEntry(`Failed to cancel sync for ${device.name}: ${error.message}`, 'error');
+        addLogEntry(`Failed to cancel sync for ${getDeviceDisplayName(device)}: ${error.message}`, 'error');
         return;
       }
       
       if (!response.getSuccess()) {
         debugLog(`Cancelling sync failed: ${response.getMessage()}`, LOG_LEVELS.ERROR);
-        addLogEntry(`Failed to cancel sync for ${device.name}: ${response.getMessage()}`, 'error');
+        addLogEntry(`Failed to cancel sync for ${getDeviceDisplayName(device)}: ${response.getMessage()}`, 'error');
         return;
       }
       
       // Successfully cancelled sync
       debugLog(`Successfully cancelled sync for device: ${device.name}`, LOG_LEVELS.INFO);
-      addLogEntry(`Cancelled sync for ${device.name}`, 'success');
+      addLogEntry(`Cancelled sync for ${getDeviceDisplayName(device)}`, 'success');
       
       // Update local device state - device should be synced now (removed from queue)
       device.isSynced = true;
@@ -2580,7 +2591,7 @@ function cancelSync(macAddress) {
     });
   } catch (error) {
     debugLog(`Exception during cancelling sync: ${error.message}`, LOG_LEVELS.ERROR);
-    addLogEntry(`Error cancelling sync for ${device.name}: ${error.message}`, 'error');
+    addLogEntry(`Error cancelling sync for ${getDeviceDisplayName(device)}: ${error.message}`, 'error');
   }
 }
 
@@ -2593,7 +2604,7 @@ function toggleDeviceManaged(macAddress, isManaged) {
   }
   
   debugLog(`${isManaged ? 'Managing' : 'Unmanaging'} device: ${device.name} (${device.id})`, LOG_LEVELS.INFO);
-  addLogEntry(`${isManaged ? 'Adding' : 'Removing'} ${device.name} ${isManaged ? 'to' : 'from'} camera pool`, 'info');
+  addLogEntry(`${isManaged ? 'Adding' : 'Removing'} ${getDeviceDisplayName(device)} ${isManaged ? 'to' : 'from'} camera pool`, 'info');
   
   try {
     const grpcUtils = require('./grpc-utils');
@@ -2616,19 +2627,19 @@ function toggleDeviceManaged(macAddress, isManaged) {
     function handleResponse(error, response) {
       if (error) {
         debugLog(`Error ${isManaged ? 'managing' : 'unmanaging'} device: ${error.message}`, LOG_LEVELS.ERROR);
-        addLogEntry(`Failed to ${isManaged ? 'add' : 'remove'} ${device.name} ${isManaged ? 'to' : 'from'} camera pool: ${error.message}`, 'error');
+        addLogEntry(`Failed to ${isManaged ? 'add' : 'remove'} ${getDeviceDisplayName(device)} ${isManaged ? 'to' : 'from'} camera pool: ${error.message}`, 'error');
         return;
       }
       
       if (!response.getSuccess()) {
         debugLog(`${isManaged ? 'Managing' : 'Unmanaging'} failed: ${response.getMessage()}`, LOG_LEVELS.ERROR);
-        addLogEntry(`Failed to ${isManaged ? 'add' : 'remove'} ${device.name} ${isManaged ? 'to' : 'from'} camera pool: ${response.getMessage()}`, 'error');
+        addLogEntry(`Failed to ${isManaged ? 'add' : 'remove'} ${getDeviceDisplayName(device)} ${isManaged ? 'to' : 'from'} camera pool: ${response.getMessage()}`, 'error');
         return;
       }
       
       // Success!
       debugLog(`Successfully ${isManaged ? 'managed' : 'unmanaged'} device: ${device.name}`, LOG_LEVELS.INFO);
-      addLogEntry(`${isManaged ? 'Added' : 'Removed'} ${device.name} ${isManaged ? 'to' : 'from'} camera pool`, 'success');
+      addLogEntry(`${isManaged ? 'Added' : 'Removed'} ${getDeviceDisplayName(device)} ${isManaged ? 'to' : 'from'} camera pool`, 'success');
       
       // Update local device state immediately to ensure UI reflects the change
       device.isManaged = isManaged;
@@ -2654,13 +2665,13 @@ function toggleDeviceManaged(macAddress, isManaged) {
       
       // Auto-pair if enabled
       if (isManaged && autoPair && !(device.isPaired)) {
-        debugLog(`Auto-pair enabled, pairing ${device.name}`, LOG_LEVELS.INFO);
+        debugLog(`Auto-pair enabled, pairing ${getDeviceDisplayName(device)}`, LOG_LEVELS.INFO);
         pairDevice(macAddress);
       }
     }
   } catch (error) {
     debugLog(`Exception during ${isManaged ? 'managing' : 'unmanaging'} device: ${error.message}`, LOG_LEVELS.ERROR);
-    addLogEntry(`Error ${isManaged ? 'adding' : 'removing'} ${device.name} ${isManaged ? 'to' : 'from'} camera pool: ${error.message}`, 'error');
+    addLogEntry(`Error ${isManaged ? 'adding' : 'removing'} ${getDeviceDisplayName(device)} ${isManaged ? 'to' : 'from'} camera pool: ${error.message}`, 'error');
   }
 }
 

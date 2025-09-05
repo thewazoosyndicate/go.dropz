@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/pkg/logger"
+	"github.com/dropz/dropz/pkg/ble/tlv"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -476,87 +477,35 @@ func (m *Manager) sendCommand(macAddress string, commandID byte, data []byte) (R
 		return Response{}, fmt.Errorf("command characteristic not found")
 	}
 
-	// Build TLV command according to OpenGoPro BLE specification
-	// Format: [Length, CommandID, Parameters...]
-	var cmd []byte
-	if len(data) == 0 {
-		// Command without parameters: [Length=1, CommandID]
-		cmd = []byte{0x01, commandID}
-	} else {
-		// Command with parameters: [Length=1+len(data), CommandID, Parameters...]
-		length := byte(1 + len(data))
-		cmd = append([]byte{length, commandID}, data...)
-	}
+	// Register for response
+	responseChan := conn.RegisterPendingCommand(commandID)
+	defer conn.UnregisterPendingCommand(commandID)
 
-	// Flush any stale responses before sending
-flushLoop:
-	for {
-		select {
-		case <-conn.responses:
-			// drop stale
-		default:
-			break flushLoop
+	// Build command packet using Extended 13-bit format (recommended by OpenGoPro)
+	packet := tlv.BuildCommandPacket(commandID, data)
+	packets := tlv.SplitIntoPackets(packet)
+
+	m.log.Debugf("Sending command 0x%02X to device %s (%d packets)", commandID, macAddress, len(packets))
+	
+	// Send all packets
+	for i, pkt := range packets {
+		if _, err := cmdChar.WriteWithoutResponse(pkt); err != nil {
+			return Response{}, fmt.Errorf("failed to send command packet %d: %v", i, err)
 		}
 	}
 
-	m.log.Debugf("Sending TLV command 0x%02X (length=%d) to device: %s", commandID, len(cmd)-1, macAddress)
-	// Send command
-	if _, err := cmdChar.WriteWithoutResponse(cmd); err != nil {
-		return Response{}, fmt.Errorf("failed to send command: %v", err)
-	}
-
-	// Collect TLV fragments and reassemble payload
-	timeout := time.After(5 * time.Second)
-	var fullPayload []byte
-	var status byte
-	var expectedLen int
-	first := true
-	for {
-		select {
-		case resp := <-conn.responses:
-			// raw TLV fragment in resp.Data
-			raw := resp.Data
-			// parse header on first fragment: detect start-of-multi-packet and compute total length
-			if first {
-				first = false
-				var hdrLen int
-				var totalLen int
-				// Check start flag for multi-packet
-				if raw[0]&HeaderStart != 0 {
-					// multi-packet TLV start: next byte holds full length bits
-					hdrLen = 2
-					// combine lower 5 bits of first byte as MSB and second byte as LSB
-					totalLen = (int(raw[0]&LengthMask) << 8) | int(raw[1])
-				} else {
-					// single-packet TLV: length in lower 5 bits
-					hdrLen = 1
-					totalLen = int(raw[0] & LengthMask)
-				}
-				// extract status (after command ID)
-				status = raw[hdrLen+1]
-				// append payload chunk after header, command ID, and status
-				fullPayload = append(fullPayload, raw[hdrLen+2:]...)
-				// expected payload length = totalLen - 2 (command ID + status)
-				expectedLen = totalLen - 2
-			} else {
-				// subsequent fragments contain payload only
-				// strip continuation header on multi-packet fragments
-				if raw[0]&HeaderCont != 0 {
-					// skip header byte
-					fullPayload = append(fullPayload, raw[1:]...)
-				} else {
-					// no header flag, append all bytes
-					fullPayload = append(fullPayload, raw...)
-				}
-			}
-			m.log.Debugf("Reassembly for command 0x%02X: got %d/%d bytes", commandID, len(fullPayload), expectedLen)
-			if len(fullPayload) >= expectedLen {
-				return Response{CommandID: commandID, Status: status, Data: fullPayload, Timestamp: time.Now()}, nil
-			}
-		case <-timeout:
-			m.log.Warnf("Command 0x%02X timed out after 5 seconds", commandID)
-			return Response{}, fmt.Errorf("command timeout")
-		}
+	// Wait for complete TLV message with timeout
+	select {
+	case message := <-responseChan:
+		return Response{
+			CommandID: message.CommandID,
+			Status:    message.Status,
+			Data:      message.Payload,
+			Timestamp: message.Timestamp,
+		}, nil
+	case <-time.After(5 * time.Second):
+		m.log.Warnf("Command 0x%02X timed out after 5 seconds", commandID)
+		return Response{}, fmt.Errorf("command timeout")
 	}
 }
 
@@ -571,36 +520,36 @@ func (m *Manager) sendSetting(macAddress string, settingID byte, data []byte) (R
 		return Response{}, fmt.Errorf("settings characteristic not found")
 	}
 
-	// Build TLV setting command according to OpenGoPro BLE specification
-	// Format: [Length, SettingID, Parameters...]
-	var setting []byte
-	if len(data) == 0 {
-		// Setting without parameters: [Length=1, SettingID]
-		setting = []byte{0x01, settingID}
-	} else {
-		// Setting with parameters: [Length=1+len(data), SettingID, Parameters...]
-		length := byte(1 + len(data))
-		setting = []byte{length, settingID}
-		setting = append(setting, data...)
-	}
+	// Register for response
+	responseChan := conn.RegisterPendingCommand(settingID)
+	defer conn.UnregisterPendingCommand(settingID)
 
-	// Send setting
-	_, err := settingsChar.WriteWithoutResponse(setting)
-	if err != nil {
-		return Response{}, fmt.Errorf("failed to send setting: %v", err)
-	}
+	// Build setting packet using Extended 13-bit format (recommended by OpenGoPro)
+	packet := tlv.BuildSettingPacket(settingID, data)
+	packets := tlv.SplitIntoPackets(packet)
 
-	// Wait for response
-	select {
-	case response := <-conn.responses:
-		if response.CommandID == settingID {
-			return response, nil
+	m.log.Debugf("Sending setting 0x%02X to device %s (%d packets)", settingID, macAddress, len(packets))
+	
+	// Send all packets
+	for i, pkt := range packets {
+		if _, err := settingsChar.WriteWithoutResponse(pkt); err != nil {
+			return Response{}, fmt.Errorf("failed to send setting packet %d: %v", i, err)
 		}
+	}
+
+	// Wait for complete TLV message with timeout
+	select {
+	case message := <-responseChan:
+		return Response{
+			CommandID: message.CommandID,
+			Status:    message.Status,
+			Data:      message.Payload,
+			Timestamp: message.Timestamp,
+		}, nil
 	case <-time.After(5 * time.Second):
+		m.log.Warnf("Setting 0x%02X timed out after 5 seconds", settingID)
 		return Response{}, fmt.Errorf("setting timeout")
 	}
-
-	return Response{}, fmt.Errorf("no response received")
 }
 
 func (m *Manager) sendQuery(macAddress string, queryID byte, data []byte) (Response, error) {
@@ -614,98 +563,48 @@ func (m *Manager) sendQuery(macAddress string, queryID byte, data []byte) (Respo
 		return Response{}, fmt.Errorf("query characteristic not found")
 	}
 
-	// Build TLV query according to OpenGoPro BLE specification
-	// Format: [Length, QueryID, Parameters...]
-	var query []byte
-	if len(data) == 0 {
-		// Query without parameters: [Length=1, QueryID]
-		query = []byte{0x01, queryID}
-	} else {
-		// Query with parameters: [Length=1+len(data), QueryID, Parameters...]
-		length := byte(1 + len(data))
-		query = []byte{length, queryID}
-		query = append(query, data...)
-	}
+	// Register for response
+	responseChan := conn.RegisterPendingCommand(queryID)
+	defer conn.UnregisterPendingCommand(queryID)
 
-	// Flush any stale responses before sending query
-flushLoopQuery:
-	for {
-		select {
-		case <-conn.responses:
-			// drop stale
-		default:
-			break flushLoopQuery
-		}
-	}
-	m.log.Debugf("Sending TLV query 0x%02X to device: %s", queryID, macAddress)
-	// Send query
-	_, err := queryChar.WriteWithoutResponse(query)
-	if err != nil {
-		return Response{}, fmt.Errorf("failed to send query: %v", err)
-	}
+	// Build query packet using Extended 13-bit format (recommended by OpenGoPro)
+	packet := tlv.BuildQueryPacket(queryID, data)
+	packets := tlv.SplitIntoPackets(packet)
 
-	// Wait for response and parse TLV
-	timeout := time.After(5 * time.Second)
-	for {
-		select {
-		case resp := <-conn.responses:
-			raw := resp.Data
-			if len(raw) < 3 {
-				continue // ignore invalid fragment
-			}
-			// determine header length
-			hdrType := raw[0] >> 6
-			var hdrLen int
-			switch hdrType {
-			case 0:
-				hdrLen = 1
-			case 2:
-				hdrLen = 2
-			case 3:
-				hdrLen = 3
-			default:
-				hdrLen = 1
-			}
-			// parse fields: byte hdrLen is QueryID, byte hdrLen+1 is status
-			cmdID := raw[hdrLen]
-			status := raw[hdrLen+1]
-			if cmdID != queryID {
-				continue
-			}
-			// payload is remaining bytes
-			payload := raw[hdrLen+2:]
-			return Response{CommandID: cmdID, Status: status, Data: payload, Timestamp: resp.Timestamp}, nil
-		case <-timeout:
-			return Response{}, fmt.Errorf("query timeout")
+	m.log.Debugf("Sending query 0x%02X to device %s (%d packets)", queryID, macAddress, len(packets))
+	
+	// Send all packets
+	for i, pkt := range packets {
+		if _, err := queryChar.WriteWithoutResponse(pkt); err != nil {
+			return Response{}, fmt.Errorf("failed to send query packet %d: %v", i, err)
 		}
 	}
 
-	// unreachable
+	// Wait for complete TLV message with timeout
+	select {
+	case message := <-responseChan:
+		return Response{
+			CommandID: message.CommandID,
+			Status:    message.Status,
+			Data:      message.Payload,
+			Timestamp: message.Timestamp,
+		}, nil
+	case <-time.After(5 * time.Second):
+		m.log.Warnf("Query 0x%02X timed out after 5 seconds", queryID)
+		return Response{}, fmt.Errorf("query timeout")
+	}
 }
 
 func (m *Manager) handleNotification(macAddress string, data []byte) {
-	// TLV notification - forward raw bytes for reassembly
-	if len(data) < 3 {
-		return
-	}
 	conn := m.getConnection(macAddress)
 	if conn == nil {
+		m.log.Tracef("Notification for unknown device %s, ignoring", macAddress)
 		return
 	}
-	// Wrap in Response.Data for parser
-	resp := Response{
-		Data:      data,
-		Timestamp: time.Now(),
-	}
-	select {
-	case conn.responses <- resp:
-	default:
-		// Channel full, drop oldest
-		select {
-		case <-conn.responses:
-			conn.responses <- resp
-		default:
-		}
+
+	// Process TLV fragment through the collector
+	if err := conn.ProcessTLVFragment(data); err != nil {
+		m.log.Debugf("Error processing TLV fragment from %s: %v", macAddress, err)
 	}
 }
 

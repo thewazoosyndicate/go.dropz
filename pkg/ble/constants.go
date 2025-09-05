@@ -57,12 +57,6 @@ const (
 	PairingFailed     = 2
 	PairingCancelled  = 3
 	PairingCompleted  = 4
-
-	// BLE Packet Constants
-	PacketMaxSize = 20
-	HeaderStart   = 0x20 // Bit 5 set for start packet
-	HeaderCont    = 0x80 // Bit 7 set for continuation
-	LengthMask    = 0x1F // Bits 0-4 for length
 )
 
 // UUID helper functions for OpenGoPro BLE specification compliance

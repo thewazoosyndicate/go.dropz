@@ -1,14 +1,14 @@
 module github.com/dropz/dropz
 
-go 1.22
+go 1.23
 
-toolchain go1.23.8
+toolchain go1.24.6
 
 require (
 	github.com/google/uuid v1.6.0
 	github.com/sirupsen/logrus v1.9.3
 	google.golang.org/grpc v1.65.0
-	google.golang.org/protobuf v1.36.6
+	google.golang.org/protobuf v1.36.8
 	tinygo.org/x/bluetooth v0.11.0
 )
 

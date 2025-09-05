@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dropz/dropz/pkg/ble/tlv"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -66,16 +67,20 @@ type DeviceConnection struct {
 	services     map[string]bluetooth.DeviceService
 	chars        map[string]bluetooth.DeviceCharacteristic
 	lastActivity time.Time
-	responses    chan Response
+	
+	// TLV handling - replaces old response channel
+	tlvCollector    *tlv.FragmentCollector
+	responseTracker *tlv.ResponseTracker
 }
 
 // NewDeviceConnection creates a new device connection
 func NewDeviceConnection() *DeviceConnection {
 	return &DeviceConnection{
-		services:  make(map[string]bluetooth.DeviceService),
-		chars:     make(map[string]bluetooth.DeviceCharacteristic),
-		responses: make(chan Response, 10),
-		state:     StateDisconnected,
+		services:        make(map[string]bluetooth.DeviceService),
+		chars:           make(map[string]bluetooth.DeviceCharacteristic),
+		state:           StateDisconnected,
+		tlvCollector:    tlv.NewFragmentCollector(10 * time.Second),
+		responseTracker: tlv.NewResponseTracker(),
 	}
 }
 
@@ -123,6 +128,31 @@ func (dc *DeviceConnection) GetCharacteristic(uuid string) (bluetooth.DeviceChar
 	return char, exists
 }
 
+// RegisterPendingCommand registers a command expecting a response
+func (dc *DeviceConnection) RegisterPendingCommand(commandID byte) chan *tlv.TLVMessage {
+	return dc.responseTracker.RegisterCommand(commandID)
+}
+
+// UnregisterPendingCommand removes a command from tracking
+func (dc *DeviceConnection) UnregisterPendingCommand(commandID byte) {
+	dc.responseTracker.UnregisterCommand(commandID)
+}
+
+// ProcessTLVFragment processes a TLV fragment and routes complete messages
+func (dc *DeviceConnection) ProcessTLVFragment(data []byte) error {
+	message, err := dc.tlvCollector.ProcessFragment(data)
+	if err != nil {
+		return err
+	}
+	
+	// If we have a complete message, route it
+	if message != nil {
+		dc.responseTracker.RouteResponse(message)
+	}
+	
+	return nil
+}
+
 // Close closes the connection and cleans up
 func (dc *DeviceConnection) Close() {
 	dc.mutex.Lock()
@@ -132,7 +162,7 @@ func (dc *DeviceConnection) Close() {
 		dc.device.Disconnect()
 	}
 	dc.state = StateDisconnected
-	close(dc.responses)
+	// TLV collector and response tracker cleanup handled by their own cleanup routines
 }
 
 // DeviceDiscoveryCallback is called when a device is discovered during scanning

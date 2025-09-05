@@ -2,9 +2,7 @@ package ble
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -223,19 +221,10 @@ func (m *Manager) GetWifiCredentials(macAddress string) (string, string, error) 
 }
 
 // EnableWifi enables WiFi on the device
+// Deprecated: Use EnableWiFiAP() instead which uses the proper command
 func (m *Manager) EnableWifi(macAddress string) error {
-	conn := m.getConnection(macAddress)
-	if conn == nil || conn.GetState() != StateReady {
-		return fmt.Errorf("device not ready: %s", macAddress)
-	}
-
-	powerChar, exists := conn.GetCharacteristic(CharWifiPower)
-	if !exists {
-		return fmt.Errorf("WiFi power characteristic not found")
-	}
-
-	_, err := powerChar.WriteWithoutResponse([]byte{1}) // 1 = enable
-	return err
+	m.log.Warn("EnableWifi is deprecated, using EnableWiFiAP instead")
+	return m.EnableWiFiAP(macAddress)
 }
 
 // GetBatteryLevel queries the battery level from the device
@@ -294,53 +283,33 @@ func (m *Manager) KeepAlive(macAddress string) error {
 
 // GetMetadata retrieves device metadata (model, firmware, etc.)
 func (m *Manager) GetMetadata(macAddress string) (map[string]string, error) {
-	response, err := m.sendCommand(macAddress, CmdGetHardwareInfo, nil)
+	// Use GetHardwareInfo which properly parses the response
+	hwInfo, err := m.GetHardwareInfo(macAddress)
 	if err != nil {
 		return nil, err
 	}
 
+	// Convert to the expected map format
 	metadata := make(map[string]string)
-	d := response.Data
-	// Payload format:
-	// [0] padding, [1:5] model_number (uint32), [5] name_len, [6:6+name_len] name,
-	// next padding, next 4 bytes board_type, [..] firmware_version_len, firmware_version bytes,
-	// serial_number_len and serial_number bytes
-	if len(d) < 6 {
-		return metadata, nil
+	if hwInfo.ModelNumber != 0 {
+		metadata["model_id"] = fmt.Sprintf("%d", hwInfo.ModelNumber)
 	}
-	// model_number
-	modelNum := int(binary.BigEndian.Uint32(d[1:5]))
-	metadata["model_id"] = fmt.Sprintf("%d", modelNum)
-	// model_name
-	nameLen := int(d[5])
-	if len(d) >= 6+nameLen {
-		metadata["model_name"] = string(d[6 : 6+nameLen])
+	if hwInfo.ModelName != "" {
+		metadata["model_name"] = hwInfo.ModelName
 	}
-	// skip past name and padding and board_type
-	idx := 6 + nameLen
-	if len(d) < idx+1+4+1 {
-		return metadata, nil
+	if hwInfo.FirmwareVersion != "" {
+		metadata["firmware_version"] = hwInfo.FirmwareVersion
 	}
-	// skip padding
-	idx++
-	// skip board_type uint32
-	idx += 4
-	// firmware_version
-	fwLen := int(d[idx])
-	idx++
-	if len(d) >= idx+fwLen {
-		metadata["firmware_version"] = string(d[idx : idx+fwLen])
-		idx += fwLen
+	if hwInfo.SerialNumber != "" {
+		metadata["serial_number"] = hwInfo.SerialNumber
 	}
-	// serial_number
-	if len(d) > idx {
-		snLen := int(d[idx])
-		idx++
-		if len(d) >= idx+snLen {
-			metadata["serial_number"] = string(d[idx : idx+snLen])
-		}
+	if hwInfo.APSSID != "" {
+		metadata["ap_ssid"] = hwInfo.APSSID
 	}
-
+	if hwInfo.MACAddress != "" {
+		metadata["mac_address"] = hwInfo.MACAddress
+	}
+	
 	return metadata, nil
 }
 
@@ -635,45 +604,69 @@ func (m *Manager) validateMAC(macAddress string) error {
 }
 
 // ConnectWithEnhancedPairing connects and performs enhanced pairing with the device
+// Following the OpenGoPro specification pairing flow
 func (m *Manager) ConnectWithEnhancedPairing(macAddress string) error {
-	// First connect normally
+	m.log.Infof("Starting enhanced pairing with device %s", macAddress)
+
+	// Step 1: Connect and discover services
 	if err := m.Connect(macAddress); err != nil {
 		return fmt.Errorf("failed to connect: %v", err)
 	}
 
-	// Get WiFi credentials as part of pairing verification
-	_, _, err := m.GetWifiCredentials(macAddress)
-	if err != nil {
-		// Disconnect on failure
-		m.Disconnect(macAddress)
-		return fmt.Errorf("failed to get WiFi credentials during pairing: %v", err)
+	// Step 2: Identify as third-party client
+	if err := m.SetThirdPartyClient(macAddress); err != nil {
+		m.log.Warnf("Failed to set third party client flag: %v", err)
+		// Non-critical, continue
 	}
 
-	// Retrieve hardware metadata (model, firmware, serial)
-	metadata, err := m.GetMetadata(macAddress)
+	// Step 3: Poll hardware info until camera is ready (per OpenGoPro spec)
+	if err := m.PollUntilReady(macAddress, 10*time.Second); err != nil {
+		m.Disconnect(macAddress)
+		return fmt.Errorf("camera did not become ready: %v", err)
+	}
+
+	// Step 4: Enable WiFi AP using proper command
+	m.log.Info("Enabling WiFi Access Point")
+	if err := m.EnableWiFiAP(macAddress); err != nil {
+		m.Disconnect(macAddress)
+		return fmt.Errorf("failed to enable WiFi AP: %v", err)
+	}
+
+	// Step 5: Wait for WiFi AP to be ready
+	time.Sleep(2 * time.Second)
+
+	// Step 6: Get WiFi credentials
+	ssid, password, err := m.GetWifiCredentials(macAddress)
 	if err != nil {
-		m.log.Warnf("failed to get hardware metadata: %v", err)
+		m.Disconnect(macAddress)
+		return fmt.Errorf("failed to get WiFi credentials: %v", err)
+	}
+
+	m.log.Infof("Successfully obtained WiFi credentials: SSID=%s", ssid)
+
+	// Step 7: Get and cache hardware info
+	hwInfo, err := m.GetHardwareInfo(macAddress)
+	if err != nil {
+		m.log.Warnf("Failed to get hardware info for caching: %v", err)
 	} else {
 		// Update cached device info
 		m.mutex.Lock()
 		if dev, exists := m.devices[macAddress]; exists {
-			if id, ok := metadata["model_id"]; ok {
-				// update existing modelID
-				dev.ModelID, _ = strconv.Atoi(id)
-			}
-			if name, ok := metadata["model_name"]; ok {
-				dev.ModelName = name
-			}
-			if fw, ok := metadata["firmware_version"]; ok {
-				dev.FirmwareVersion = fw
-			}
-			if sn, ok := metadata["serial_number"]; ok {
-				dev.SerialNumber = sn
-			}
+			dev.ModelID = hwInfo.ModelNumber
+			dev.ModelName = hwInfo.ModelName
+			dev.FirmwareVersion = hwInfo.FirmwareVersion
+			dev.SerialNumber = hwInfo.SerialNumber
+			// Store WiFi credentials in device
+			dev.WiFiSSID = ssid
+			dev.WiFiPassword = password
 		}
 		m.mutex.Unlock()
+
+		m.log.Infof("Cached device info: %s (FW: %s, SN: %s)",
+			hwInfo.ModelName, hwInfo.FirmwareVersion, hwInfo.SerialNumber)
 	}
 
+	m.log.Info("Enhanced pairing completed successfully")
 	return nil
 }
 

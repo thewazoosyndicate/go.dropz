@@ -324,8 +324,8 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 	c.log.Infof("Sync for camera %s: %s (%d%%)",
 		camera.CameraState.Camera.Name, syncEntry.CurrentOperation, syncEntry.ProgressPercent)
 
-	wifiErr := bleOperation(syncCtx, "EnableWifi", func() error {
-		return c.ble.EnableWifi(camera.CameraState.Camera.MACAddress)
+	wifiErr := bleOperation(syncCtx, "EnableWiFiAP", func() error {
+		return c.ble.EnableWiFiAP(camera.CameraState.Camera.MACAddress)
 	})
 
 	if wifiErr != nil {

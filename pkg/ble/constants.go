@@ -33,13 +33,15 @@ const (
 	AdvertisementService = "0000fea6-0000-1000-8000-00805f9b34fb" // Same as ServiceControl
 
 	// Command IDs (OpenGoPro specification)
-	CmdSetShutter      = 0x01
-	CmdSleep           = 0x05
-	CmdSetDateTime     = 0x0D
-	CmdGetDateTime     = 0x0E
-	CmdGetHardwareInfo = 0x3C
-	CmdLoadPreset      = 0x40
-	CmdKeepAlive       = 0x5B
+	CmdSetShutter          = 0x01
+	CmdSleep               = 0x05
+	CmdSetDateTime         = 0x0D
+	CmdGetDateTime         = 0x0E
+	CmdSetAPControl        = 0x17 // Control WiFi Access Point
+	CmdGetHardwareInfo     = 0x3C
+	CmdLoadPreset          = 0x40
+	CmdKeepAlive           = 0x5B
+	CmdSetThirdPartyClient = 0x6B // Identify as third party app
 
 	// Query IDs
 	QueryGetSettings = 0x12

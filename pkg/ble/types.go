@@ -47,6 +47,8 @@ type Device struct {
 	ModelName       string    `json:"model_name,omitempty"`
 	FirmwareVersion string    `json:"firmware_version,omitempty"`
 	SerialNumber    string    `json:"serial_number,omitempty"`
+	WiFiSSID        string    `json:"wifi_ssid,omitempty"`
+	WiFiPassword    string    `json:"wifi_password,omitempty"`
 	PairingState    int       `json:"pairing_state"`
 	LastSeen        time.Time `json:"last_seen"`
 }
@@ -183,7 +185,13 @@ type BLEInterface interface {
 
 	// OpenGoPro operations
 	GetWifiCredentials(macAddress string) (string, string, error)
-	EnableWifi(macAddress string) error
+	EnableWifi(macAddress string) error // Deprecated - use SetAPControl
+	SetAPControl(macAddress string, mode WiFiAPMode) error
+	EnableWiFiAP(macAddress string) error
+	DisableWiFiAP(macAddress string) error
+	GetHardwareInfo(macAddress string) (*HardwareInfo, error)
+	SetThirdPartyClient(macAddress string) error
+	PollUntilReady(macAddress string, timeout time.Duration) error
 	GetBatteryLevel(macAddress string) (int, error)
 	SetDateTime(macAddress string, t time.Time) error
 	Sleep(macAddress string) error

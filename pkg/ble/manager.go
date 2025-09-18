@@ -389,38 +389,173 @@ func (m *Manager) setupOpenGoPro(macAddress string, conn *DeviceConnection) erro
 		return fmt.Errorf("no device available")
 	}
 
-	// Discover services
-	services, err := device.DiscoverServices(nil)
-	if err != nil {
-		return fmt.Errorf("service discovery failed: %v", err)
+	// Add a delay after connection before service discovery (per OpenGoPro spec)
+	m.log.Debug("Waiting for connection to stabilize before service discovery...")
+	time.Sleep(PostConnectDelay)
+
+	// Discover services with retry logic and timeout
+	var services []bluetooth.DeviceService
+	var err error
+	for retry := 0; retry < ServiceDiscoveryRetries; retry++ {
+		if retry > 0 {
+			m.log.Infof("Retrying service discovery (attempt %d/%d)...", retry+1, ServiceDiscoveryRetries)
+			time.Sleep(time.Second * time.Duration(retry)) // Exponential backoff
+		}
+
+		// Create a channel to receive the discovery result
+		discoveryChan := make(chan struct {
+			services []bluetooth.DeviceService
+			err      error
+		}, 1)
+
+		// Run service discovery in a goroutine with timeout
+		go func() {
+			discoveredServices, discoveryErr := device.DiscoverServices(nil)
+			discoveryChan <- struct {
+				services []bluetooth.DeviceService
+				err      error
+			}{services: discoveredServices, err: discoveryErr}
+		}()
+
+		// Wait for discovery or timeout
+		select {
+		case result := <-discoveryChan:
+			services = result.services
+			err = result.err
+			if err == nil && len(services) > 0 {
+				m.log.Infof("Successfully discovered %d services", len(services))
+				goto discoveryComplete
+			}
+			if err != nil {
+				m.log.Warnf("Service discovery attempt %d failed: %v", retry+1, err)
+			}
+		case <-time.After(ServiceDiscoveryTimeout):
+			m.log.Warnf("Service discovery attempt %d timed out after %v", retry+1, ServiceDiscoveryTimeout)
+			err = fmt.Errorf("service discovery timeout")
+		}
+	}
+
+discoveryComplete:
+
+	if err != nil || len(services) == 0 {
+		return fmt.Errorf("service discovery failed after %d retries: %v", ServiceDiscoveryRetries, err)
 	}
 
 	// Find and cache required characteristics
 	for _, service := range services {
-		chars, err := service.DiscoverCharacteristics(nil)
-		if err != nil {
+		serviceUUID := service.UUID().String()
+		serviceName := GetServiceName(serviceUUID)
+		
+		// Skip unknown services that might cause issues
+		if !m.isKnownGoProService(serviceUUID) {
+			m.log.Debugf("Skipping non-GoPro service: %s (%s)", serviceName, serviceUUID)
 			continue
 		}
+		
+		m.log.Debugf("Processing service: %s", serviceName)
 
-		for _, char := range chars {
-			charUUID := char.UUID().String()
-			conn.SetCharacteristic(charUUID, char)
+		// Discover characteristics with timeout to prevent hanging
+		charDiscoveryChan := make(chan struct {
+			chars []bluetooth.DeviceCharacteristic
+			err   error
+		}, 1)
 
-			// Enable notifications for response characteristics
-			if m.isResponseCharacteristic(charUUID) {
-				char.EnableNotifications(func(data []byte) {
-					m.handleNotification(macAddress, data)
-				})
+		// Run characteristic discovery in a goroutine with timeout
+		go func(svc bluetooth.DeviceService) {
+			m.log.Tracef("Starting characteristic discovery for service %s", serviceName)
+			discoveredChars, discoveryErr := svc.DiscoverCharacteristics(nil)
+			charDiscoveryChan <- struct {
+				chars []bluetooth.DeviceCharacteristic
+				err   error
+			}{chars: discoveredChars, err: discoveryErr}
+		}(service)
+
+		// Wait for discovery or timeout
+		select {
+		case result := <-charDiscoveryChan:
+			if result.err != nil {
+				m.log.Warnf("Failed to discover characteristics for service %s: %v", serviceName, result.err)
+				continue
 			}
+			
+			m.log.Debugf("Found %d characteristics for service %s", len(result.chars), serviceName)
+			
+			// Process discovered characteristics
+			for _, char := range result.chars {
+				charUUID := char.UUID().String()
+				m.log.Tracef("Found characteristic: %s", GetCharacteristicName(charUUID))
+				conn.SetCharacteristic(charUUID, char)
+
+				// Enable notifications for response characteristics
+				if m.isResponseCharacteristic(charUUID) {
+					err := char.EnableNotifications(func(data []byte) {
+						m.handleNotification(macAddress, data)
+					})
+					if err != nil {
+						m.log.Warnf("Failed to enable notifications for %s: %v", GetCharacteristicName(charUUID), err)
+					} else {
+						m.log.Debugf("Enabled notifications for %s", GetCharacteristicName(charUUID))
+					}
+				}
+			}
+			
+		case <-time.After(CharDiscoveryTimeout):
+			m.log.Warnf("Characteristic discovery timed out for service %s after %v", serviceName, CharDiscoveryTimeout)
+			// Continue to next service instead of failing
+			continue
 		}
 	}
 
 	// Verify required characteristics are present
-	return m.verifyRequiredCharacteristics(conn)
+	if err := m.verifyRequiredCharacteristics(conn); err != nil {
+		return fmt.Errorf("missing required characteristics: %v", err)
+	}
+
+	// Trigger pairing by reading WiFi password (as per OpenGoPro spec)
+	m.log.Info("Triggering pairing by reading WiFi password characteristic...")
+	if err := m.triggerPairing(conn); err != nil {
+		m.log.Warnf("Failed to trigger pairing: %v", err)
+		// Continue anyway, pairing might already be established
+	}
+
+	return nil
 }
 
 func (m *Manager) isResponseCharacteristic(uuid string) bool {
 	return uuid == CharCommandResponse || uuid == CharQueryResponse || uuid == CharSettingsResponse
+}
+
+// isKnownGoProService checks if a service UUID is a known GoPro service
+func (m *Manager) isKnownGoProService(uuid string) bool {
+	// Check for known GoPro services
+	return uuid == ServiceWifiAP || uuid == ServiceControl || uuid == ServiceCameraMgmt ||
+		// Also check if it's a GoPro UUID pattern (b5f9XXXX-aa8d-11e3-9046-0002a5d5c51b)
+		IsGoProUUID(uuid)
+}
+
+// triggerPairing triggers the pairing process by reading the WiFi password characteristic
+// According to OpenGoPro spec, this read operation initiates the pairing sequence
+func (m *Manager) triggerPairing(conn *DeviceConnection) error {
+	// Try to read WiFi password characteristic to trigger pairing
+	passChar, exists := conn.GetCharacteristic(CharWifiPassword)
+	if !exists {
+		return fmt.Errorf("WiFi password characteristic not found")
+	}
+
+	// Reading this characteristic triggers pairing on many devices
+	passData := make([]byte, 64)
+	_, err := passChar.Read(passData)
+	if err != nil {
+		// This might fail if not paired yet, which is expected
+		m.log.Debugf("Initial WiFi password read returned error (expected if not paired): %v", err)
+	} else {
+		m.log.Debug("Successfully read WiFi password, pairing may already be established")
+	}
+
+	// Give the pairing process a moment to complete
+	time.Sleep(time.Second)
+	
+	return nil
 }
 
 func (m *Manager) verifyRequiredCharacteristics(conn *DeviceConnection) error {

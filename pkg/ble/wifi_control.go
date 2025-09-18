@@ -156,7 +156,8 @@ func (m *Manager) SetThirdPartyClient(macAddress string) error {
 	return nil
 }
 
-// PollUntilReady polls the camera with GetHardwareInfo until it responds successfully
+// PollUntilReady polls the camera until it's ready for operations
+// It checks both hardware info availability and system ready status
 func (m *Manager) PollUntilReady(macAddress string, timeout time.Duration) error {
 	m.log.Info("Polling camera until ready...")
 
@@ -166,11 +167,24 @@ func (m *Manager) PollUntilReady(macAddress string, timeout time.Duration) error
 	for time.Now().Before(deadline) {
 		attempts++
 
-		// Try to get hardware info
-		info, err := m.GetHardwareInfo(macAddress)
-		if err == nil && info != nil {
-			m.log.Infof("Camera is ready after %d attempts", attempts)
-			return nil
+		// First check if we can get hardware info (basic connectivity test)
+		info, hwErr := m.GetHardwareInfo(macAddress)
+		if hwErr == nil && info != nil {
+			// Now check system ready status
+			response, statusErr := m.sendQuery(macAddress, QueryGetStatus, []byte{StatusSystemReady})
+			if statusErr == nil && len(response.Data) >= 2 {
+				// Check if system is ready (value should be 1)
+				if response.Data[0] == StatusSystemReady && response.Data[1] == 1 {
+					m.log.Infof("Camera is ready after %d attempts", attempts)
+					return nil
+				} else {
+					m.log.Debugf("System not yet ready, status value: %d", response.Data[1])
+				}
+			} else if statusErr != nil {
+				m.log.Tracef("Failed to query system ready status: %v", statusErr)
+			}
+		} else if hwErr != nil {
+			m.log.Tracef("Hardware info not yet available: %v", hwErr)
 		}
 
 		// Log the attempt
@@ -178,8 +192,9 @@ func (m *Manager) PollUntilReady(macAddress string, timeout time.Duration) error
 			m.log.Debugf("Still waiting for camera to be ready (attempt %d)", attempts)
 		}
 
-		// Wait before retrying
-		time.Sleep(500 * time.Millisecond)
+		// Wait before retrying with increasing backoff
+		backoff := time.Duration(500+min(attempts*100, 1000)) * time.Millisecond
+		time.Sleep(backoff)
 	}
 
 	return fmt.Errorf("camera did not become ready within %v", timeout)

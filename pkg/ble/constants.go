@@ -1,6 +1,9 @@
 package ble
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // OpenGoPro BLE Constants - Verified against official specification
 // Reference: https://gopro.github.io/OpenGoPro/ble/protocol/ble_setup.html
@@ -59,6 +62,16 @@ const (
 	PairingFailed     = 2
 	PairingCancelled  = 3
 	PairingCompleted  = 4
+)
+
+const (
+	// Connection and Discovery Timeouts
+	ServiceDiscoveryTimeout = 10 * time.Second
+	ServiceDiscoveryRetries = 3
+	PostConnectDelay        = 2 * time.Second
+	CharDiscoveryTimeout    = 5 * time.Second
+	PairingTimeout          = 15 * time.Second
+	CameraReadyTimeout      = 10 * time.Second
 )
 
 // UUID helper functions for OpenGoPro BLE specification compliance

@@ -11,12 +11,12 @@ import (
 	"github.com/dropz/dropz/pkg/common"
 	"github.com/dropz/dropz/pkg/database"
 	"github.com/dropz/dropz/pkg/logger"
+	"github.com/sirupsen/logrus"
 	configpkg "github.com/dropz/dropz/pkg/manager/config"
 	"github.com/dropz/dropz/pkg/manager/discovery"
 	"github.com/dropz/dropz/pkg/manager/groups"
 	"github.com/dropz/dropz/pkg/manager/pairing"
 	syncpkg "github.com/dropz/dropz/pkg/manager/sync"
-	"github.com/dropz/dropz/pkg/queue"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -50,8 +50,7 @@ type GoProManager struct {
 	// Core dependencies
 	db       *database.Database
 	ble      *ble.Manager
-	queue    *queue.TaskQueue
-	log      logger.Logger
+	log      *logrus.Logger
 	notifier common.UpdateNotifier
 
 	// Configuration
@@ -119,9 +118,6 @@ func NewGoProManager(dbPath, destinationDir string) (*GoProManager, error) {
 		return nil, fmt.Errorf("failed to start BLE manager: %v", err)
 	}
 
-	// Initialize task queue with 5 workers and 30 second retry interval
-	taskQueue := queue.NewTaskQueue(5, 30*time.Second)
-
 	// Load configuration from database
 	config := db.GetConfig()
 
@@ -144,7 +140,6 @@ func NewGoProManager(dbPath, destinationDir string) (*GoProManager, error) {
 		setTimeEnabled: config.SetTimeEnabled,
 		daysThreshold:  int(config.DaysThreshold),
 		destinationDir: destinationDir,
-		queue:          taskQueue,
 		// Allow up to 10 concurrent I/O operations
 		ioWorkerPool: make(chan struct{}, 10),
 		// Initialize active sync tasks
@@ -208,7 +203,7 @@ func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, e
 	m.mutex.RUnlock()
 	if notifier != nil {
 		m.log.Trace("Notifying observers about managed camera addition")
-		notifier.NotifyUpdate()
+		notifier()
 	}
 
 	// If we're in pair mode, queue pairing for the camera
@@ -273,7 +268,7 @@ func (m *GoProManager) UnmanageCamera(cameraID string) error {
 	m.mutex.RUnlock()
 	if notifier != nil {
 		m.log.Trace("Notifying observers about camera pool change")
-		notifier.NotifyUpdate()
+		notifier()
 	}
 
 	return nil

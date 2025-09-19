@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dropz/dropz/pkg/logger"
 	"github.com/dropz/dropz/pkg/ble/tlv"
+	"github.com/sirupsen/logrus"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -21,7 +21,7 @@ type Manager struct {
 	connectedDevices  map[string]*bluetooth.Device // connected BLE devices
 	characteristics   map[string]map[string]bluetooth.DeviceCharacteristic // cached characteristics per device
 	mutex           sync.RWMutex
-	log             logger.Logger
+	log             *logrus.Logger
 	isScanning      bool
 	discoveryCallback DeviceDiscoveryCallback // callback for live discovery updates
 	tlvCollector    *tlv.FragmentCollector
@@ -29,7 +29,7 @@ type Manager struct {
 }
 
 // NewManager creates a new BLE manager
-func NewManager(adapter *bluetooth.Adapter, log logger.Logger) *Manager {
+func NewManager(adapter *bluetooth.Adapter, log *logrus.Logger) *Manager {
 	return &Manager{
 		adapter:           adapter,
 		discoveredDevices: make(map[string]*Device),

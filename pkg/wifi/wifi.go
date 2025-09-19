@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/pkg/logger"
+	"github.com/sirupsen/logrus"
 )
 
 // GoPro HTTP API constants
@@ -42,7 +43,7 @@ const (
 
 // WiFiManager handles WiFi operations for GoPro devices
 type WiFiManager struct {
-	log logger.Logger
+	log *logrus.Logger
 }
 
 // NewWiFiManager creates a new WiFi manager
@@ -767,7 +768,7 @@ type progressReader struct {
 	current    int64
 	reportTime time.Time
 	fileName   string
-	logger     logger.Logger
+	logger     *logrus.Logger
 }
 
 func (pr *progressReader) Read(p []byte) (int, error) {

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/pkg/database"
-	"github.com/dropz/dropz/pkg/logger"
+	"github.com/sirupsen/logrus"
 )
 
 // UpdateSetting updates a specific setting with validation
@@ -156,9 +156,12 @@ func (cm *Manager) UpdateSetting(settingName string, value interface{}) (databas
 		cm.log.Infof("Updated log_level to %s", strVal)
 
 		// Apply the new log level to the logger
-		if err := logger.UpdateLogLevel(strVal); err != nil {
-			cm.log.Errorf("Failed to update logger level: %v", err)
-			return config, fmt.Errorf("failed to apply log level to logger: %w", err)
+		if level, err := logrus.ParseLevel(strVal); err != nil {
+			cm.log.Errorf("Failed to parse log level: %v", err)
+			return config, fmt.Errorf("failed to parse log level: %w", err)
+		} else {
+			logrus.SetLevel(level)
+			cm.log.Infof("Logger level updated to %s", strVal)
 		}
 
 	default:
@@ -227,9 +230,12 @@ func (cm *Manager) ResetSetting(settingName string) (database.Config, error) {
 		cm.log.Infof("Reset log_level to default: %s", defaultConfig.LogLevel)
 
 		// Apply the reset log level to the logger
-		if err := logger.UpdateLogLevel(defaultConfig.LogLevel); err != nil {
-			cm.log.Errorf("Failed to update logger level: %v", err)
-			return config, fmt.Errorf("failed to apply log level to logger: %w", err)
+		if level, err := logrus.ParseLevel(defaultConfig.LogLevel); err != nil {
+			cm.log.Errorf("Failed to parse log level: %v", err)
+			return config, fmt.Errorf("failed to parse log level: %w", err)
+		} else {
+			logrus.SetLevel(level)
+			cm.log.Infof("Logger level updated to %s", defaultConfig.LogLevel)
 		}
 
 	case "all":
@@ -238,9 +244,12 @@ func (cm *Manager) ResetSetting(settingName string) (database.Config, error) {
 		cm.log.Info("Reset all settings to default values")
 
 		// Apply the reset log level to the logger
-		if err := logger.UpdateLogLevel(defaultConfig.LogLevel); err != nil {
-			cm.log.Errorf("Failed to update logger level: %v", err)
-			return config, fmt.Errorf("failed to apply log level to logger: %w", err)
+		if level, err := logrus.ParseLevel(defaultConfig.LogLevel); err != nil {
+			cm.log.Errorf("Failed to parse log level: %v", err)
+			return config, fmt.Errorf("failed to parse log level: %w", err)
+		} else {
+			logrus.SetLevel(level)
+			cm.log.Infof("Logger level updated to %s", defaultConfig.LogLevel)
 		}
 
 	default:

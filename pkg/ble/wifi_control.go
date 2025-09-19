@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dropz/dropz/pkg/logger"
+	"github.com/sirupsen/logrus"
 )
 
 // WiFiAPMode represents the WiFi Access Point control modes
@@ -83,7 +83,7 @@ func (m *Manager) GetHardwareInfo(macAddress string) (*HardwareInfo, error) {
 }
 
 // parseHardwareInfo parses the hardware info response using OpenGoPro's sequential length-prefixed format
-func parseHardwareInfo(data []byte, log logger.Logger) (*HardwareInfo, error) {
+func parseHardwareInfo(data []byte, log *logrus.Logger) (*HardwareInfo, error) {
 	if len(data) < 2 {
 		return nil, fmt.Errorf("hardware info response too short: %d bytes", len(data))
 	}

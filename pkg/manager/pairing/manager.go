@@ -8,20 +8,20 @@ import (
 	"github.com/dropz/dropz/pkg/ble"
 	"github.com/dropz/dropz/pkg/common"
 	"github.com/dropz/dropz/pkg/database"
-	"github.com/dropz/dropz/pkg/logger"
+	"github.com/sirupsen/logrus"
 )
 
 // Manager handles camera pairing operations
 type Manager struct {
 	db       *database.Database
 	ble      *ble.Manager
-	log      logger.Logger
+	log      *logrus.Logger
 	notifier common.UpdateNotifier
 	ctx      context.Context
 }
 
 // NewManager creates a new pairing manager
-func NewManager(db *database.Database, ble *ble.Manager, log logger.Logger, notifier common.UpdateNotifier, ctx context.Context) *Manager {
+func NewManager(db *database.Database, ble *ble.Manager, log *logrus.Logger, notifier common.UpdateNotifier, ctx context.Context) *Manager {
 	return &Manager{
 		db:       db,
 		ble:      ble,
@@ -56,7 +56,7 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 
 	// Notify about the status change
 	if pm.notifier != nil {
-		pm.notifier.NotifyUpdate()
+		pm.notifier()
 	}
 
 	// Create a context with a reasonable timeout for pairing operation
@@ -85,7 +85,7 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 
 		// Notify about WiFi credentials obtained
 		if pm.notifier != nil {
-			pm.notifier.NotifyUpdate()
+			pm.notifier()
 		}
 
 		// Fetch hardware metadata and store in database
@@ -111,7 +111,7 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 			if err := pm.db.SetCameraMetadata(macAddress, meta); err != nil {
 				pm.log.Errorf("Failed to save camera metadata: %v", err)
 			} else if pm.notifier != nil {
-				pm.notifier.NotifyUpdate()
+				pm.notifier()
 			}
 		}
 
@@ -133,7 +133,7 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 
 		// Notify about pairing status update
 		if pm.notifier != nil {
-			pm.notifier.NotifyUpdate()
+			pm.notifier()
 		}
 
 		// Store the verified pairing state for use after the BLE operation
@@ -172,7 +172,7 @@ func (pm *Manager) completePairingOperation(cameraState *database.CameraWithStat
 
 	// Final notification about the status change
 	if pm.notifier != nil {
-		pm.notifier.NotifyUpdate()
+		pm.notifier()
 	}
 
 	// Return the managed camera view

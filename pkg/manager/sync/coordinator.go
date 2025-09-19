@@ -11,7 +11,7 @@ import (
 	"github.com/dropz/dropz/pkg/ble"
 	"github.com/dropz/dropz/pkg/common"
 	"github.com/dropz/dropz/pkg/database"
-	"github.com/dropz/dropz/pkg/logger"
+	"github.com/sirupsen/logrus"
 	"github.com/dropz/dropz/pkg/wifi"
 )
 
@@ -38,11 +38,11 @@ type SyncTask struct {
 type Coordinator struct {
 	db  *database.Database
 	ble *ble.Manager
-	log logger.Logger
+	log *logrus.Logger
 }
 
 // NewCoordinator creates a new sync coordinator
-func NewCoordinator(db *database.Database, ble *ble.Manager, log logger.Logger) *Coordinator {
+func NewCoordinator(db *database.Database, ble *ble.Manager, log *logrus.Logger) *Coordinator {
 	return &Coordinator{
 		db:  db,
 		ble: ble,
@@ -161,7 +161,7 @@ func (c *Coordinator) ForceSync(cameraID string, notifier common.UpdateNotifier)
 
 	// Notify immediately
 	if notifier != nil {
-		notifier.NotifyUpdate()
+		notifier()
 	}
 
 	return syncEntry, nil
@@ -209,7 +209,7 @@ func (c *Coordinator) CancelSync(cameraID string, activeSyncTasks map[string]*Sy
 
 	// Notify immediately
 	if notifier != nil {
-		notifier.NotifyUpdate()
+		notifier()
 	}
 
 	return nil
@@ -279,7 +279,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 
 	// Notify about the status change
 	if notifier != nil {
-		notifier.NotifyUpdate()
+		notifier()
 	}
 
 	c.log.Infof("Sync for camera %s: %s (%d%%)",
@@ -318,7 +318,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 	}
 
 	if notifier != nil {
-		notifier.NotifyUpdate()
+		notifier()
 	}
 
 	c.log.Infof("Sync for camera %s: %s (%d%%)",
@@ -354,7 +354,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 	}
 
 	if notifier != nil {
-		notifier.NotifyUpdate()
+		notifier()
 	}
 
 	c.log.Infof("Sync for camera %s: %s (%d%%)",
@@ -401,7 +401,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 	}
 
 	if notifier != nil {
-		notifier.NotifyUpdate()
+		notifier()
 	}
 
 	c.log.Infof("Sync for camera %s: %s (%d%%)",
@@ -450,7 +450,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 	}
 
 	if notifier != nil {
-		notifier.NotifyUpdate()
+		notifier()
 	}
 
 	c.log.Infof("Sync for camera %s: %s (%d%%), downloaded %d files",
@@ -476,7 +476,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 
 	// Notify about the status change
 	if notifier != nil {
-		notifier.NotifyUpdate()
+		notifier()
 	}
 }
 

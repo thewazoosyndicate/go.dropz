@@ -5,17 +5,17 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/pkg/database"
-	"github.com/dropz/dropz/pkg/logger"
+	"github.com/sirupsen/logrus"
 )
 
 // QueueManager handles sync queue operations
 type QueueManager struct {
 	db  *database.Database
-	log logger.Logger
+	log *logrus.Logger
 }
 
 // NewQueueManager creates a new queue manager
-func NewQueueManager(db *database.Database, log logger.Logger) *QueueManager {
+func NewQueueManager(db *database.Database, log *logrus.Logger) *QueueManager {
 	return &QueueManager{
 		db:  db,
 		log: log,

@@ -5,13 +5,13 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/pkg/database"
-	"github.com/dropz/dropz/pkg/logger"
+	"github.com/sirupsen/logrus"
 )
 
 // Manager handles configuration operations
 type Manager struct {
 	db  *database.Database
-	log logger.Logger
+	log *logrus.Logger
 	
 	// Configuration state
 	scanInterval     time.Duration
@@ -22,7 +22,7 @@ type Manager struct {
 }
 
 // NewManager creates a new configuration manager
-func NewManager(db *database.Database, log logger.Logger) *Manager {
+func NewManager(db *database.Database, log *logrus.Logger) *Manager {
 	config := db.GetConfig()
 	
 	return &Manager{

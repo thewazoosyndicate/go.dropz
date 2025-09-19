@@ -16,14 +16,8 @@ const (
 	LevelFatal = "fatal"
 )
 
-// LogConfigurer defines methods to configure a logger
-type LogConfigurer interface {
-	// SetOutput configures output for specific log level
-	SetOutput(level string, writer io.Writer) error
-}
-
-// Implement LogConfigurer for LogrusLogger
-func (l *LogrusLogger) SetOutput(level string, writer io.Writer) error {
+// SetOutput configures output for specific log level
+func SetOutput(level string, writer io.Writer) error {
 	// Get the logrus level
 	var logrusLevel logrus.Level
 	switch level {
@@ -43,11 +37,14 @@ func (l *LogrusLogger) SetOutput(level string, writer io.Writer) error {
 		return nil // Ignore unknown levels
 	}
 
-	// Configure logrus hooks to route specific levels to specific writers
-	l.logger.Logger.Hooks.Add(&levelOutputHook{
-		level:  logrusLevel,
-		writer: writer,
-	})
+	log := GetLogger()
+	if log != nil {
+		// Configure logrus hooks to route specific levels to specific writers
+		log.Hooks.Add(&levelOutputHook{
+			level:  logrusLevel,
+			writer: writer,
+		})
+	}
 
 	return nil
 }

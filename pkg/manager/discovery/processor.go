@@ -10,18 +10,18 @@ import (
 	"github.com/dropz/dropz/pkg/ble"
 	"github.com/dropz/dropz/pkg/common"
 	"github.com/dropz/dropz/pkg/database"
-	"github.com/dropz/dropz/pkg/logger"
+	"github.com/sirupsen/logrus"
 	"github.com/google/uuid"
 )
 
 // Processor handles discovery processing operations
 type Processor struct {
 	db  *database.Database
-	log logger.Logger
+	log *logrus.Logger
 }
 
 // NewProcessor creates a new processor
-func NewProcessor(db *database.Database, log logger.Logger) *Processor {
+func NewProcessor(db *database.Database, log *logrus.Logger) *Processor {
 	return &Processor{
 		db:  db,
 		log: log,
@@ -61,7 +61,7 @@ func (p *Processor) ProcessDiscoveredDevices(devices []ble.Device, notifier comm
 	if changesMade.Load() {
 		if notifier != nil {
 			p.log.Trace("Notifying observers about device updates")
-			notifier.NotifyUpdate()
+			notifier()
 		}
 	}
 }
@@ -82,7 +82,7 @@ func (p *Processor) ProcessDiscoveredDeviceLive(device ble.Device, notifier comm
 	// to ensure the UI stays responsive and shows real-time RSSI updates
 	if notifier != nil {
 		p.log.Tracef("Notifying observers about live device update for %s (RSSI: %d)", device.MACAddress, device.RSSI)
-		notifier.NotifyUpdate()
+		notifier()
 	}
 }
 
@@ -358,6 +358,6 @@ func (p *Processor) MarkUnreachableDevicesBackground(notifier common.UpdateNotif
 
 	// Notify observers if changes were made
 	if changesMade.Load() && notifier != nil {
-		notifier.NotifyUpdate()
+		notifier()
 	}
 }

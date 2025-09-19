@@ -13,9 +13,6 @@ func (m *GoProManager) Start() error {
 	// Start BLE manager
 	m.ble.Start()
 
-	// Start task queue
-	m.queue.Start()
-
 	// Start background scanner
 	m.wg.Add(1)
 	go m.startBackgroundScanner()
@@ -53,10 +50,6 @@ func (m *GoProManager) Stop() {
 	m.log.Debug("GoPro manager shutdown: phase=cancelling_context")
 	m.cancel() // Signal all internal goroutines to stop
 	m.log.Trace("GoPro manager shutdown: phase=context_cancelled")
-
-	m.log.Debug("GoPro manager shutdown: phase=stopping_task_queue")
-	m.queue.Stop() // This should be idempotent and handle being called multiple times
-	m.log.Debug("GoPro manager shutdown: phase=task_queue_stopped")
 
 	m.log.Debug("GoPro manager shutdown: phase=stopping_ble")
 	m.ble.Stop() // This should also be idempotent

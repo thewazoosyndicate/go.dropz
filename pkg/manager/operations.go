@@ -6,7 +6,6 @@ import (
 	"github.com/dropz/dropz/pkg/ble"
 	"github.com/dropz/dropz/pkg/database"
 	"github.com/dropz/dropz/pkg/manager/discovery"
-	"github.com/dropz/dropz/pkg/manager/pairing"
 	syncpkg "github.com/dropz/dropz/pkg/manager/sync"
 )
 
@@ -80,30 +79,3 @@ func (m *GoProManager) processDiscoveredDeviceLive(device ble.Device) {
 	}
 }
 
-// ===== Pairing Operations =====
-
-// updatePairingManagerNotifier updates the notifier in the pairing manager
-func (m *GoProManager) updatePairingManagerNotifier() {
-	if m.notifier != nil {
-		// Recreate the pairing manager with the current notifier
-		m.pairingManager = pairing.NewManager(m.db, m.ble, m.log, m.notifier, m.ctx)
-	}
-}
-
-// PairCamera pairs with a GoPro camera using BLE (delegated)
-func (m *GoProManager) pairCameraDelegate(cameraID string) (*database.ManagedCamera, error) {
-	m.updatePairingManagerNotifier()
-	return m.pairingManager.PairCamera(cameraID, m.BLEOperation)
-}
-
-// syncDevicePairingStates checks actual device pairing states and updates database accordingly (delegated)
-func (m *GoProManager) syncDevicePairingStatesDelegate() {
-	m.updatePairingManagerNotifier()
-	m.pairingManager.SyncDevicePairingStates()
-}
-
-// VerifyAndFixPairingState checks a specific camera's pairing state and fixes database if needed (delegated)
-func (m *GoProManager) verifyAndFixPairingStateDelegate(cameraID string) error {
-	m.updatePairingManagerNotifier()
-	return m.pairingManager.VerifyAndFixPairingState(cameraID)
-}

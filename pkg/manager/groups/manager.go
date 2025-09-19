@@ -5,18 +5,18 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/pkg/database"
-	"github.com/dropz/dropz/pkg/logger"
+	"github.com/sirupsen/logrus"
 	"github.com/google/uuid"
 )
 
 // Manager handles group operations
 type Manager struct {
 	db  *database.Database
-	log logger.Logger
+	log *logrus.Logger
 }
 
 // NewManager creates a new group manager
-func NewManager(db *database.Database, log logger.Logger) *Manager {
+func NewManager(db *database.Database, log *logrus.Logger) *Manager {
 	return &Manager{
 		db:  db,
 		log: log,

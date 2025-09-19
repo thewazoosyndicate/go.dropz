@@ -6,19 +6,19 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/pkg/ble"
-	"github.com/dropz/dropz/pkg/logger"
+	"github.com/sirupsen/logrus"
 )
 
 // Scanner handles background scanning operations
 type Scanner struct {
 	ble               *ble.Manager
-	log               logger.Logger
+	log               *logrus.Logger
 	scanInterval      time.Duration
 	processDeviceFunc func(ble.Device) // callback for processing individual devices
 }
 
 // NewScanner creates a new scanner
-func NewScanner(ble *ble.Manager, log logger.Logger, scanInterval time.Duration) *Scanner {
+func NewScanner(ble *ble.Manager, log *logrus.Logger, scanInterval time.Duration) *Scanner {
 	return &Scanner{
 		ble:          ble,
 		log:          log,

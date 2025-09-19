@@ -10,30 +10,48 @@ import (
 	"github.com/dropz/dropz/pkg/common"
 	"github.com/dropz/dropz/pkg/database"
 	"github.com/dropz/dropz/pkg/logger"
+	"github.com/sirupsen/logrus"
 	"github.com/dropz/dropz/pkg/protocol"
 	"google.golang.org/grpc"
 )
 
-// Manager is the interface the DropzServer needs from the manager package
-type Manager interface {
-	// Methods required by the server
+// CameraManager handles camera operations
+type CameraManager interface {
 	ManageCamera(cameraID string) (*database.ManagedCamera, error)
 	UnmanageCamera(cameraID string) error
 	PairCamera(cameraID string) (*database.ManagedCamera, error)
+}
+
+// SyncManager handles synchronization operations
+type SyncManager interface {
 	ForceSync(cameraID string) (*database.SyncQueueEntry, error)
 	CancelSync(cameraID string) error
+	GetAllVideos() []*database.VideoFile
+	GetVideosByCamera(cameraID string, startDate, endDate time.Time, limit, offset int) ([]*database.VideoFile, int)
+}
+
+// GroupManager handles group operations
+type GroupManager interface {
 	CreateGroup(name string, cameraIDs []string) (*database.Group, error)
 	UpdateGroup(groupID, name string, cameraIDs []string) (*database.Group, error)
 	DeleteGroup(groupID string) error
-	GetAllVideos() []*database.VideoFile
-	GetVideosByCamera(cameraID string, startDate, endDate time.Time, limit, offset int) ([]*database.VideoFile, int)
+}
+
+// ConfigManager handles configuration operations
+type ConfigManager interface {
 	GetConfig() database.Config
 	UpdateConfig(config database.Config) error
 	GetSetting(settingName string) (interface{}, error)
 	UpdateSetting(settingName string, value interface{}) (database.Config, error)
 	ResetSetting(settingName string) (database.Config, error)
+}
 
-	// Notifier interface methods
+// Manager combines all manager interfaces that DropzServer needs
+type Manager interface {
+	CameraManager
+	SyncManager
+	GroupManager
+	ConfigManager
 	SetNotifier(notifier common.UpdateNotifier)
 }
 
@@ -41,7 +59,7 @@ type Manager interface {
 type DropzServer struct {
 	protocol.UnimplementedDropzServiceServer
 	manager Manager
-	log     logger.Logger
+	log     *logrus.Logger
 	server  *grpc.Server
 
 	// Stream management
@@ -81,8 +99,8 @@ func NewDropzServer(manager Manager) *DropzServer {
 func (s *DropzServer) Start(address string) error {
 	s.log.Debug("Starting DropzServer", "address", address)
 
-	// Register as the update notifier for the manager
-	s.manager.SetNotifier(s)
+	// Register the update notifier function with the manager
+	s.manager.SetNotifier(s.NotifyUpdate)
 
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
@@ -385,7 +403,7 @@ func (s *DropzServer) sendSyncQueueHeartbeats() {
 	}
 }
 
-// NotifyUpdate implements the common.UpdateNotifier interface
+// NotifyUpdate notifies all connected clients of state changes
 func (s *DropzServer) NotifyUpdate() {
 	s.log.Trace("NotifyUpdate called - sending update to clients")
 

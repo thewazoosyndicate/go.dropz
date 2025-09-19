@@ -48,7 +48,7 @@ func (pm *Manager) SyncDevicePairingStates() {
 					pm.log.Infof("Successfully updated pairing state for camera %s to paired",
 						camera.CameraState.Camera.Name)
 					if pm.notifier != nil {
-						pm.notifier.NotifyUpdate()
+						pm.notifier()
 					}
 				}
 			} else {
@@ -96,7 +96,7 @@ func (pm *Manager) VerifyAndFixPairingState(cameraID string) error {
 
 		// Notify about the state change
 		if pm.notifier != nil {
-			pm.notifier.NotifyUpdate()
+			pm.notifier()
 		}
 
 		return nil

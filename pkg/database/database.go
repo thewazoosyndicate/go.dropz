@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/pkg/logger"
+	"github.com/sirupsen/logrus"
 	"github.com/dropz/dropz/pkg/protocol"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -134,7 +135,7 @@ type Database struct {
 	Config       Config                      `json:"config"`
 	filePath     string
 	mutex        sync.RWMutex
-	log          logger.Logger
+	log          *logrus.Logger
 }
 
 var instance *Database

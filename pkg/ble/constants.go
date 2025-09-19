@@ -36,18 +36,15 @@ const (
 	AdvertisementService = "0000fea6-0000-1000-8000-00805f9b34fb" // Same as ServiceControl
 
 	// Command IDs (OpenGoPro specification)
-	CmdSetShutter          = 0x01
 	CmdSleep               = 0x05
 	CmdSetDateTime         = 0x0D
 	CmdGetDateTime         = 0x0E
 	CmdSetAPControl        = 0x17 // Control WiFi Access Point
 	CmdGetHardwareInfo     = 0x3C
-	CmdLoadPreset          = 0x40
 	CmdKeepAlive           = 0x5B
 	CmdSetThirdPartyClient = 0x6B // Identify as third party app
 
 	// Query IDs
-	QueryGetSettings = 0x12
 	QueryGetStatus   = 0x13
 
 	// Status IDs
@@ -57,10 +54,6 @@ const (
 	StatusSystemReady       = 82
 
 	// Pairing States
-	PairingNotPaired  = 0
-	PairingInProgress = 1
-	PairingFailed     = 2
-	PairingCancelled  = 3
 	PairingCompleted  = 4
 )
 
@@ -68,7 +61,7 @@ const (
 	// Connection and Discovery Timeouts
 	ServiceDiscoveryTimeout = 10 * time.Second
 	ServiceDiscoveryRetries = 3
-	PostConnectDelay        = 2 * time.Second
+	PostConnectDelay        = 3 * time.Second  // Connection stabilization delay
 	CharDiscoveryTimeout    = 5 * time.Second
 	PairingTimeout          = 15 * time.Second
 	CameraReadyTimeout      = 10 * time.Second

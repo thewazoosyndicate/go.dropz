@@ -14,14 +14,14 @@ import (
 // Manager handles camera pairing operations
 type Manager struct {
 	db       *database.Database
-	ble      ble.BLEInterface
+	ble      *ble.Manager
 	log      logger.Logger
 	notifier common.UpdateNotifier
 	ctx      context.Context
 }
 
 // NewManager creates a new pairing manager
-func NewManager(db *database.Database, ble ble.BLEInterface, log logger.Logger, notifier common.UpdateNotifier, ctx context.Context) *Manager {
+func NewManager(db *database.Database, ble *ble.Manager, log logger.Logger, notifier common.UpdateNotifier, ctx context.Context) *Manager {
 	return &Manager{
 		db:       db,
 		ble:      ble,
@@ -68,15 +68,14 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 
 	// Perform the BLE pairing operation
 	bleErr := bleOperation(ctx, "PairCamera", func() error {
-		// Use ConnectWithEnhancedPairing which now follows OpenGoPro spec
-		pm.log.Infof("Connecting to device %s with enhanced pairing", macAddress)
+		// Use Connect which now does everything (simplified flow)
+		pm.log.Infof("Connecting to device %s", macAddress)
 
-		if err := pm.ble.ConnectWithEnhancedPairing(macAddress); err != nil {
-			return fmt.Errorf("failed to connect with enhanced pairing: %v", err)
+		if err := pm.ble.Connect(macAddress); err != nil {
+			return fmt.Errorf("failed to connect: %v", err)
 		}
 
-		// WiFi credentials are now obtained during enhanced pairing
-		// The enhanced pairing should have retrieved them
+		// WiFi credentials are obtained during Connect
 		ssid, password, err := pm.ble.GetWifiCredentials(macAddress)
 		if err == nil && ssid != "" && password != "" {
 			cameraState.Camera.WiFiSSID = ssid

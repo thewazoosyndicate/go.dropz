@@ -11,14 +11,14 @@ import (
 
 // Scanner handles background scanning operations
 type Scanner struct {
-	ble               ble.BLEInterface
+	ble               *ble.Manager
 	log               logger.Logger
 	scanInterval      time.Duration
 	processDeviceFunc func(ble.Device) // callback for processing individual devices
 }
 
 // NewScanner creates a new scanner
-func NewScanner(ble ble.BLEInterface, log logger.Logger, scanInterval time.Duration) *Scanner {
+func NewScanner(ble *ble.Manager, log logger.Logger, scanInterval time.Duration) *Scanner {
 	return &Scanner{
 		ble:          ble,
 		log:          log,

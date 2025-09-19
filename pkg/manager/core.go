@@ -49,7 +49,7 @@ type Device struct {
 type GoProManager struct {
 	// Core dependencies
 	db       *database.Database
-	ble      ble.BLEInterface
+	ble      *ble.Manager
 	queue    *queue.TaskQueue
 	log      logger.Logger
 	notifier common.UpdateNotifier
@@ -106,24 +106,10 @@ func NewGoProManager(dbPath, destinationDir string) (*GoProManager, error) {
 		return nil, fmt.Errorf("failed to get default Bluetooth adapter")
 	}
 
-	// Enable BLE adapter with timeout
-	enableCtx, enableCancel := context.WithTimeout(ctx, 5*time.Second)
-	defer enableCancel()
-
-	enableCh := make(chan error, 1)
-	go func() {
-		enableCh <- adapter.Enable()
-	}()
-
-	select {
-	case err := <-enableCh:
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("failed to enable BLE adapter: %w", err)
-		}
-	case <-enableCtx.Done():
+	// Enable BLE adapter directly (not in goroutine - breaks DBus thread affinity)
+	if err := adapter.Enable(); err != nil {
 		cancel()
-		return nil, fmt.Errorf("timeout while enabling BLE adapter")
+		return nil, fmt.Errorf("failed to enable BLE adapter: %v", err)
 	}
 
 	bleManager := ble.NewManager(adapter, logger.GetLogger())
@@ -248,7 +234,7 @@ func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, e
 
 		if !devicePaired {
 			m.log.Infof("Pair mode enabled, starting pairing for camera %s", cameraState.Camera.Name)
-			go m.PairCamera(cameraID)
+			m.PairCamera(cameraID)
 		} else {
 			m.log.Infof("Camera %s is already paired on device", cameraState.Camera.Name)
 		}

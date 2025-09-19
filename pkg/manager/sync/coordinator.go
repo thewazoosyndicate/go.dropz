@@ -37,12 +37,12 @@ type SyncTask struct {
 // Coordinator handles sync orchestration
 type Coordinator struct {
 	db  *database.Database
-	ble ble.BLEInterface
+	ble *ble.Manager
 	log logger.Logger
 }
 
 // NewCoordinator creates a new sync coordinator
-func NewCoordinator(db *database.Database, ble ble.BLEInterface, log logger.Logger) *Coordinator {
+func NewCoordinator(db *database.Database, ble *ble.Manager, log logger.Logger) *Coordinator {
 	return &Coordinator{
 		db:  db,
 		ble: ble,

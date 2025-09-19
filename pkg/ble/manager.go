@@ -12,38 +12,36 @@ import (
 	"tinygo.org/x/bluetooth"
 )
 
-// Ensure Manager implements BLEInterface at compile time
-var _ BLEInterface = (*Manager)(nil)
 
 // Manager provides a clean, simple BLE interface for GoPro devices
 // following the OpenGoPro BLE specification exactly
 type Manager struct {
-	adapter     *bluetooth.Adapter
-	devices     map[string]*Device           // discovered devices
-	connections map[string]*DeviceConnection // active connections
-	mutex       sync.RWMutex
-	log         logger.Logger
-	isScanning  bool
-	// callback for live discovery updates
+	adapter         *bluetooth.Adapter
+	discoveredDevices map[string]*Device    // discovered devices during scanning
+	connectedDevices  map[string]*bluetooth.Device // connected BLE devices
+	characteristics   map[string]map[string]bluetooth.DeviceCharacteristic // cached characteristics per device
+	mutex           sync.RWMutex
+	log             logger.Logger
+	isScanning      bool
 	discoveryCallback DeviceDiscoveryCallback // callback for live discovery updates
+	tlvCollector    *tlv.FragmentCollector
+	responseTracker *tlv.ResponseTracker
 }
 
 // NewManager creates a new BLE manager
 func NewManager(adapter *bluetooth.Adapter, log logger.Logger) *Manager {
 	return &Manager{
-		adapter:     adapter,
-		devices:     make(map[string]*Device),
-		connections: make(map[string]*DeviceConnection),
-		log:         log,
+		adapter:           adapter,
+		discoveredDevices: make(map[string]*Device),
+		connectedDevices:  make(map[string]*bluetooth.Device),
+		characteristics:   make(map[string]map[string]bluetooth.DeviceCharacteristic),
+		log:               log,
+		tlvCollector:      tlv.NewFragmentCollector(10 * time.Second),
+		responseTracker:   tlv.NewResponseTracker(),
 	}
 }
 
-// StartScanning scans for GoPro devices advertising the Control service (0xFEA6)
-func (m *Manager) StartScanning(ctx context.Context) error {
-	return m.StartScanningWithCallback(ctx, nil)
-}
-
-// StartScanningWithCallback scans for GoPro devices with live discovery callback
+// StartScanning scans for GoPro devices with optional live discovery callback
 func (m *Manager) StartScanningWithCallback(ctx context.Context, callback DeviceDiscoveryCallback) error {
 	m.mutex.Lock()
 	if m.isScanning {
@@ -98,14 +96,14 @@ func (m *Manager) GetDiscoveredDevices() []Device {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
 
-	m.log.Tracef("GetDiscoveredDevices called - internal map has %d devices", len(m.devices))
-	for macAddr, device := range m.devices {
+	m.log.Tracef("GetDiscoveredDevices called - internal map has %d devices", len(m.discoveredDevices))
+	for macAddr, device := range m.discoveredDevices {
 		m.log.Tracef("Internal device: %s (%s) RSSI:%d LastSeen:%s",
 			device.Name, macAddr, device.RSSI, device.LastSeen.Format(time.RFC3339))
 	}
 
-	devices := make([]Device, 0, len(m.devices))
-	for _, device := range m.devices {
+	devices := make([]Device, 0, len(m.discoveredDevices))
+	for _, device := range m.discoveredDevices {
 		devices = append(devices, *device)
 	}
 
@@ -113,62 +111,211 @@ func (m *Manager) GetDiscoveredDevices() []Device {
 	return devices
 }
 
-// Connect establishes a connection to a GoPro device and performs OpenGoPro BLE setup
+// Connect establishes a connection to a GoPro device and performs complete setup
 func (m *Manager) Connect(macAddress string) error {
 	if err := m.validateMAC(macAddress); err != nil {
 		return fmt.Errorf("invalid MAC address: %v", err)
 	}
 
 	// Check if already connected
-	if conn := m.getConnection(macAddress); conn != nil && conn.GetState() == StateConnected {
+	m.mutex.RLock()
+	if _, exists := m.connectedDevices[macAddress]; exists {
+		m.mutex.RUnlock()
+		m.log.Debugf("Device %s already connected", macAddress)
 		return nil
 	}
+	m.mutex.RUnlock()
 
 	m.log.Infof("Connecting to GoPro device: %s", macAddress)
-
-	// Create connection object
-	conn := NewDeviceConnection()
-	m.setConnection(macAddress, conn)
-	conn.SetState(StateConnecting)
 
 	// Parse MAC and connect
 	mac, err := bluetooth.ParseMAC(macAddress)
 	if err != nil {
-		conn.SetState(StateError)
 		return fmt.Errorf("failed to parse MAC: %v", err)
 	}
 
 	addr := bluetooth.Address{MACAddress: bluetooth.MACAddress{MAC: mac}}
 	device, err := m.adapter.Connect(addr, bluetooth.ConnectionParams{})
 	if err != nil {
-		conn.SetState(StateError)
 		return fmt.Errorf("BLE connection failed: %v", err)
 	}
 
-	conn.SetDevice(&device)
-	conn.SetState(StateConnected)
+	// Store the connected device
+	m.mutex.Lock()
+	m.connectedDevices[macAddress] = &device
+	m.mutex.Unlock()
 
-	// Perform OpenGoPro BLE setup
-	if err := m.setupOpenGoPro(macAddress, conn); err != nil {
-		conn.Close()
-		m.removeConnection(macAddress)
-		return fmt.Errorf("OpenGoPro setup failed: %v", err)
+	// Wait for connection to stabilize
+	m.log.Debug("Waiting for connection to stabilize...")
+	time.Sleep(PostConnectDelay)
+
+	// === Service and Characteristic Discovery (inline from setupOpenGoPro) ===
+	
+	// Discover services - direct call, no goroutine (works with DBus/BlueZ)
+	m.log.Info("Starting service discovery...")
+	var services []bluetooth.DeviceService
+	
+	for retry := 0; retry < ServiceDiscoveryRetries; retry++ {
+		if retry > 0 {
+			m.log.Infof("Retrying service discovery (attempt %d/%d)...", retry+1, ServiceDiscoveryRetries)
+			time.Sleep(time.Second * time.Duration(retry+1))
+		}
+
+		// Direct call - no goroutine wrapper that breaks DBus context
+		m.log.Debug("Calling DiscoverServices directly...")
+		services, err = device.DiscoverServices(nil)
+		
+		if err == nil && len(services) > 0 {
+			m.log.Infof("Successfully discovered %d services", len(services))
+			break
+		}
+		
+		if err != nil {
+			m.log.Warnf("Service discovery attempt %d failed: %v", retry+1, err)
+		}
 	}
 
-	conn.SetState(StateReady)
-	// Fetch and log battery status on connect
+	if err != nil || len(services) == 0 {
+		if device := m.connectedDevices[macAddress]; device != nil {
+			device.Disconnect()
+		}
+		delete(m.characteristics, macAddress)
+		delete(m.connectedDevices, macAddress)
+		return fmt.Errorf("service discovery failed after %d retries: %v", ServiceDiscoveryRetries, err)
+	}
+
+	// Log discovered services
+	m.log.Infof("Discovered %d services, listing all UUIDs:", len(services))
+	for _, service := range services {
+		m.log.Infof("  - Service UUID: %s", service.UUID().String())
+	}
+
+	// Initialize characteristics map for this device
+	m.mutex.Lock()
+	m.characteristics[macAddress] = make(map[string]bluetooth.DeviceCharacteristic)
+	m.mutex.Unlock()
+
+	// Discover and cache characteristics - EXACTLY like the test
+	for _, service := range services {
+		serviceUUID := service.UUID().String()
+		m.log.Debugf("Discovering characteristics for service: %s", serviceUUID)
+		
+		chars, err := service.DiscoverCharacteristics(nil)
+		if err != nil {
+			m.log.Warnf("Failed to discover characteristics for service %s: %v", serviceUUID, err)
+			continue
+		}
+		
+		m.log.Debugf("Found %d characteristics for service %s", len(chars), serviceUUID)
+		
+		// Store only the characteristics we need
+		m.mutex.Lock()
+		for _, char := range chars {
+			charUUID := char.UUID().String()
+			
+			// Only store characteristics we actually use
+			if charUUID == CharWifiSSID || charUUID == CharWifiPassword ||
+			   charUUID == CharCommand || charUUID == CharCommandResponse ||
+			   charUUID == CharSettings || charUUID == CharSettingsResponse ||
+			   charUUID == CharQuery || charUUID == CharQueryResponse {
+				m.log.Tracef("Storing needed characteristic: %s", GetCharacteristicName(charUUID))
+				m.characteristics[macAddress][charUUID] = char
+			}
+
+			// Enable notifications for response characteristics
+			if m.isResponseCharacteristic(charUUID) {
+				err := char.EnableNotifications(func(data []byte) {
+					m.handleNotification(macAddress, data)
+				})
+				if err != nil {
+					m.log.Warnf("Failed to enable notifications for %s: %v", GetCharacteristicName(charUUID), err)
+				} else {
+					m.log.Debugf("Enabled notifications for %s", GetCharacteristicName(charUUID))
+				}
+			}
+		}
+		m.mutex.Unlock()
+	}
+
+	m.log.Info("Service discovery complete")
+	
+	// Now that connection is established, complete the setup
+	// This used to be in ConnectWithEnhancedPairing but now it's all in one place
+	
+	// Identify as third-party client
+	if err := m.SetThirdPartyClient(macAddress); err != nil {
+		m.log.Warnf("Failed to set third party client flag: %v", err)
+		// Non-critical, continue
+	}
+
+	// Camera is ready - we're connected and have discovered services
+	// No need for complex polling that causes infinite loops
+	m.log.Info("Camera is ready (connected with services discovered)")
+
+	// Enable WiFi AP
+	m.log.Info("Enabling WiFi Access Point")
+	if err := m.EnableWiFiAP(macAddress); err != nil {
+		if device := m.connectedDevices[macAddress]; device != nil {
+			device.Disconnect()
+		}
+		delete(m.characteristics, macAddress)
+		delete(m.connectedDevices, macAddress)
+		return fmt.Errorf("failed to enable WiFi AP: %v", err)
+	}
+
+	// Wait for WiFi AP to be ready
+	time.Sleep(2 * time.Second)
+
+	// Get WiFi credentials
+	ssid, password, err := m.GetWifiCredentials(macAddress)
+	if err != nil {
+		if device := m.connectedDevices[macAddress]; device != nil {
+			device.Disconnect()
+		}
+		delete(m.characteristics, macAddress)
+		delete(m.connectedDevices, macAddress)
+		return fmt.Errorf("failed to get WiFi credentials: %v", err)
+	}
+	m.log.Infof("Successfully obtained WiFi credentials: SSID=%s", ssid)
+
+	// Get hardware info and cache it
+	hwInfo, err := m.GetHardwareInfo(macAddress)
+	if err != nil {
+		m.log.Warnf("Failed to get hardware info: %v", err)
+	} else {
+		// Update cached device info
+		m.mutex.Lock()
+		if dev, exists := m.discoveredDevices[macAddress]; exists {
+			dev.ModelID = hwInfo.ModelNumber
+			dev.ModelName = hwInfo.ModelName
+			dev.FirmwareVersion = hwInfo.FirmwareVersion
+			dev.SerialNumber = hwInfo.SerialNumber
+			dev.WiFiSSID = ssid
+			dev.WiFiPassword = password
+		}
+		m.mutex.Unlock()
+		m.log.Infof("Device info: %s (FW: %s, SN: %s)", 
+			hwInfo.ModelName, hwInfo.FirmwareVersion, hwInfo.SerialNumber)
+	}
+
+	// Fetch battery status
 	if battery, err := m.GetBatteryLevel(macAddress); err != nil {
-		m.log.Warnf("Failed to read battery level for device %s: %v", macAddress, err)
+		m.log.Warnf("Failed to read battery level: %v", err)
 	} else {
 		m.log.Infof("Connected to GoPro %s: battery %d%%", macAddress, battery)
 	}
+
+	m.log.Info("GoPro connection and setup completed successfully")
 	return nil
 }
 
 // Disconnect closes the connection to a device
 func (m *Manager) Disconnect(macAddress string) error {
-	conn := m.getConnection(macAddress)
-	if conn == nil {
+	m.mutex.RLock()
+	device := m.connectedDevices[macAddress]
+	m.mutex.RUnlock()
+	
+	if device == nil {
 		return fmt.Errorf("device not connected: %s", macAddress)
 	}
 
@@ -179,20 +326,29 @@ func (m *Manager) Disconnect(macAddress string) error {
 		m.log.Warnf("Sleep command failed: %v", err)
 	}
 
-	conn.Close()
-	m.removeConnection(macAddress)
+	device.Disconnect()
+	
+	m.mutex.Lock()
+	delete(m.connectedDevices, macAddress)
+	delete(m.characteristics, macAddress)
+	m.mutex.Unlock()
+	
 	return nil
 }
 
 // GetWifiCredentials retrieves WiFi SSID and password from the device
 func (m *Manager) GetWifiCredentials(macAddress string) (string, string, error) {
-	conn := m.getConnection(macAddress)
-	if conn == nil || conn.GetState() != StateReady {
-		return "", "", fmt.Errorf("device not ready: %s", macAddress)
+	m.mutex.RLock()
+	device := m.connectedDevices[macAddress]
+	chars := m.characteristics[macAddress]
+	m.mutex.RUnlock()
+	
+	if device == nil {
+		return "", "", fmt.Errorf("device not connected: %s", macAddress)
 	}
 
 	// Get WiFi SSID
-	ssidChar, exists := conn.GetCharacteristic(CharWifiSSID)
+	ssidChar, exists := chars[CharWifiSSID]
 	if !exists {
 		return "", "", fmt.Errorf("WiFi SSID characteristic not found")
 	}
@@ -205,7 +361,7 @@ func (m *Manager) GetWifiCredentials(macAddress string) (string, string, error) 
 	ssid := strings.TrimSpace(string(ssidData[:n]))
 
 	// Get WiFi password
-	passChar, exists := conn.GetCharacteristic(CharWifiPassword)
+	passChar, exists := chars[CharWifiPassword]
 	if !exists {
 		return "", "", fmt.Errorf("WiFi password characteristic not found")
 	}
@@ -220,12 +376,6 @@ func (m *Manager) GetWifiCredentials(macAddress string) (string, string, error) 
 	return ssid, password, nil
 }
 
-// EnableWifi enables WiFi on the device
-// Deprecated: Use EnableWiFiAP() instead which uses the proper command
-func (m *Manager) EnableWifi(macAddress string) error {
-	m.log.Warn("EnableWifi is deprecated, using EnableWiFiAP instead")
-	return m.EnableWiFiAP(macAddress)
-}
 
 // GetBatteryLevel queries the battery level from the device
 func (m *Manager) GetBatteryLevel(macAddress string) (int, error) {
@@ -325,7 +475,7 @@ func (m *Manager) addDiscoveredDevice(result bluetooth.ScanResult) {
 	now := time.Now()
 
 	// Check if device already exists
-	if existingDevice, exists := m.devices[macAddress]; exists {
+	if existingDevice, exists := m.discoveredDevices[macAddress]; exists {
 		// Store previous values for change detection
 		previousRSSI := existingDevice.RSSI
 		previousLastSeen := existingDevice.LastSeen
@@ -368,7 +518,7 @@ func (m *Manager) addDiscoveredDevice(result bluetooth.ScanResult) {
 			RSSI:       rssi,
 			LastSeen:   now,
 		}
-		m.devices[macAddress] = device
+		m.discoveredDevices[macAddress] = device
 		m.log.Infof("Discovered new GoPro device: %s (%s) RSSI:%d", device.Name, device.MACAddress, device.RSSI)
 
 		// Call live discovery callback if set
@@ -383,143 +533,6 @@ func (m *Manager) addDiscoveredDevice(result bluetooth.ScanResult) {
 	}
 }
 
-func (m *Manager) setupOpenGoPro(macAddress string, conn *DeviceConnection) error {
-	device := conn.GetDevice()
-	if device == nil {
-		return fmt.Errorf("no device available")
-	}
-
-	// Add a delay after connection before service discovery (per OpenGoPro spec)
-	m.log.Debug("Waiting for connection to stabilize before service discovery...")
-	time.Sleep(PostConnectDelay)
-
-	// Discover services with retry logic and timeout
-	var services []bluetooth.DeviceService
-	var err error
-	for retry := 0; retry < ServiceDiscoveryRetries; retry++ {
-		if retry > 0 {
-			m.log.Infof("Retrying service discovery (attempt %d/%d)...", retry+1, ServiceDiscoveryRetries)
-			time.Sleep(time.Second * time.Duration(retry)) // Exponential backoff
-		}
-
-		// Create a channel to receive the discovery result
-		discoveryChan := make(chan struct {
-			services []bluetooth.DeviceService
-			err      error
-		}, 1)
-
-		// Run service discovery in a goroutine with timeout
-		go func() {
-			discoveredServices, discoveryErr := device.DiscoverServices(nil)
-			discoveryChan <- struct {
-				services []bluetooth.DeviceService
-				err      error
-			}{services: discoveredServices, err: discoveryErr}
-		}()
-
-		// Wait for discovery or timeout
-		select {
-		case result := <-discoveryChan:
-			services = result.services
-			err = result.err
-			if err == nil && len(services) > 0 {
-				m.log.Infof("Successfully discovered %d services", len(services))
-				goto discoveryComplete
-			}
-			if err != nil {
-				m.log.Warnf("Service discovery attempt %d failed: %v", retry+1, err)
-			}
-		case <-time.After(ServiceDiscoveryTimeout):
-			m.log.Warnf("Service discovery attempt %d timed out after %v", retry+1, ServiceDiscoveryTimeout)
-			err = fmt.Errorf("service discovery timeout")
-		}
-	}
-
-discoveryComplete:
-
-	if err != nil || len(services) == 0 {
-		return fmt.Errorf("service discovery failed after %d retries: %v", ServiceDiscoveryRetries, err)
-	}
-
-	// Find and cache required characteristics
-	for _, service := range services {
-		serviceUUID := service.UUID().String()
-		serviceName := GetServiceName(serviceUUID)
-		
-		// Skip unknown services that might cause issues
-		if !m.isKnownGoProService(serviceUUID) {
-			m.log.Debugf("Skipping non-GoPro service: %s (%s)", serviceName, serviceUUID)
-			continue
-		}
-		
-		m.log.Debugf("Processing service: %s", serviceName)
-
-		// Discover characteristics with timeout to prevent hanging
-		charDiscoveryChan := make(chan struct {
-			chars []bluetooth.DeviceCharacteristic
-			err   error
-		}, 1)
-
-		// Run characteristic discovery in a goroutine with timeout
-		go func(svc bluetooth.DeviceService) {
-			m.log.Tracef("Starting characteristic discovery for service %s", serviceName)
-			discoveredChars, discoveryErr := svc.DiscoverCharacteristics(nil)
-			charDiscoveryChan <- struct {
-				chars []bluetooth.DeviceCharacteristic
-				err   error
-			}{chars: discoveredChars, err: discoveryErr}
-		}(service)
-
-		// Wait for discovery or timeout
-		select {
-		case result := <-charDiscoveryChan:
-			if result.err != nil {
-				m.log.Warnf("Failed to discover characteristics for service %s: %v", serviceName, result.err)
-				continue
-			}
-			
-			m.log.Debugf("Found %d characteristics for service %s", len(result.chars), serviceName)
-			
-			// Process discovered characteristics
-			for _, char := range result.chars {
-				charUUID := char.UUID().String()
-				m.log.Tracef("Found characteristic: %s", GetCharacteristicName(charUUID))
-				conn.SetCharacteristic(charUUID, char)
-
-				// Enable notifications for response characteristics
-				if m.isResponseCharacteristic(charUUID) {
-					err := char.EnableNotifications(func(data []byte) {
-						m.handleNotification(macAddress, data)
-					})
-					if err != nil {
-						m.log.Warnf("Failed to enable notifications for %s: %v", GetCharacteristicName(charUUID), err)
-					} else {
-						m.log.Debugf("Enabled notifications for %s", GetCharacteristicName(charUUID))
-					}
-				}
-			}
-			
-		case <-time.After(CharDiscoveryTimeout):
-			m.log.Warnf("Characteristic discovery timed out for service %s after %v", serviceName, CharDiscoveryTimeout)
-			// Continue to next service instead of failing
-			continue
-		}
-	}
-
-	// Verify required characteristics are present
-	if err := m.verifyRequiredCharacteristics(conn); err != nil {
-		return fmt.Errorf("missing required characteristics: %v", err)
-	}
-
-	// Trigger pairing by reading WiFi password (as per OpenGoPro spec)
-	m.log.Info("Triggering pairing by reading WiFi password characteristic...")
-	if err := m.triggerPairing(conn); err != nil {
-		m.log.Warnf("Failed to trigger pairing: %v", err)
-		// Continue anyway, pairing might already be established
-	}
-
-	return nil
-}
 
 func (m *Manager) isResponseCharacteristic(uuid string) bool {
 	return uuid == CharCommandResponse || uuid == CharQueryResponse || uuid == CharSettingsResponse
@@ -527,63 +540,52 @@ func (m *Manager) isResponseCharacteristic(uuid string) bool {
 
 // isKnownGoProService checks if a service UUID is a known GoPro service
 func (m *Manager) isKnownGoProService(uuid string) bool {
-	// Check for known GoPro services
-	return uuid == ServiceWifiAP || uuid == ServiceControl || uuid == ServiceCameraMgmt ||
-		// Also check if it's a GoPro UUID pattern (b5f9XXXX-aa8d-11e3-9046-0002a5d5c51b)
-		IsGoProUUID(uuid)
-}
-
-// triggerPairing triggers the pairing process by reading the WiFi password characteristic
-// According to OpenGoPro spec, this read operation initiates the pairing sequence
-func (m *Manager) triggerPairing(conn *DeviceConnection) error {
-	// Try to read WiFi password characteristic to trigger pairing
-	passChar, exists := conn.GetCharacteristic(CharWifiPassword)
-	if !exists {
-		return fmt.Errorf("WiFi password characteristic not found")
-	}
-
-	// Reading this characteristic triggers pairing on many devices
-	passData := make([]byte, 64)
-	_, err := passChar.Read(passData)
-	if err != nil {
-		// This might fail if not paired yet, which is expected
-		m.log.Debugf("Initial WiFi password read returned error (expected if not paired): %v", err)
-	} else {
-		m.log.Debug("Successfully read WiFi password, pairing may already be established")
-	}
-
-	// Give the pairing process a moment to complete
-	time.Sleep(time.Second)
+	// Normalize UUID to lowercase for comparison
+	uuid = strings.ToLower(uuid)
 	
-	return nil
-}
-
-func (m *Manager) verifyRequiredCharacteristics(conn *DeviceConnection) error {
-	required := []string{CharCommand, CharCommandResponse, CharQuery, CharQueryResponse, CharSettings, CharSettingsResponse}
-
-	for _, uuid := range required {
-		if _, exists := conn.GetCharacteristic(uuid); !exists {
-			return fmt.Errorf("required characteristic not found: %s", uuid)
-		}
+	// Check for known GoPro services (both long and short forms)
+	// Control service can appear as "fea6" or full UUID
+	if strings.Contains(uuid, "fea6") {
+		m.log.Debugf("Found Control service: %s", uuid)
+		return true
 	}
-
-	return nil
+	
+	// Check for full UUID matches
+	if uuid == strings.ToLower(ServiceWifiAP) || 
+	   uuid == strings.ToLower(ServiceControl) || 
+	   uuid == strings.ToLower(ServiceCameraMgmt) {
+		return true
+	}
+	
+	// Also check if it's a GoPro UUID pattern (b5f9XXXX-aa8d-11e3-9046-0002a5d5c51b)
+	if IsGoProUUID(uuid) {
+		return true
+	}
+	
+	return false
 }
+
+
+
 
 func (m *Manager) sendCommand(macAddress string, commandID byte, data []byte) (Response, error) {
-	conn := m.getConnection(macAddress)
-	if conn == nil || conn.GetState() != StateReady {
-		return Response{}, fmt.Errorf("device not ready")
+	m.mutex.RLock()
+	device := m.connectedDevices[macAddress]
+	chars := m.characteristics[macAddress]
+	m.mutex.RUnlock()
+	
+	if device == nil {
+		return Response{}, fmt.Errorf("device not connected")
 	}
 
-	cmdChar, exists := conn.GetCharacteristic(CharCommand)
+	cmdChar, exists := chars[CharCommand]
 	if !exists {
 		return Response{}, fmt.Errorf("command characteristic not found")
 	}
 
 	// Register for response
-	responseChan := conn.RegisterPendingCommand(commandID)
-	defer conn.UnregisterPendingCommand(commandID)
+	responseChan := m.responseTracker.RegisterCommand(commandID)
+	defer m.responseTracker.UnregisterCommand(commandID)
 
 	// Build command packet using Extended 13-bit format (recommended by OpenGoPro)
 	packet := tlv.BuildCommandPacket(commandID, data)
@@ -614,19 +616,23 @@ func (m *Manager) sendCommand(macAddress string, commandID byte, data []byte) (R
 }
 
 func (m *Manager) sendSetting(macAddress string, settingID byte, data []byte) (Response, error) {
-	conn := m.getConnection(macAddress)
-	if conn == nil || conn.GetState() != StateReady {
-		return Response{}, fmt.Errorf("device not ready")
+	m.mutex.RLock()
+	device := m.connectedDevices[macAddress]
+	chars := m.characteristics[macAddress]
+	m.mutex.RUnlock()
+	
+	if device == nil {
+		return Response{}, fmt.Errorf("device not connected")
 	}
 
-	settingsChar, exists := conn.GetCharacteristic(CharSettings)
+	settingsChar, exists := chars[CharSettings]
 	if !exists {
 		return Response{}, fmt.Errorf("settings characteristic not found")
 	}
 
 	// Register for response
-	responseChan := conn.RegisterPendingCommand(settingID)
-	defer conn.UnregisterPendingCommand(settingID)
+	responseChan := m.responseTracker.RegisterCommand(settingID)
+	defer m.responseTracker.UnregisterCommand(settingID)
 
 	// Build setting packet using Extended 13-bit format (recommended by OpenGoPro)
 	packet := tlv.BuildSettingPacket(settingID, data)
@@ -657,19 +663,23 @@ func (m *Manager) sendSetting(macAddress string, settingID byte, data []byte) (R
 }
 
 func (m *Manager) sendQuery(macAddress string, queryID byte, data []byte) (Response, error) {
-	conn := m.getConnection(macAddress)
-	if conn == nil || conn.GetState() != StateReady {
-		return Response{}, fmt.Errorf("device not ready")
+	m.mutex.RLock()
+	device := m.connectedDevices[macAddress]
+	chars := m.characteristics[macAddress]
+	m.mutex.RUnlock()
+	
+	if device == nil {
+		return Response{}, fmt.Errorf("device not connected")
 	}
 
-	queryChar, exists := conn.GetCharacteristic(CharQuery)
+	queryChar, exists := chars[CharQuery]
 	if !exists {
 		return Response{}, fmt.Errorf("query characteristic not found")
 	}
 
 	// Register for response
-	responseChan := conn.RegisterPendingCommand(queryID)
-	defer conn.UnregisterPendingCommand(queryID)
+	responseChan := m.responseTracker.RegisterCommand(queryID)
+	defer m.responseTracker.UnregisterCommand(queryID)
 
 	// Build query packet using Extended 13-bit format (recommended by OpenGoPro)
 	packet := tlv.BuildQueryPacket(queryID, data)
@@ -700,34 +710,25 @@ func (m *Manager) sendQuery(macAddress string, queryID byte, data []byte) (Respo
 }
 
 func (m *Manager) handleNotification(macAddress string, data []byte) {
-	conn := m.getConnection(macAddress)
-	if conn == nil {
+	m.mutex.RLock()
+	device := m.connectedDevices[macAddress]
+	m.mutex.RUnlock()
+	
+	if device == nil {
 		m.log.Tracef("Notification for unknown device %s, ignoring", macAddress)
 		return
 	}
 
 	// Process TLV fragment through the collector
-	if err := conn.ProcessTLVFragment(data); err != nil {
-		m.log.Debugf("Error processing TLV fragment from %s: %v", macAddress, err)
+	if m.tlvCollector != nil {
+		message, err := m.tlvCollector.ProcessFragment(data)
+		if err != nil {
+			m.log.Debugf("Error processing TLV fragment from %s: %v", macAddress, err)
+		} else if message != nil && m.responseTracker != nil {
+			// Route complete message to waiting response
+			m.responseTracker.RouteResponse(message)
+		}
 	}
-}
-
-func (m *Manager) getConnection(macAddress string) *DeviceConnection {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-	return m.connections[macAddress]
-}
-
-func (m *Manager) setConnection(macAddress string, conn *DeviceConnection) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	m.connections[macAddress] = conn
-}
-
-func (m *Manager) removeConnection(macAddress string) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	delete(m.connections, macAddress)
 }
 
 func (m *Manager) validateMAC(macAddress string) error {
@@ -735,73 +736,6 @@ func (m *Manager) validateMAC(macAddress string) error {
 		return fmt.Errorf("invalid MAC address length")
 	}
 	// Add more validation if needed
-	return nil
-}
-
-// ConnectWithEnhancedPairing connects and performs enhanced pairing with the device
-// Following the OpenGoPro specification pairing flow
-func (m *Manager) ConnectWithEnhancedPairing(macAddress string) error {
-	m.log.Infof("Starting enhanced pairing with device %s", macAddress)
-
-	// Step 1: Connect and discover services
-	if err := m.Connect(macAddress); err != nil {
-		return fmt.Errorf("failed to connect: %v", err)
-	}
-
-	// Step 2: Identify as third-party client
-	if err := m.SetThirdPartyClient(macAddress); err != nil {
-		m.log.Warnf("Failed to set third party client flag: %v", err)
-		// Non-critical, continue
-	}
-
-	// Step 3: Poll hardware info until camera is ready (per OpenGoPro spec)
-	if err := m.PollUntilReady(macAddress, 10*time.Second); err != nil {
-		m.Disconnect(macAddress)
-		return fmt.Errorf("camera did not become ready: %v", err)
-	}
-
-	// Step 4: Enable WiFi AP using proper command
-	m.log.Info("Enabling WiFi Access Point")
-	if err := m.EnableWiFiAP(macAddress); err != nil {
-		m.Disconnect(macAddress)
-		return fmt.Errorf("failed to enable WiFi AP: %v", err)
-	}
-
-	// Step 5: Wait for WiFi AP to be ready
-	time.Sleep(2 * time.Second)
-
-	// Step 6: Get WiFi credentials
-	ssid, password, err := m.GetWifiCredentials(macAddress)
-	if err != nil {
-		m.Disconnect(macAddress)
-		return fmt.Errorf("failed to get WiFi credentials: %v", err)
-	}
-
-	m.log.Infof("Successfully obtained WiFi credentials: SSID=%s", ssid)
-
-	// Step 7: Get and cache hardware info
-	hwInfo, err := m.GetHardwareInfo(macAddress)
-	if err != nil {
-		m.log.Warnf("Failed to get hardware info for caching: %v", err)
-	} else {
-		// Update cached device info
-		m.mutex.Lock()
-		if dev, exists := m.devices[macAddress]; exists {
-			dev.ModelID = hwInfo.ModelNumber
-			dev.ModelName = hwInfo.ModelName
-			dev.FirmwareVersion = hwInfo.FirmwareVersion
-			dev.SerialNumber = hwInfo.SerialNumber
-			// Store WiFi credentials in device
-			dev.WiFiSSID = ssid
-			dev.WiFiPassword = password
-		}
-		m.mutex.Unlock()
-
-		m.log.Infof("Cached device info: %s (FW: %s, SN: %s)",
-			hwInfo.ModelName, hwInfo.FirmwareVersion, hwInfo.SerialNumber)
-	}
-
-	m.log.Info("Enhanced pairing completed successfully")
 	return nil
 }
 
@@ -828,6 +762,7 @@ func (m *Manager) RefreshPairingState(macAddress string) (int, error) {
 	return int(response.Data[1]), nil
 }
 
+
 // Start starts the BLE manager (lifecycle method)
 func (m *Manager) Start() error {
 	m.log.Info("BLE Manager started")
@@ -843,13 +778,13 @@ func (m *Manager) Stop() error {
 
 	// Disconnect all active connections
 	m.mutex.Lock()
-	connections := make(map[string]*DeviceConnection)
-	for k, v := range m.connections {
-		connections[k] = v
+	devices := make(map[string]*bluetooth.Device)
+	for k, v := range m.connectedDevices {
+		devices[k] = v
 	}
 	m.mutex.Unlock()
 
-	for macAddress := range connections {
+	for macAddress := range devices {
 		if err := m.Disconnect(macAddress); err != nil {
 			m.log.Warnf("Failed to disconnect from %s: %v", macAddress, err)
 		}

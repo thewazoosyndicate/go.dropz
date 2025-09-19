@@ -202,10 +202,6 @@ func main() {
 	}
 	
 	fmt.Println("\n=== Test Complete ===")
-	fmt.Println("\n✅ CONCLUSION: TinyGo BLE 'pairing limitations' do NOT affect GoPro connectivity!")
-	fmt.Println("   - GoPro uses application-level authentication via OpenGoPro protocol")
-	fmt.Println("   - TinyGo provides sufficient BLE GATT connection capabilities")
-	fmt.Println("   - Your BLE Manager implementation works correctly across platforms")
 }
 
 func must(action string, err error) {

@@ -384,11 +384,39 @@ func (m *Manager) GetBatteryLevel(macAddress string) (int, error) {
 		return 0, err
 	}
 
-	if len(response.Data) < 2 || response.Data[0] != StatusBatteryPercentage {
-		return 0, fmt.Errorf("invalid battery response")
+	// Query responses contain multiple TLV pairs: [StatusID][Length][Value]...
+	// Parse the TLV pairs to find the battery percentage
+	data := response.Data
+	offset := 0
+	
+	for offset < len(data) {
+		if offset+2 > len(data) {
+			break // Not enough data for TLV header
+		}
+		
+		statusID := data[offset]
+		length := int(data[offset+1])
+		offset += 2
+		
+		if offset+length > len(data) {
+			m.log.Warnf("Status TLV truncated: ID=%d, expected %d bytes, have %d", 
+				statusID, length, len(data)-offset)
+			break
+		}
+		
+		// Check if this is the battery percentage status
+		if statusID == StatusBatteryPercentage {
+			if length >= 1 {
+				return int(data[offset]), nil
+			}
+			return 0, fmt.Errorf("battery percentage value too short")
+		}
+		
+		// Skip to next TLV pair
+		offset += length
 	}
-	// Return the percentage value directly
-	return int(response.Data[1]), nil
+	
+	return 0, fmt.Errorf("battery percentage not found in response")
 }
 
 // SetDateTime sets the date and time on the device

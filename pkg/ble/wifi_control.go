@@ -82,58 +82,83 @@ func (m *Manager) GetHardwareInfo(macAddress string) (*HardwareInfo, error) {
 	return info, nil
 }
 
-// parseHardwareInfo parses the TLV response from GetHardwareInfo command
+// parseHardwareInfo parses the hardware info response using OpenGoPro's sequential length-prefixed format
 func parseHardwareInfo(data []byte, log logger.Logger) (*HardwareInfo, error) {
-	if len(data) < 4 {
+	if len(data) < 2 {
 		return nil, fmt.Errorf("hardware info response too short: %d bytes", len(data))
 	}
 
 	info := &HardwareInfo{}
-	offset := 0
+	buf := data
 
-	// Parse TLV fields
-	for offset < len(data) {
-		if offset+2 > len(data) {
-			break // Not enough data for type and length
+	// Helper function to read length-prefixed field
+	readField := func(fieldName string) ([]byte, error) {
+		if len(buf) < 1 {
+			return nil, fmt.Errorf("missing %s length byte", fieldName)
+		}
+		length := int(buf[0])
+		buf = buf[1:]
+
+		if len(buf) < length {
+			return nil, fmt.Errorf("%s truncated: expected %d bytes, have %d", 
+				fieldName, length, len(buf))
 		}
 
-		fieldType := data[offset]
-		fieldLen := int(data[offset+1])
-		offset += 2
+		fieldData := buf[:length]
+		buf = buf[length:]
+		return fieldData, nil
+	}
 
-		if offset+fieldLen > len(data) {
-			log.Warnf("Hardware info field %d truncated: expected %d bytes, have %d",
-				fieldType, fieldLen, len(data)-offset)
-			break
-		}
+	// 1. Model Number (4 bytes big-endian)
+	if modelData, err := readField("model_number"); err != nil {
+		log.Warnf("Failed to read model number: %v", err)
+	} else if len(modelData) == 4 {
+		info.ModelNumber = int(modelData[0])<<24 | int(modelData[1])<<16 |
+			int(modelData[2])<<8 | int(modelData[3])
+	}
 
-		fieldData := data[offset : offset+fieldLen]
-		offset += fieldLen
+	// 2. Model Name
+	if modelName, err := readField("model_name"); err != nil {
+		log.Warnf("Failed to read model name: %v", err)
+	} else {
+		info.ModelName = strings.TrimRight(string(modelName), "\x00")
+	}
 
-		// Parse based on field type
-		switch fieldType {
-		case 0x01: // Model Number
-			if fieldLen >= 4 {
-				info.ModelNumber = int(fieldData[0])<<24 | int(fieldData[1])<<16 |
-					int(fieldData[2])<<8 | int(fieldData[3])
-			}
-		case 0x02: // Model Name
-			info.ModelName = strings.TrimRight(string(fieldData), "\x00")
-		case 0x03: // Firmware Version
-			info.FirmwareVersion = strings.TrimRight(string(fieldData), "\x00")
-		case 0x04: // Serial Number
-			info.SerialNumber = strings.TrimRight(string(fieldData), "\x00")
-		case 0x05: // AP SSID
-			info.APSSID = strings.TrimRight(string(fieldData), "\x00")
-		case 0x06: // MAC Address
-			if fieldLen == 6 {
-				info.MACAddress = fmt.Sprintf("%02X:%02X:%02X:%02X:%02X:%02X",
-					fieldData[0], fieldData[1], fieldData[2],
-					fieldData[3], fieldData[4], fieldData[5])
-			}
-		default:
-			log.Tracef("Unknown hardware info field type: 0x%02X", fieldType)
-		}
+	// 3. Board Type/Deprecated field - skip it
+	if _, err := readField("board_type/deprecated"); err != nil {
+		log.Tracef("Failed to skip board type/deprecated field: %v", err)
+	}
+
+	// 4. Firmware Version
+	if firmware, err := readField("firmware_version"); err != nil {
+		log.Warnf("Failed to read firmware version: %v", err)
+	} else {
+		info.FirmwareVersion = strings.TrimRight(string(firmware), "\x00")
+	}
+
+	// 5. Serial Number
+	if serial, err := readField("serial_number"); err != nil {
+		log.Warnf("Failed to read serial number: %v", err)
+	} else {
+		info.SerialNumber = strings.TrimRight(string(serial), "\x00")
+	}
+
+	// 6. AP SSID
+	if ssid, err := readField("ap_ssid"); err != nil {
+		log.Warnf("Failed to read AP SSID: %v", err)
+	} else {
+		info.APSSID = strings.TrimRight(string(ssid), "\x00")
+	}
+
+	// 7. AP MAC Address
+	if mac, err := readField("ap_mac"); err != nil {
+		log.Warnf("Failed to read AP MAC: %v", err)
+	} else if len(mac) == 6 {
+		info.MACAddress = fmt.Sprintf("%02X:%02X:%02X:%02X:%02X:%02X",
+			mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
+	} else {
+		// MAC address may be provided as a string
+		info.MACAddress = strings.TrimRight(string(mac), "\x00")
 	}
 
 	// Validate we got at least the essential fields

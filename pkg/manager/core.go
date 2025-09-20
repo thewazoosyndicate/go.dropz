@@ -118,6 +118,35 @@ func NewGoProManager(dbPath, destinationDir string) (*GoProManager, error) {
 		return nil, fmt.Errorf("failed to start BLE manager: %v", err)
 	}
 
+	// Set up metadata update callback to update database whenever camera connects
+	bleManager.SetMetadataCallback(func(metadata ble.CameraMetadata) {
+		log := logger.GetLogger()
+		log.Debugf("Metadata callback invoked for camera %s", metadata.MACAddress)
+		
+		// Update camera WiFi credentials if they've changed
+		if state, exists := db.CameraStates[metadata.MACAddress]; exists {
+			if metadata.WiFiSSID != "" && metadata.WiFiPassword != "" {
+				state.Camera.WiFiSSID = metadata.WiFiSSID
+				state.Camera.WiFiPassword = metadata.WiFiPassword
+			}
+		}
+		
+		// Update camera metadata in database
+		dbMetadata := database.CameraMetadata{
+			Model:           metadata.ModelName,
+			FirmwareVersion: metadata.FirmwareVersion,
+			SerialNumber:    metadata.SerialNumber,
+			BatteryLevel:    int32(metadata.BatteryLevel),
+		}
+		
+		if err := db.SetCameraMetadata(metadata.MACAddress, dbMetadata); err != nil {
+			log.Errorf("Failed to update camera metadata in database: %v", err)
+		} else {
+			log.Infof("Updated metadata for camera %s: battery=%d%%, model=%s", 
+				metadata.MACAddress, metadata.BatteryLevel, metadata.ModelName)
+		}
+	})
+
 	// Load configuration from database
 	config := db.GetConfig()
 

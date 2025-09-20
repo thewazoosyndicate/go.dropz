@@ -32,3 +32,18 @@ type Response struct {
 
 // DeviceDiscoveryCallback is called when a device is discovered during scanning
 type DeviceDiscoveryCallback func(Device)
+
+// CameraMetadata represents metadata about a camera
+type CameraMetadata struct {
+	MACAddress      string
+	ModelID         int
+	ModelName       string
+	FirmwareVersion string
+	SerialNumber    string
+	BatteryLevel    int
+	WiFiSSID        string
+	WiFiPassword    string
+}
+
+// MetadataUpdateFunc is called when camera metadata is updated during connection
+type MetadataUpdateFunc func(metadata CameraMetadata)

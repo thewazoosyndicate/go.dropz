@@ -68,58 +68,30 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 
 	// Perform the BLE pairing operation
 	bleErr := bleOperation(ctx, "PairCamera", func() error {
-		// Use Connect which now does everything (simplified flow)
-		pm.log.Infof("Connecting to device %s", macAddress)
+		// Use Connect which now does everything including metadata updates
+		pm.log.Infof("Connecting to device %s for pairing", macAddress)
 
 		if err := pm.ble.Connect(macAddress); err != nil {
 			return fmt.Errorf("failed to connect: %v", err)
 		}
 
-		// WiFi credentials are obtained during Connect
-		ssid, password, err := pm.ble.GetWifiCredentials(macAddress)
-		if err == nil && ssid != "" && password != "" {
-			cameraState.Camera.WiFiSSID = ssid
-			cameraState.Camera.WiFiPassword = password
-			pm.log.Infof("Retrieved WiFi credentials: SSID=%s", ssid)
+		// Connect() has already:
+		// - Enabled WiFi AP
+		// - Retrieved WiFi credentials
+		// - Fetched hardware info and battery
+		// - Invoked metadata callback to update database
+		
+		// Now we just need to verify pairing was successful by checking WiFi credentials
+		// Refresh from database since callback updated it
+		updatedState, exists := pm.db.CameraStates[macAddress]
+		if !exists {
+			return fmt.Errorf("camera state not found after connection")
 		}
-
-		// Notify about WiFi credentials obtained
-		if pm.notifier != nil {
-			pm.notifier()
-		}
-
-		// Fetch hardware metadata and store in database
-		pm.log.Infof("Fetching hardware metadata for camera %s", cameraState.Camera.Name)
-		hwMeta, err := pm.ble.GetMetadata(macAddress)
-		if err != nil {
-			pm.log.Warnf("Failed to fetch hardware metadata: %v", err)
-		} else {
-			// Also fetch battery level
-			var batteryLevel int32
-			if bl, err2 := pm.ble.GetBatteryLevel(macAddress); err2 != nil {
-				pm.log.Warnf("Failed to fetch battery level for camera %s: %v", cameraState.Camera.Name, err2)
-			} else {
-				batteryLevel = int32(bl)
-			}
-			meta := database.CameraMetadata{
-				ID:              cameraState.Camera.ID,
-				Model:           hwMeta["model_name"],
-				FirmwareVersion: hwMeta["firmware_version"],
-				SerialNumber:    hwMeta["serial_number"],
-				BatteryLevel:    batteryLevel,
-			}
-			if err := pm.db.SetCameraMetadata(macAddress, meta); err != nil {
-				pm.log.Errorf("Failed to save camera metadata: %v", err)
-			} else if pm.notifier != nil {
-				pm.notifier()
-			}
-		}
-
-		// Simple pairing verification - successful WiFi credential retrieval means paired
-		isPaired := cameraState.Camera.WiFiSSID != "" && cameraState.Camera.WiFiPassword != ""
+		
+		isPaired := updatedState.Camera.WiFiSSID != "" && updatedState.Camera.WiFiPassword != ""
 		
 		if isPaired {
-			pm.log.Infof("Pairing successful - WiFi credentials obtained: SSID=%s", cameraState.Camera.WiFiSSID)
+			pm.log.Infof("Pairing successful - WiFi credentials obtained: SSID=%s", updatedState.Camera.WiFiSSID)
 		} else {
 			pm.log.Warnf("Pairing may be incomplete - no WiFi credentials obtained")
 		}
@@ -128,7 +100,7 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 		if err := pm.db.SetCameraPaired(macAddress, isPaired); err != nil {
 			pm.log.Errorf("Failed to set camera paired status: %v", err)
 		} else {
-			pm.log.Infof("Camera %s pairing status updated in database: %v", cameraState.Camera.Name, isPaired)
+			pm.log.Infof("Camera %s pairing status updated in database: %v", updatedState.Camera.Name, isPaired)
 		}
 
 		// Notify about pairing status update
@@ -145,7 +117,7 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 			// This is not critical, we can continue
 		}
 
-		pm.log.Infof("Pairing operation completed for camera %s", cameraState.Camera.Name)
+		pm.log.Infof("Pairing operation completed for camera %s", updatedState.Camera.Name)
 		return nil
 	})
 

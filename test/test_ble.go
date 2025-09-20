@@ -28,9 +28,23 @@ func main() {
 
 	// Create BLE Manager
 	bleManager := ble.NewManager(adapter, log)
+	
+	// Set up metadata callback to verify it gets invoked
+	bleManager.SetMetadataCallback(func(metadata ble.CameraMetadata) {
+		fmt.Println("\n=== METADATA CALLBACK INVOKED ===")
+		fmt.Printf("✓ MAC Address: %s\n", metadata.MACAddress)
+		fmt.Printf("✓ Model: %s (ID: %d)\n", metadata.ModelName, metadata.ModelID)
+		fmt.Printf("✓ Firmware: %s\n", metadata.FirmwareVersion)
+		fmt.Printf("✓ Serial: %s\n", metadata.SerialNumber)
+		fmt.Printf("✓ Battery: %d%%\n", metadata.BatteryLevel)
+		fmt.Printf("✓ WiFi SSID: %s\n", metadata.WiFiSSID)
+		fmt.Printf("✓ WiFi Password: %s\n", metadata.WiFiPassword)
+		fmt.Println("=================================")
+	})
+	
 	err := bleManager.Start()
 	must("start BLE manager", err)
-	fmt.Println("✓ BLE Manager started")
+	fmt.Println("✓ BLE Manager started with metadata callback")
 	defer bleManager.Stop()
 
 	// Scan for GoPro devices using BLE Manager

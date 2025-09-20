@@ -24,6 +24,7 @@ type Manager struct {
 	log             *logrus.Logger
 	isScanning      bool
 	discoveryCallback DeviceDiscoveryCallback // callback for live discovery updates
+	metadataCallback  MetadataUpdateFunc      // callback for metadata updates during connection
 	tlvCollector    *tlv.FragmentCollector
 	responseTracker *tlv.ResponseTracker
 }
@@ -278,11 +279,23 @@ func (m *Manager) Connect(macAddress string) error {
 	}
 	m.log.Infof("Successfully obtained WiFi credentials: SSID=%s", ssid)
 
-	// Get hardware info and cache it
+	// Prepare metadata for callback
+	metadata := CameraMetadata{
+		MACAddress:   macAddress,
+		WiFiSSID:     ssid,
+		WiFiPassword: password,
+	}
+
+	// Get hardware info and add to metadata
 	hwInfo, err := m.GetHardwareInfo(macAddress)
 	if err != nil {
 		m.log.Warnf("Failed to get hardware info: %v", err)
 	} else {
+		metadata.ModelID = hwInfo.ModelNumber
+		metadata.ModelName = hwInfo.ModelName
+		metadata.FirmwareVersion = hwInfo.FirmwareVersion
+		metadata.SerialNumber = hwInfo.SerialNumber
+		
 		// Update cached device info
 		m.mutex.Lock()
 		if dev, exists := m.discoveredDevices[macAddress]; exists {
@@ -298,11 +311,23 @@ func (m *Manager) Connect(macAddress string) error {
 			hwInfo.ModelName, hwInfo.FirmwareVersion, hwInfo.SerialNumber)
 	}
 
-	// Fetch battery status
-	if battery, err := m.GetBatteryLevel(macAddress); err != nil {
+	// Fetch battery status and add to metadata
+	battery, err := m.GetBatteryLevel(macAddress)
+	if err != nil {
 		m.log.Warnf("Failed to read battery level: %v", err)
 	} else {
+		metadata.BatteryLevel = battery
 		m.log.Infof("Connected to GoPro %s: battery %d%%", macAddress, battery)
+	}
+
+	// Invoke metadata callback if set
+	m.mutex.RLock()
+	callback := m.metadataCallback
+	m.mutex.RUnlock()
+	
+	if callback != nil {
+		m.log.Debug("Invoking metadata update callback")
+		callback(metadata)
 	}
 
 	m.log.Info("GoPro connection and setup completed successfully")
@@ -566,33 +591,6 @@ func (m *Manager) isResponseCharacteristic(uuid string) bool {
 	return uuid == CharCommandResponse || uuid == CharQueryResponse || uuid == CharSettingsResponse
 }
 
-// isKnownGoProService checks if a service UUID is a known GoPro service
-func (m *Manager) isKnownGoProService(uuid string) bool {
-	// Normalize UUID to lowercase for comparison
-	uuid = strings.ToLower(uuid)
-	
-	// Check for known GoPro services (both long and short forms)
-	// Control service can appear as "fea6" or full UUID
-	if strings.Contains(uuid, "fea6") {
-		m.log.Debugf("Found Control service: %s", uuid)
-		return true
-	}
-	
-	// Check for full UUID matches
-	if uuid == strings.ToLower(ServiceWifiAP) || 
-	   uuid == strings.ToLower(ServiceControl) || 
-	   uuid == strings.ToLower(ServiceCameraMgmt) {
-		return true
-	}
-	
-	// Also check if it's a GoPro UUID pattern (b5f9XXXX-aa8d-11e3-9046-0002a5d5c51b)
-	if IsGoProUUID(uuid) {
-		return true
-	}
-	
-	return false
-}
-
 
 
 
@@ -790,6 +788,13 @@ func (m *Manager) RefreshPairingState(macAddress string) (int, error) {
 	return int(response.Data[1]), nil
 }
 
+
+// SetMetadataCallback sets the callback for metadata updates
+func (m *Manager) SetMetadataCallback(callback MetadataUpdateFunc) {
+	m.mutex.Lock()
+	m.metadataCallback = callback
+	m.mutex.Unlock()
+}
 
 // Start starts the BLE manager (lifecycle method)
 func (m *Manager) Start() error {

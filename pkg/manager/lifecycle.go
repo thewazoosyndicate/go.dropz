@@ -4,14 +4,12 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/pkg/database"
+	syncpkg "github.com/dropz/dropz/pkg/manager/sync"
 )
 
 // Start starts the GoPro manager service
 func (m *GoProManager) Start() error {
 	m.log.Info("GoPro manager starting: mode=service version=1.0")
-
-	// Start BLE manager
-	m.ble.Start()
 
 	// Start background scanner
 	m.wg.Add(1)
@@ -87,11 +85,11 @@ func (m *GoProManager) deviceManager() {
 			m.syncDevicePairingStates()
 			m.checkManagedDevices()
 			// Process sync queue to start sync tasks for pending cameras
-			m.processSyncQueue()
+			m.syncCoordinator.ProcessSyncQueue(m.activeSyncTasks, &m.mutex, m.notifier, m.performCameraSync, m.ctx)
 		case <-m.immediateSyncTrigger:
 			// Immediate sync requested - process sync queue immediately
 			m.log.Debug("Immediate sync triggered - processing sync queue")
-			m.processSyncQueue()
+			m.syncCoordinator.ProcessSyncQueue(m.activeSyncTasks, &m.mutex, m.notifier, m.performCameraSync, m.ctx)
 		case <-unreachableTicker.C:
 			// Mark unreachable devices (since we're no longer doing batch processing)
 			m.markUnreachableDevicesBackground()
@@ -148,7 +146,7 @@ func (m *GoProManager) checkManagedDevices() {
 			syncEntry := &database.SyncQueueEntry{
 				CameraID:         camera.CameraState.Camera.ID,
 				QueuedAt:         time.Now(),
-				Priority:         SyncPriorityAuto, // Normal priority for automatic syncs
+				Priority:         syncpkg.SyncPriorityAuto,
 				ProgressPercent:  0,
 				CurrentOperation: "Waiting to start",
 			}
@@ -166,15 +164,5 @@ func (m *GoProManager) checkManagedDevices() {
 
 // markUnreachableDevicesBackground marks cameras as unreachable in the background
 func (m *GoProManager) markUnreachableDevicesBackground() {
-	m.mutex.RLock()
-	notifier := m.notifier
-	discoveryProcessor := m.discoveryProcessor
-	m.mutex.RUnlock()
-
-	if discoveryProcessor != nil {
-		m.log.Trace("Running background cleanup for unreachable devices")
-		discoveryProcessor.MarkUnreachableDevicesBackground(notifier)
-	} else {
-		m.log.Warn("Discovery processor not available for background cleanup")
-	}
+	m.discoveryProcessor.MarkUnreachableDevicesBackground(m.notifier)
 }

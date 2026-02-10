@@ -1,9 +1,5 @@
 package tlv
 
-import (
-	"fmt"
-)
-
 // BuildCommandPacket builds a TLV command packet with proper header
 // Uses Extended 13-bit format as recommended by OpenGoPro spec
 func BuildCommandPacket(commandID byte, params []byte) []byte {
@@ -27,19 +23,6 @@ func BuildQueryPacket(queryID byte, params []byte) []byte {
 	messageData := make([]byte, 0, messageLen)
 	messageData = append(messageData, queryID)
 	messageData = append(messageData, params...)
-	
-	return BuildTLVPackets(messageData)
-}
-
-// BuildSettingPacket builds a TLV setting packet
-func BuildSettingPacket(settingID byte, value []byte) []byte {
-	// Calculate total message length (setting ID + value)
-	messageLen := 1 + len(value)
-	
-	// Build the message data
-	messageData := make([]byte, 0, messageLen)
-	messageData = append(messageData, settingID)
-	messageData = append(messageData, value...)
 	
 	return BuildTLVPackets(messageData)
 }
@@ -151,13 +134,3 @@ func SplitIntoPackets(data []byte) [][]byte {
 	return packets
 }
 
-// ValidateMessageLength checks if a message length is within valid bounds
-func ValidateMessageLength(length int) error {
-	if length <= 0 {
-		return fmt.Errorf("message length must be positive, got %d", length)
-	}
-	if length > MaxMessageLength {
-		return fmt.Errorf("message length %d exceeds maximum %d", length, MaxMessageLength)
-	}
-	return nil
-}

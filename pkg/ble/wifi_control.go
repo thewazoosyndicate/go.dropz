@@ -36,29 +36,27 @@ func (m *Manager) SetAPControl(macAddress string, mode WiFiAPMode) error {
 		return fmt.Errorf("invalid WiFi AP mode: %d", mode)
 	}
 
-	// Send the command with mode parameter
-	_, err := m.sendCommand(macAddress, CmdSetAPControl, []byte{byte(mode)})
+	// Send the command with length-prefixed mode parameter
+	response, err := m.sendCommand(macAddress, CmdSetAPControl, []byte{0x01, byte(mode)})
 	if err != nil {
-		return fmt.Errorf("failed to set AP control: %v", err)
+		return fmt.Errorf("failed to send AP control command: %v", err)
 	}
+
+	// Check response status (0x00 = success)
+	if response.Status != 0x00 {
+		m.log.Errorf("WiFi AP control command failed with status: 0x%02X", response.Status)
+		return fmt.Errorf("WiFi AP control failed: status=0x%02X", response.Status)
+	}
+
+	m.log.Debugf("WiFi AP control command successful: status=0x%02X", response.Status)
 
 	// For enable mode, wait a bit for the AP to come up
 	if mode == WiFiAPModeEnable || mode == WiFiAPModeBounce {
 		time.Sleep(2 * time.Second)
-		m.log.Debug("WiFi AP enable command sent, waiting for AP to start")
+		m.log.Debug("WiFi AP enable command sent successfully, waiting for AP to start")
 	}
 
 	return nil
-}
-
-// EnableWiFiAP enables the WiFi Access Point (convenience method)
-func (m *Manager) EnableWiFiAP(macAddress string) error {
-	return m.SetAPControl(macAddress, WiFiAPModeEnable)
-}
-
-// DisableWiFiAP disables the WiFi Access Point (convenience method)
-func (m *Manager) DisableWiFiAP(macAddress string) error {
-	return m.SetAPControl(macAddress, WiFiAPModeDisable)
 }
 
 // GetHardwareInfo retrieves hardware information from the camera
@@ -181,46 +179,59 @@ func (m *Manager) SetThirdPartyClient(macAddress string) error {
 	return nil
 }
 
-// PollUntilReady polls the camera until it's ready for operations
-// It checks both hardware info availability and system ready status
-func (m *Manager) PollUntilReady(macAddress string, timeout time.Duration) error {
-	m.log.Info("Polling camera until ready...")
-
-	deadline := time.Now().Add(timeout)
-	attempts := 0
-
-	for time.Now().Before(deadline) {
-		attempts++
-
-		// First check if we can get hardware info (basic connectivity test)
-		info, hwErr := m.GetHardwareInfo(macAddress)
-		if hwErr == nil && info != nil {
-			// Now check system ready status
-			response, statusErr := m.sendQuery(macAddress, QueryGetStatus, []byte{StatusSystemReady})
-			if statusErr == nil && len(response.Data) >= 2 {
-				// Check if system is ready (value should be 1)
-				if response.Data[0] == StatusSystemReady && response.Data[1] == 1 {
-					m.log.Infof("Camera is ready after %d attempts", attempts)
-					return nil
-				} else {
-					m.log.Debugf("System not yet ready, status value: %d", response.Data[1])
-				}
-			} else if statusErr != nil {
-				m.log.Tracef("Failed to query system ready status: %v", statusErr)
-			}
-		} else if hwErr != nil {
-			m.log.Tracef("Hardware info not yet available: %v", hwErr)
-		}
-
-		// Log the attempt
-		if attempts%5 == 0 {
-			m.log.Debugf("Still waiting for camera to be ready (attempt %d)", attempts)
-		}
-
-		// Wait before retrying with increasing backoff
-		backoff := time.Duration(500+min(attempts*100, 1000)) * time.Millisecond
-		time.Sleep(backoff)
+// SetLocalDateTime sets the camera's date/time with timezone and DST info.
+// Uses command 0x0F (Set Local Date Time) supported on HERO11+.
+// Falls back to 0x0D (Set Date Time) without timezone on older cameras.
+func (m *Manager) SetLocalDateTime(macAddress string, t time.Time) error {
+	_, offset := t.Zone()
+	offsetMinutes := int16(offset / 60)
+	isDST := byte(0)
+	if t.IsDST() {
+		isDST = 1
 	}
 
-	return fmt.Errorf("camera did not become ready within %v", timeout)
+	year := uint16(t.Year())
+	// Length-prefixed payload: 0x0A (10 bytes) + date/time fields
+	params := []byte{
+		0x0A, // param length
+		byte(year >> 8), byte(year & 0xFF),
+		byte(t.Month()),
+		byte(t.Day()),
+		byte(t.Hour()),
+		byte(t.Minute()),
+		byte(t.Second()),
+		byte(offsetMinutes >> 8), byte(offsetMinutes & 0xFF),
+		isDST,
+	}
+
+	response, err := m.sendCommand(macAddress, CmdSetLocalDateTime, params)
+	if err != nil {
+		return fmt.Errorf("failed to set local date/time: %v", err)
+	}
+
+	if response.Status == 0x02 {
+		// Invalid parameter — camera may not support timezone variant, fall back to 0x0D
+		m.log.Debug("Camera doesn't support Set Local Date Time, falling back to Set Date Time")
+		params = []byte{
+			0x07, // param length
+			byte(year >> 8), byte(year & 0xFF),
+			byte(t.Month()),
+			byte(t.Day()),
+			byte(t.Hour()),
+			byte(t.Minute()),
+			byte(t.Second()),
+		}
+		response, err = m.sendCommand(macAddress, CmdSetDateTime, params)
+		if err != nil {
+			return fmt.Errorf("failed to set date/time: %v", err)
+		}
+	}
+
+	if response.Status != 0x00 {
+		return fmt.Errorf("set date/time failed: status=0x%02X", response.Status)
+	}
+
+	m.log.Infof("Camera date/time set to %s", t.Format(time.RFC3339))
+	return nil
 }
+

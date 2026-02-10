@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dropz/dropz/pkg/logger"
 	"github.com/sirupsen/logrus"
 	"github.com/dropz/dropz/pkg/protocol"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -151,10 +150,15 @@ func GetDatabase() *Database {
 			Videos:       make([]*VideoFile, 0),
 			Logs:         make([]*LogEntry, 0),
 			Config:       DefaultConfig(),
-			log:          logger.GetLogger(),
+			log:          logrus.New(),
 		}
 	})
 	return instance
+}
+
+// SetLogger sets the logger for the database
+func (db *Database) SetLogger(log *logrus.Logger) {
+	db.log = log
 }
 
 // Initialize sets up the database with the specified file path
@@ -271,31 +275,6 @@ func (db *Database) GetDiscoveredCamera(macAddress string) (*DiscoveredCamera, b
 	return &DiscoveredCamera{CameraState: cameraState}, exists
 }
 
-// GetAllDiscoveredCameras returns all discovered cameras
-func (db *Database) GetAllDiscoveredCameras() []*DiscoveredCamera {
-	db.mutex.RLock()
-	defer db.mutex.RUnlock()
-
-	cameras := make([]*DiscoveredCamera, 0, len(db.CameraStates))
-	for _, cameraState := range db.CameraStates {
-		// Only include cameras that are not managed or paired
-		if !cameraState.Status.IsManaged || !cameraState.Status.IsPaired {
-			cameras = append(cameras, &DiscoveredCamera{CameraState: cameraState})
-		}
-	}
-	return cameras
-}
-
-// AddOrUpdateManagedCamera adds or updates a managed camera
-func (db *Database) AddOrUpdateManagedCamera(camera *ManagedCamera) error {
-	db.mutex.Lock()
-	defer db.mutex.Unlock()
-
-	db.CameraStates[camera.CameraState.Camera.MACAddress] = camera.CameraState
-	// Caller will log this operation if needed
-	return db.saveToFile()
-}
-
 // GetManagedCamera retrieves a managed camera by MAC address
 func (db *Database) GetManagedCamera(macAddress string) (*ManagedCamera, bool) {
 	db.mutex.RLock()
@@ -312,6 +291,19 @@ func (db *Database) GetManagedCamera(macAddress string) (*ManagedCamera, bool) {
 	return nil, false
 }
 
+// GetCameraByID retrieves a camera by its ID
+func (db *Database) GetCameraByID(id string) (*CameraWithState, bool) {
+	db.mutex.RLock()
+	defer db.mutex.RUnlock()
+
+	for _, cameraState := range db.CameraStates {
+		if cameraState.Camera.ID == id {
+			return cameraState, true
+		}
+	}
+	return nil, false
+}
+
 // GetManagedCameraByID retrieves a managed camera by ID
 func (db *Database) GetManagedCameraByID(id string) (*ManagedCamera, bool) {
 	db.mutex.RLock()
@@ -323,21 +315,6 @@ func (db *Database) GetManagedCameraByID(id string) (*ManagedCamera, bool) {
 		}
 	}
 	return nil, false
-}
-
-// GetAllManagedCameras returns all managed cameras
-func (db *Database) GetAllManagedCameras() []*ManagedCamera {
-	db.mutex.RLock()
-	defer db.mutex.RUnlock()
-
-	cameras := make([]*ManagedCamera, 0)
-	for _, cameraState := range db.CameraStates {
-		// Only include cameras that are both managed and paired
-		if cameraState.Status.IsManaged && cameraState.Status.IsPaired {
-			cameras = append(cameras, &ManagedCamera{CameraState: cameraState})
-		}
-	}
-	return cameras
 }
 
 // RemoveManagedCamera removes a camera from the managed pool
@@ -501,17 +478,6 @@ func (db *Database) AddVideo(video *VideoFile) error {
 	return db.saveToFile()
 }
 
-// GetAllVideos returns all videos
-func (db *Database) GetAllVideos() []*VideoFile {
-	db.mutex.RLock()
-	defer db.mutex.RUnlock()
-
-	// Return a copy to avoid race conditions
-	result := make([]*VideoFile, len(db.Videos))
-	copy(result, db.Videos)
-	return result
-}
-
 // GetVideosByCamera returns videos for a specific camera
 func (db *Database) GetVideosByCamera(cameraID string) []*VideoFile {
 	db.mutex.RLock()
@@ -643,21 +609,6 @@ func (c *DiscoveredCamera) ToProtoDiscoveredCamera() *protocol.DiscoveredCamera 
 
 // ToProtoManagedCamera converts a ManagedCamera to protocol ManagedCamera
 func (c *ManagedCamera) ToProtoManagedCamera() *protocol.ManagedCamera {
-	// Defensive check to prevent nil pointer dereference
-	if c.CameraState == nil {
-		// This should never happen, but log and return an empty managed camera if it does
-		// to prevent crash and allow debugging
-		return &protocol.ManagedCamera{
-			CameraState: &protocol.CameraWithState{
-				Camera: &protocol.Camera{
-					Id:         "unknown",
-					Name:       "Invalid Camera State",
-					MacAddress: "unknown",
-				},
-				Status: &protocol.CameraStatus{},
-			},
-		}
-	}
 	return &protocol.ManagedCamera{
 		CameraState: c.CameraState.ToProtoCameraWithState(),
 	}
@@ -755,8 +706,8 @@ func DefaultConfig() Config {
 	}
 }
 
-// UpdateCameraReachability updates a camera's reachability status and last_seen timestamp
-func (db *Database) UpdateCameraReachability(macAddress string, isReachable bool) error {
+// updateCameraStatus is a helper that looks up a camera by MAC and applies a mutation.
+func (db *Database) updateCameraStatus(macAddress string, mutate func(*CameraStatus) bool) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
@@ -765,47 +716,27 @@ func (db *Database) UpdateCameraReachability(macAddress string, isReachable bool
 		return fmt.Errorf("camera with MAC address %s not found", macAddress)
 	}
 
-	// Update last_seen timestamp if the camera is reachable
-	if isReachable {
-		cameraState.Status.LastSeen = time.Now()
-	}
-
-	// Only make changes if the state actually changes
-	if cameraState.Status.IsReachable != isReachable {
-		cameraState.Status.IsReachable = isReachable
+	if mutate(&cameraState.Status) {
 		return db.saveToFile()
 	}
-
 	return nil
 }
 
 // UpdateCameraPairingStatus updates a camera's pairing status
 func (db *Database) UpdateCameraPairingStatus(macAddress string, isPairing bool) error {
-	db.mutex.Lock()
-	defer db.mutex.Unlock()
-
-	cameraState, exists := db.CameraStates[macAddress]
-	if !exists {
-		return fmt.Errorf("camera with MAC address %s not found", macAddress)
-	}
-
-	cameraState.Status.IsPairing = isPairing
-	return db.saveToFile()
+	return db.updateCameraStatus(macAddress, func(s *CameraStatus) bool {
+		s.IsPairing = isPairing
+		return true
+	})
 }
 
 // SetCameraPaired marks a camera as paired
 func (db *Database) SetCameraPaired(macAddress string, isPaired bool) error {
-	db.mutex.Lock()
-	defer db.mutex.Unlock()
-
-	cameraState, exists := db.CameraStates[macAddress]
-	if !exists {
-		return fmt.Errorf("camera with MAC address %s not found", macAddress)
-	}
-
-	cameraState.Status.IsPaired = isPaired
-	cameraState.Status.IsPairing = false // Always reset pairing status
-	return db.saveToFile()
+	return db.updateCameraStatus(macAddress, func(s *CameraStatus) bool {
+		s.IsPaired = isPaired
+		s.IsPairing = false
+		return true
+	})
 }
 
 // SetCameraMetadata stores hardware metadata for a camera
@@ -814,7 +745,7 @@ func (db *Database) SetCameraMetadata(macAddress string, metadata CameraMetadata
 	defer db.mutex.Unlock()
 	if state, exists := db.CameraStates[macAddress]; exists {
 		state.Metadata = metadata
-		return nil
+		return db.saveToFile()
 	}
 	return fmt.Errorf("camera not found: %s", macAddress)
 }
@@ -835,46 +766,28 @@ func (db *Database) ToggleCameraManaged(macAddress string) error {
 
 // UpdateCameraSyncingStatus updates a camera's syncing status
 func (db *Database) UpdateCameraSyncingStatus(macAddress string, isSyncing bool) error {
-	db.mutex.Lock()
-	defer db.mutex.Unlock()
-
-	cameraState, exists := db.CameraStates[macAddress]
-	if !exists {
-		return fmt.Errorf("camera with MAC address %s not found", macAddress)
-	}
-
-	cameraState.Status.IsSyncing = isSyncing
-	return db.saveToFile()
+	return db.updateCameraStatus(macAddress, func(s *CameraStatus) bool {
+		s.IsSyncing = isSyncing
+		return true
+	})
 }
 
 // MarkCameraSynced marks a camera as synced and updates last_synced timestamp
 func (db *Database) MarkCameraSynced(macAddress string) error {
-	db.mutex.Lock()
-	defer db.mutex.Unlock()
-
-	cameraState, exists := db.CameraStates[macAddress]
-	if !exists {
-		return fmt.Errorf("camera with MAC address %s not found", macAddress)
-	}
-
-	cameraState.Status.IsSynced = true
-	cameraState.Status.IsSyncing = false // Reset syncing status
-	cameraState.Status.LastSynced = time.Now()
-	return db.saveToFile()
+	return db.updateCameraStatus(macAddress, func(s *CameraStatus) bool {
+		s.IsSynced = true
+		s.IsSyncing = false
+		s.LastSynced = time.Now()
+		return true
+	})
 }
 
 // ResetSyncStatus marks a camera as not synced (to trigger re-sync)
 func (db *Database) ResetSyncStatus(macAddress string) error {
-	db.mutex.Lock()
-	defer db.mutex.Unlock()
-
-	cameraState, exists := db.CameraStates[macAddress]
-	if !exists {
-		return fmt.Errorf("camera with MAC address %s not found", macAddress)
-	}
-
-	cameraState.Status.IsSynced = false
-	return db.saveToFile()
+	return db.updateCameraStatus(macAddress, func(s *CameraStatus) bool {
+		s.IsSynced = false
+		return true
+	})
 }
 
 // ResetTransientStates resets transient states (is_syncing, is_pairing) on app start
@@ -974,35 +887,3 @@ func (db *Database) GetCamerasForSyncQueue() []*ManagedCamera {
 	return cameras
 }
 
-// GetVisualStatusForCamera determines the visual status to display in the UI
-func GetVisualStatusForCamera(cameraState *CameraWithState) string {
-	if !cameraState.Status.IsReachable {
-		return "Unreachable"
-	}
-
-	if cameraState.Status.IsPairing {
-		return "Pairing"
-	}
-
-	if cameraState.Status.IsSyncing {
-		return "Syncing"
-	}
-
-	if !cameraState.Status.IsPaired && cameraState.Status.IsManaged {
-		return "Unavailable"
-	}
-
-	if !cameraState.Status.IsPaired {
-		return "Discovered"
-	}
-
-	if cameraState.Status.IsPaired && !cameraState.Status.IsManaged {
-		return "Available"
-	}
-
-	if cameraState.Status.IsPaired && cameraState.Status.IsManaged {
-		return "Managed"
-	}
-
-	return "Unknown"
-}

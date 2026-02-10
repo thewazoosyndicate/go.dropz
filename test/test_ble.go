@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/pkg/ble"
-	"github.com/dropz/dropz/pkg/logger"
+	"github.com/sirupsen/logrus"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -17,8 +17,7 @@ func main() {
 	fmt.Println("This test uses the production BLE Manager to demonstrate proper GoPro connectivity")
 	fmt.Println()
 
-	// Setup logging
-	log := logger.GetLogger()
+	log := logrus.New()
 	fmt.Println("✓ Logger initialized")
 
 	// Enable BLE interface
@@ -42,9 +41,7 @@ func main() {
 		fmt.Println("=================================")
 	})
 	
-	err := bleManager.Start()
-	must("start BLE manager", err)
-	fmt.Println("✓ BLE Manager started with metadata callback")
+	fmt.Println("✓ BLE Manager created with metadata callback")
 	defer bleManager.Stop()
 
 	// Scan for GoPro devices using BLE Manager
@@ -56,7 +53,7 @@ func main() {
 	var mu sync.Mutex
 
 	// Start scanning with live callback
-	err = bleManager.StartScanningWithCallback(ctx, func(device ble.Device) {
+	err := bleManager.StartScanningWithCallback(ctx, func(device ble.Device) {
 		mu.Lock()
 		defer mu.Unlock()
 		if foundDevice == nil {
@@ -208,9 +205,9 @@ func main() {
 
 	// Cleanup using BLE Manager
 	fmt.Println("\n4. Disconnecting using BLE Manager...")
-	err = bleManager.Disconnect(foundDevice.MACAddress)
-	if err != nil {
-		fmt.Printf("✗ Disconnect error: %v\n", err)
+	disconnectErr := bleManager.Disconnect(foundDevice.MACAddress)
+	if disconnectErr != nil {
+		fmt.Printf("✗ Disconnect error: %v\n", disconnectErr)
 	} else {
 		fmt.Println("✓ Disconnected successfully")
 	}

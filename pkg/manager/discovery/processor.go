@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/pkg/ble"
-	"github.com/dropz/dropz/pkg/common"
 	"github.com/dropz/dropz/pkg/database"
 	"github.com/sirupsen/logrus"
 	"github.com/google/uuid"
@@ -29,7 +28,7 @@ func NewProcessor(db *database.Database, log *logrus.Logger) *Processor {
 }
 
 // ProcessDiscoveredDevices handles the discovered devices from a BLE scan
-func (p *Processor) ProcessDiscoveredDevices(devices []ble.Device, notifier common.UpdateNotifier) {
+func (p *Processor) ProcessDiscoveredDevices(devices []ble.Device, notifier func()) {
 	p.log.Tracef("Processing %d discovered devices", len(devices))
 
 	// Use a wait group to process devices concurrently
@@ -41,7 +40,7 @@ func (p *Processor) ProcessDiscoveredDevices(devices []ble.Device, notifier comm
 	var changesMade atomic.Bool
 
 	// First, mark all cameras as unreachable that haven't been seen recently
-	p.markUnreachableDevices(&dbMutex, &changesMade)
+	p.markUnreachableDevices(30*time.Second, &dbMutex, &changesMade)
 
 	for _, device := range devices {
 		wg.Add(1)
@@ -49,7 +48,7 @@ func (p *Processor) ProcessDiscoveredDevices(devices []ble.Device, notifier comm
 		// Process each device in a separate goroutine
 		go func(dev ble.Device) {
 			defer wg.Done()
-			p.processDevice(dev, &dbMutex, &changesMade, notifier)
+			p.processDevice(dev, &dbMutex, &changesMade)
 		}(device)
 	}
 
@@ -67,7 +66,7 @@ func (p *Processor) ProcessDiscoveredDevices(devices []ble.Device, notifier comm
 }
 
 // ProcessDiscoveredDeviceLive handles a single discovered device immediately (for live updates)
-func (p *Processor) ProcessDiscoveredDeviceLive(device ble.Device, notifier common.UpdateNotifier) {
+func (p *Processor) ProcessDiscoveredDeviceLive(device ble.Device, notifier func()) {
 	p.log.Tracef("Processing live discovered device: %s (%s) RSSI:%d", device.Name, device.MACAddress, device.RSSI)
 
 	// Use a mutex to protect database operations
@@ -76,7 +75,7 @@ func (p *Processor) ProcessDiscoveredDeviceLive(device ble.Device, notifier comm
 	var changesMade atomic.Bool
 
 	// Process the device
-	p.processDevice(device, &dbMutex, &changesMade, notifier)
+	p.processDevice(device, &dbMutex, &changesMade)
 
 	// For live discovery, we want to be more aggressive about sending notifications
 	// to ensure the UI stays responsive and shows real-time RSSI updates
@@ -87,7 +86,7 @@ func (p *Processor) ProcessDiscoveredDeviceLive(device ble.Device, notifier comm
 }
 
 // processDevice processes a single discovered device
-func (p *Processor) processDevice(dev ble.Device, dbMutex *sync.Mutex, changesMade *atomic.Bool, notifier common.UpdateNotifier) {
+func (p *Processor) processDevice(dev ble.Device, dbMutex *sync.Mutex, changesMade *atomic.Bool) {
 	// Since we know the exact structure of the Device struct, we can use it directly
 	name := dev.Name
 	macAddress := dev.MACAddress
@@ -105,14 +104,14 @@ func (p *Processor) processDevice(dev ble.Device, dbMutex *sync.Mutex, changesMa
 
 	// Create a new discovered camera if it doesn't exist
 	if !exists {
-		p.createNewCamera(name, macAddress, rssi, dbMutex, changesMade, notifier)
+		p.createNewCamera(name, macAddress, rssi, dbMutex, changesMade)
 	} else {
 		p.updateExistingCamera(discoveredCamera, name, rssi, dbMutex, changesMade)
 	}
 }
 
 // createNewCamera creates a new camera entry in the database
-func (p *Processor) createNewCamera(name, macAddress string, rssi int32, dbMutex *sync.Mutex, changesMade *atomic.Bool, notifier common.UpdateNotifier) {
+func (p *Processor) createNewCamera(name, macAddress string, rssi int32, dbMutex *sync.Mutex, changesMade *atomic.Bool) {
 	// Create a new camera with state
 	cameraState := &database.CameraWithState{
 		Camera: database.Camera{
@@ -244,119 +243,39 @@ func (p *Processor) updateExistingCamera(discoveredCamera *database.DiscoveredCa
 	}
 }
 
-// markUnreachableDevices marks cameras as unreachable if they haven't been seen recently
-func (p *Processor) markUnreachableDevices(dbMutex *sync.Mutex, changesMade *atomic.Bool) {
+// markUnreachableDevices marks cameras as unreachable if they haven't been seen within threshold.
+func (p *Processor) markUnreachableDevices(threshold time.Duration, dbMutex *sync.Mutex, changesMade *atomic.Bool) {
 	dbMutex.Lock()
 	defer dbMutex.Unlock()
 
-	unreachableThreshold := time.Now().Add(-30 * time.Second)
+	cutoff := time.Now().Add(-threshold)
 
-	// Get all cameras
 	for _, cameraState := range p.db.CameraStates {
-		// If the camera was last seen more than 30 seconds ago and is currently marked as reachable,
-		// mark it as unreachable
-		if cameraState.Status.LastSeen.Before(unreachableThreshold) && cameraState.Status.IsReachable {
-			p.log.Debugf("Marking camera %s as unreachable (last seen: %s)",
-				cameraState.Camera.MACAddress, cameraState.Status.LastSeen.Format(time.RFC3339))
+		if cameraState.Status.LastSeen.Before(cutoff) && cameraState.Status.IsReachable {
+			p.log.Debugf("Marking camera %s (%s) as unreachable (last seen %v ago)",
+				cameraState.Camera.Name, cameraState.Camera.MACAddress,
+				time.Since(cameraState.Status.LastSeen).Truncate(time.Second))
 
 			cameraState.Status.IsReachable = false
 			changesMade.Store(true)
 		}
 	}
 
-	// Save changes if any were made
 	if changesMade.Load() {
-		err := p.db.SaveChanges()
-		if err != nil {
+		if err := p.db.SaveChanges(); err != nil {
 			p.log.Errorf("Failed to save camera state changes: %v", err)
 		}
 	}
 }
 
-// GetDiscoveredDevicesCount returns the number of discovered devices
-func (p *Processor) GetDiscoveredDevicesCount() int {
-	return len(p.db.CameraStates)
-}
-
-// GetReachableDevicesCount returns the number of reachable devices
-func (p *Processor) GetReachableDevicesCount() int {
-	count := 0
-	for _, cameraState := range p.db.CameraStates {
-		if cameraState.Status.IsReachable {
-			count++
-		}
-	}
-	return count
-}
-
-// GetDeviceDiscoveryStats returns discovery statistics
-func (p *Processor) GetDeviceDiscoveryStats() map[string]interface{} {
-	total := len(p.db.CameraStates)
-	reachable := p.GetReachableDevicesCount()
-	paired := 0
-	managed := 0
-
-	for _, cameraState := range p.db.CameraStates {
-		if cameraState.Status.IsPaired {
-			paired++
-		}
-		if cameraState.Status.IsManaged {
-			managed++
-		}
-	}
-
-	return map[string]interface{}{
-		"total":     total,
-		"reachable": reachable,
-		"paired":    paired,
-		"managed":   managed,
-	}
-}
-
-// MarkUnreachableDevicesBackground marks cameras as unreachable if they haven't been seen recently
-// This is designed to be called from background tasks to clean up stale devices
-func (p *Processor) MarkUnreachableDevicesBackground(notifier common.UpdateNotifier) {
+// MarkUnreachableDevicesBackground marks cameras as unreachable from background tasks.
+// Uses a longer threshold than scan-batch processing since live updates happen immediately.
+func (p *Processor) MarkUnreachableDevicesBackground(notifier func()) {
 	var dbMutex sync.Mutex
 	var changesMade atomic.Bool
 
-	// Use a longer threshold for live discovery to avoid race conditions
-	// Since live updates happen immediately, we give more time before marking as unreachable
-	unreachableThreshold := time.Now().Add(-45 * time.Second)
-	devicesChecked := 0
-	devicesMarkedUnreachable := 0
+	p.markUnreachableDevices(45*time.Second, &dbMutex, &changesMade)
 
-	dbMutex.Lock()
-	for _, cameraState := range p.db.CameraStates {
-		devicesChecked++
-
-		// If the camera was last seen more than the threshold and is currently marked as reachable,
-		// mark it as unreachable
-		if cameraState.Status.LastSeen.Before(unreachableThreshold) && cameraState.Status.IsReachable {
-			timeSinceLastSeen := time.Since(cameraState.Status.LastSeen)
-			p.log.Infof("Background cleanup: marking camera %s (%s) as unreachable (last seen %v ago)",
-				cameraState.Camera.Name,
-				cameraState.Camera.MACAddress,
-				timeSinceLastSeen.Truncate(time.Second))
-
-			cameraState.Status.IsReachable = false
-			changesMade.Store(true)
-			devicesMarkedUnreachable++
-		}
-	}
-
-	// Save changes if any were made
-	if changesMade.Load() {
-		err := p.db.SaveChanges()
-		if err != nil {
-			p.log.Errorf("Failed to save camera state changes during background cleanup: %v", err)
-		} else {
-			p.log.Debugf("Background cleanup completed: checked %d devices, marked %d as unreachable",
-				devicesChecked, devicesMarkedUnreachable)
-		}
-	}
-	dbMutex.Unlock()
-
-	// Notify observers if changes were made
 	if changesMade.Load() && notifier != nil {
 		notifier()
 	}

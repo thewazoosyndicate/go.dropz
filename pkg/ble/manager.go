@@ -97,18 +97,10 @@ func (m *Manager) GetDiscoveredDevices() []Device {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
 
-	m.log.Tracef("GetDiscoveredDevices called - internal map has %d devices", len(m.discoveredDevices))
-	for macAddr, device := range m.discoveredDevices {
-		m.log.Tracef("Internal device: %s (%s) RSSI:%d LastSeen:%s",
-			device.Name, macAddr, device.RSSI, device.LastSeen.Format(time.RFC3339))
-	}
-
 	devices := make([]Device, 0, len(m.discoveredDevices))
 	for _, device := range m.discoveredDevices {
 		devices = append(devices, *device)
 	}
-
-	m.log.Tracef("Returning %d devices to caller", len(devices))
 	return devices
 }
 
@@ -224,7 +216,7 @@ func (m *Manager) Connect(macAddress string) error {
 			}
 
 			// Enable notifications for response characteristics
-			if m.isResponseCharacteristic(charUUID) {
+			if charUUID == CharCommandResponse || charUUID == CharQueryResponse || charUUID == CharSettingsResponse {
 				err := char.EnableNotifications(func(data []byte) {
 					m.handleNotification(macAddress, data)
 				})
@@ -239,23 +231,42 @@ func (m *Manager) Connect(macAddress string) error {
 	}
 
 	m.log.Info("Service discovery complete")
-	
-	// Now that connection is established, complete the setup
-	// This used to be in ConnectWithEnhancedPairing but now it's all in one place
-	
+
+	// Poll GetHardwareInfo until camera is ready (OpenGoPro spec requirement).
+	// Status 0x02 means "camera not ready" (e.g. resuming from suspend).
+	m.log.Info("Waiting for camera to be ready...")
+	var hwInfo *HardwareInfo
+	for attempt := 1; attempt <= 10; attempt++ {
+		hwInfo, err = m.GetHardwareInfo(macAddress)
+		if err == nil && hwInfo != nil {
+			m.log.Infof("Camera ready: %s (FW: %s)", hwInfo.ModelName, hwInfo.FirmwareVersion)
+			break
+		}
+		if attempt == 10 {
+			if device := m.connectedDevices[macAddress]; device != nil {
+				device.Disconnect()
+			}
+			delete(m.characteristics, macAddress)
+			delete(m.connectedDevices, macAddress)
+			return fmt.Errorf("camera not ready after %d attempts: %v", attempt, err)
+		}
+		m.log.Debugf("Camera not ready (attempt %d/10): %v", attempt, err)
+		time.Sleep(time.Second)
+	}
+
 	// Identify as third-party client
 	if err := m.SetThirdPartyClient(macAddress); err != nil {
 		m.log.Warnf("Failed to set third party client flag: %v", err)
-		// Non-critical, continue
 	}
 
-	// Camera is ready - we're connected and have discovered services
-	// No need for complex polling that causes infinite loops
-	m.log.Info("Camera is ready (connected with services discovered)")
+	// Sync camera clock to host time
+	if err := m.SetLocalDateTime(macAddress, time.Now()); err != nil {
+		m.log.Warnf("Failed to set camera date/time: %v", err)
+	}
 
 	// Enable WiFi AP
 	m.log.Info("Enabling WiFi Access Point")
-	if err := m.EnableWiFiAP(macAddress); err != nil {
+	if err := m.SetAPControl(macAddress, WiFiAPModeEnable); err != nil {
 		if device := m.connectedDevices[macAddress]; device != nil {
 			device.Disconnect()
 		}
@@ -286,17 +297,13 @@ func (m *Manager) Connect(macAddress string) error {
 		WiFiPassword: password,
 	}
 
-	// Get hardware info and add to metadata
-	hwInfo, err := m.GetHardwareInfo(macAddress)
-	if err != nil {
-		m.log.Warnf("Failed to get hardware info: %v", err)
-	} else {
+	// Add hardware info from readiness poll to metadata
+	if hwInfo != nil {
 		metadata.ModelID = hwInfo.ModelNumber
 		metadata.ModelName = hwInfo.ModelName
 		metadata.FirmwareVersion = hwInfo.FirmwareVersion
 		metadata.SerialNumber = hwInfo.SerialNumber
-		
-		// Update cached device info
+
 		m.mutex.Lock()
 		if dev, exists := m.discoveredDevices[macAddress]; exists {
 			dev.ModelID = hwInfo.ModelNumber
@@ -307,8 +314,6 @@ func (m *Manager) Connect(macAddress string) error {
 			dev.WiFiPassword = password
 		}
 		m.mutex.Unlock()
-		m.log.Infof("Device info: %s (FW: %s, SN: %s)", 
-			hwInfo.ModelName, hwInfo.FirmwareVersion, hwInfo.SerialNumber)
 	}
 
 	// Fetch battery status and add to metadata
@@ -444,18 +449,6 @@ func (m *Manager) GetBatteryLevel(macAddress string) (int, error) {
 	return 0, fmt.Errorf("battery percentage not found in response")
 }
 
-// SetDateTime sets the date and time on the device
-func (m *Manager) SetDateTime(macAddress string, t time.Time) error {
-	data := []byte{
-		byte(t.Year() >> 8), byte(t.Year() & 0xFF),
-		byte(t.Month()), byte(t.Day()),
-		byte(t.Hour()), byte(t.Minute()), byte(t.Second()),
-	}
-
-	_, err := m.sendCommand(macAddress, CmdSetDateTime, data)
-	return err
-}
-
 // Sleep puts the device to sleep
 func (m *Manager) Sleep(macAddress string) error {
 	// According to OpenGoPro BLE spec, Sleep command (ID 0x05) sends a response
@@ -474,46 +467,6 @@ func (m *Manager) Sleep(macAddress string) error {
 	}
 	m.log.Tracef("Sleep command completed for device: %s", macAddress)
 	return nil
-}
-
-// KeepAlive sends a keep-alive command using Settings characteristic with parameter 0x42
-func (m *Manager) KeepAlive(macAddress string) error {
-	// According to OpenGoPro BLE spec, Keep Alive (ID 0x5B) uses Settings characteristic
-	// and requires parameter 0x42
-	_, err := m.sendSetting(macAddress, CmdKeepAlive, []byte{0x42})
-	return err
-}
-
-// GetMetadata retrieves device metadata (model, firmware, etc.)
-func (m *Manager) GetMetadata(macAddress string) (map[string]string, error) {
-	// Use GetHardwareInfo which properly parses the response
-	hwInfo, err := m.GetHardwareInfo(macAddress)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert to the expected map format
-	metadata := make(map[string]string)
-	if hwInfo.ModelNumber != 0 {
-		metadata["model_id"] = fmt.Sprintf("%d", hwInfo.ModelNumber)
-	}
-	if hwInfo.ModelName != "" {
-		metadata["model_name"] = hwInfo.ModelName
-	}
-	if hwInfo.FirmwareVersion != "" {
-		metadata["firmware_version"] = hwInfo.FirmwareVersion
-	}
-	if hwInfo.SerialNumber != "" {
-		metadata["serial_number"] = hwInfo.SerialNumber
-	}
-	if hwInfo.APSSID != "" {
-		metadata["ap_ssid"] = hwInfo.APSSID
-	}
-	if hwInfo.MACAddress != "" {
-		metadata["mac_address"] = hwInfo.MACAddress
-	}
-	
-	return metadata, nil
 }
 
 // Private helper methods
@@ -587,152 +540,52 @@ func (m *Manager) addDiscoveredDevice(result bluetooth.ScanResult) {
 }
 
 
-func (m *Manager) isResponseCharacteristic(uuid string) bool {
-	return uuid == CharCommandResponse || uuid == CharQueryResponse || uuid == CharSettingsResponse
+// sendMessage sends a TLV message on the given characteristic and waits for a response.
+func (m *Manager) sendMessage(macAddress string, charUUID string, id byte, data []byte, buildPacket func(byte, []byte) []byte) (Response, error) {
+	m.mutex.RLock()
+	device := m.connectedDevices[macAddress]
+	chars := m.characteristics[macAddress]
+	m.mutex.RUnlock()
+
+	if device == nil {
+		return Response{}, fmt.Errorf("device not connected")
+	}
+
+	char, exists := chars[charUUID]
+	if !exists {
+		return Response{}, fmt.Errorf("characteristic %s not found", GetCharacteristicName(charUUID))
+	}
+
+	responseChan := m.responseTracker.RegisterCommand(id)
+	defer m.responseTracker.UnregisterCommand(id)
+
+	packets := tlv.SplitIntoPackets(buildPacket(id, data))
+	m.log.Debugf("Sending 0x%02X on %s to %s (%d packets)", id, GetCharacteristicName(charUUID), macAddress, len(packets))
+
+	for i, pkt := range packets {
+		if _, err := char.WriteWithoutResponse(pkt); err != nil {
+			return Response{}, fmt.Errorf("failed to send packet %d: %v", i, err)
+		}
+	}
+
+	select {
+	case message := <-responseChan:
+		return Response{
+			Status: message.Status,
+			Data:   message.Payload,
+		}, nil
+	case <-time.After(5 * time.Second):
+		m.log.Warnf("0x%02X timed out after 5 seconds", id)
+		return Response{}, fmt.Errorf("timeout waiting for response to 0x%02X", id)
+	}
 }
-
-
-
 
 func (m *Manager) sendCommand(macAddress string, commandID byte, data []byte) (Response, error) {
-	m.mutex.RLock()
-	device := m.connectedDevices[macAddress]
-	chars := m.characteristics[macAddress]
-	m.mutex.RUnlock()
-	
-	if device == nil {
-		return Response{}, fmt.Errorf("device not connected")
-	}
-
-	cmdChar, exists := chars[CharCommand]
-	if !exists {
-		return Response{}, fmt.Errorf("command characteristic not found")
-	}
-
-	// Register for response
-	responseChan := m.responseTracker.RegisterCommand(commandID)
-	defer m.responseTracker.UnregisterCommand(commandID)
-
-	// Build command packet using Extended 13-bit format (recommended by OpenGoPro)
-	packet := tlv.BuildCommandPacket(commandID, data)
-	packets := tlv.SplitIntoPackets(packet)
-
-	m.log.Debugf("Sending command 0x%02X to device %s (%d packets)", commandID, macAddress, len(packets))
-	
-	// Send all packets
-	for i, pkt := range packets {
-		if _, err := cmdChar.WriteWithoutResponse(pkt); err != nil {
-			return Response{}, fmt.Errorf("failed to send command packet %d: %v", i, err)
-		}
-	}
-
-	// Wait for complete TLV message with timeout
-	select {
-	case message := <-responseChan:
-		return Response{
-			CommandID: message.CommandID,
-			Status:    message.Status,
-			Data:      message.Payload,
-			Timestamp: message.Timestamp,
-		}, nil
-	case <-time.After(5 * time.Second):
-		m.log.Warnf("Command 0x%02X timed out after 5 seconds", commandID)
-		return Response{}, fmt.Errorf("command timeout")
-	}
-}
-
-func (m *Manager) sendSetting(macAddress string, settingID byte, data []byte) (Response, error) {
-	m.mutex.RLock()
-	device := m.connectedDevices[macAddress]
-	chars := m.characteristics[macAddress]
-	m.mutex.RUnlock()
-	
-	if device == nil {
-		return Response{}, fmt.Errorf("device not connected")
-	}
-
-	settingsChar, exists := chars[CharSettings]
-	if !exists {
-		return Response{}, fmt.Errorf("settings characteristic not found")
-	}
-
-	// Register for response
-	responseChan := m.responseTracker.RegisterCommand(settingID)
-	defer m.responseTracker.UnregisterCommand(settingID)
-
-	// Build setting packet using Extended 13-bit format (recommended by OpenGoPro)
-	packet := tlv.BuildSettingPacket(settingID, data)
-	packets := tlv.SplitIntoPackets(packet)
-
-	m.log.Debugf("Sending setting 0x%02X to device %s (%d packets)", settingID, macAddress, len(packets))
-	
-	// Send all packets
-	for i, pkt := range packets {
-		if _, err := settingsChar.WriteWithoutResponse(pkt); err != nil {
-			return Response{}, fmt.Errorf("failed to send setting packet %d: %v", i, err)
-		}
-	}
-
-	// Wait for complete TLV message with timeout
-	select {
-	case message := <-responseChan:
-		return Response{
-			CommandID: message.CommandID,
-			Status:    message.Status,
-			Data:      message.Payload,
-			Timestamp: message.Timestamp,
-		}, nil
-	case <-time.After(5 * time.Second):
-		m.log.Warnf("Setting 0x%02X timed out after 5 seconds", settingID)
-		return Response{}, fmt.Errorf("setting timeout")
-	}
+	return m.sendMessage(macAddress, CharCommand, commandID, data, tlv.BuildCommandPacket)
 }
 
 func (m *Manager) sendQuery(macAddress string, queryID byte, data []byte) (Response, error) {
-	m.mutex.RLock()
-	device := m.connectedDevices[macAddress]
-	chars := m.characteristics[macAddress]
-	m.mutex.RUnlock()
-	
-	if device == nil {
-		return Response{}, fmt.Errorf("device not connected")
-	}
-
-	queryChar, exists := chars[CharQuery]
-	if !exists {
-		return Response{}, fmt.Errorf("query characteristic not found")
-	}
-
-	// Register for response
-	responseChan := m.responseTracker.RegisterCommand(queryID)
-	defer m.responseTracker.UnregisterCommand(queryID)
-
-	// Build query packet using Extended 13-bit format (recommended by OpenGoPro)
-	packet := tlv.BuildQueryPacket(queryID, data)
-	packets := tlv.SplitIntoPackets(packet)
-
-	m.log.Debugf("Sending query 0x%02X to device %s (%d packets)", queryID, macAddress, len(packets))
-	
-	// Send all packets
-	for i, pkt := range packets {
-		if _, err := queryChar.WriteWithoutResponse(pkt); err != nil {
-			return Response{}, fmt.Errorf("failed to send query packet %d: %v", i, err)
-		}
-	}
-
-	// Wait for complete TLV message with timeout
-	select {
-	case message := <-responseChan:
-		return Response{
-			CommandID: message.CommandID,
-			Status:    message.Status,
-			Data:      message.Payload,
-			Timestamp: message.Timestamp,
-		}, nil
-	case <-time.After(5 * time.Second):
-		m.log.Warnf("Query 0x%02X timed out after 5 seconds", queryID)
-		return Response{}, fmt.Errorf("query timeout")
-	}
+	return m.sendMessage(macAddress, CharQuery, queryID, data, tlv.BuildQueryPacket)
 }
 
 func (m *Manager) handleNotification(macAddress string, data []byte) {
@@ -796,13 +649,7 @@ func (m *Manager) SetMetadataCallback(callback MetadataUpdateFunc) {
 	m.mutex.Unlock()
 }
 
-// Start starts the BLE manager (lifecycle method)
-func (m *Manager) Start() error {
-	m.log.Info("BLE Manager started")
-	return nil
-}
-
-// Stop stops the BLE manager (lifecycle method)
+// Stop stops the BLE manager
 func (m *Manager) Stop() error {
 	m.log.Info("Stopping BLE Manager")
 

@@ -9,12 +9,6 @@ import (
 	syncpkg "github.com/dropz/dropz/pkg/manager/sync"
 )
 
-// processSyncQueue checks the sync queue and processes cameras that need syncing
-func (m *GoProManager) processSyncQueue() {
-	// Delegate to sync coordinator
-	m.syncCoordinator.ProcessSyncQueue(m.activeSyncTasks, &m.mutex, m.notifier, m.performCameraSync, m.ctx)
-}
-
 // ForceSync adds a camera to the sync queue for immediate synchronization
 func (m *GoProManager) ForceSync(cameraID string) (*database.SyncQueueEntry, error) {
 	syncEntry, err := m.syncCoordinator.ForceSync(cameraID, m.notifier)
@@ -53,29 +47,14 @@ func (m *GoProManager) GetVideosByCamera(cameraID string, startDate, endDate tim
 func (m *GoProManager) startBackgroundScanner() {
 	defer m.wg.Done()
 	// Delegate to discovery scanner with live processing
-	scanner := discovery.NewScanner(m.ble, m.log, m.scanInterval)
+	config := m.db.GetConfig()
+	scanInterval := time.Duration(config.ScanIntervalSeconds) * time.Second
+	scanner := discovery.NewScanner(m.ble, m.log, scanInterval)
 	scanner.StartBackgroundScanner(m.ctx, m.processDiscoveredDeviceLive)
-}
-
-// processDiscoveredDevices delegates to discovery processor (batch processing - kept for compatibility)
-func (m *GoProManager) processDiscoveredDevices(devices []ble.Device) {
-	m.mutex.RLock()
-	notifier := m.notifier
-	m.mutex.RUnlock()
-
-	if m.discoveryProcessor != nil {
-		m.discoveryProcessor.ProcessDiscoveredDevices(devices, notifier)
-	}
 }
 
 // processDiscoveredDeviceLive delegates to discovery processor for live processing
 func (m *GoProManager) processDiscoveredDeviceLive(device ble.Device) {
-	m.mutex.RLock()
-	notifier := m.notifier
-	m.mutex.RUnlock()
-
-	if m.discoveryProcessor != nil {
-		m.discoveryProcessor.ProcessDiscoveredDeviceLive(device, notifier)
-	}
+	m.discoveryProcessor.ProcessDiscoveredDeviceLive(device, m.notifier)
 }
 

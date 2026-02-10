@@ -43,8 +43,6 @@ type MessageFragments struct {
 	packets        map[int][]byte // packetCounter -> packet data
 	lastPacketNum  int            // Highest packet number seen
 	startTime      time.Time      // When first fragment was received
-	complete       chan *TLVMessage
-	mu             sync.Mutex
 }
 
 // FragmentCollector manages message fragment collection and reassembly

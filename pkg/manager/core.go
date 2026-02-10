@@ -8,42 +8,14 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/pkg/ble"
-	"github.com/dropz/dropz/pkg/common"
 	"github.com/dropz/dropz/pkg/database"
-	"github.com/dropz/dropz/pkg/logger"
 	"github.com/sirupsen/logrus"
-	configpkg "github.com/dropz/dropz/pkg/manager/config"
 	"github.com/dropz/dropz/pkg/manager/discovery"
-	"github.com/dropz/dropz/pkg/manager/groups"
 	"github.com/dropz/dropz/pkg/manager/pairing"
 	syncpkg "github.com/dropz/dropz/pkg/manager/sync"
 	"tinygo.org/x/bluetooth"
 )
 
-const (
-	// Task types
-	TaskTypeConnect       = "connect"
-	TaskTypeSetDateTime   = "set_datetime"
-	TaskTypeEnableWifi    = "enable_wifi"
-	TaskTypeDownloadMedia = "download_media"
-
-	// Task priorities
-	PriorityHigh   = 3
-	PriorityNormal = 2
-	PriorityLow    = 1
-
-	// Sync priorities
-	SyncPriorityManual = 10 // Manual sync requests (ForceSync)
-	SyncPriorityAuto   = 5  // Automatic sync requests
-)
-
-// Device represents a BLE device
-type Device struct {
-	Name        string
-	MACAddress  string
-	RSSI        int32
-	IsConnected bool
-}
 
 // GoProManager is the main service that coordinates all GoPro operations
 type GoProManager struct {
@@ -51,15 +23,7 @@ type GoProManager struct {
 	db       *database.Database
 	ble      *ble.Manager
 	log      *logrus.Logger
-	notifier common.UpdateNotifier
-
-	// Configuration
-	scanInterval   time.Duration
-	connectTimeout time.Duration
-	inactivityTime time.Duration
-	setTimeEnabled bool
-	daysThreshold  int
-	destinationDir string
+	notifier func()
 
 	// Runtime control
 	ctx       context.Context
@@ -68,28 +32,20 @@ type GoProManager struct {
 	mutex     sync.RWMutex
 	isRunning bool
 
-	// Worker pool for I/O operations
-	ioWorkerPool chan struct{}
-
 	// Active sync tasks
 	activeSyncTasks map[string]*syncpkg.SyncTask
-
-	// Processing devices
-	processingDevices map[string]struct{}
 
 	// Immediate sync trigger channel
 	immediateSyncTrigger chan struct{}
 
 	// Component managers
 	syncCoordinator    *syncpkg.Coordinator
-	groupManager       *groups.Manager
 	discoveryProcessor *discovery.Processor
 	pairingManager     *pairing.Manager
-	configManager      *configpkg.Manager
 }
 
 // NewGoProManager creates a new GoPro manager instance
-func NewGoProManager(dbPath, destinationDir string) (*GoProManager, error) {
+func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProManager, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	db := database.GetDatabase()
@@ -111,16 +67,10 @@ func NewGoProManager(dbPath, destinationDir string) (*GoProManager, error) {
 		return nil, fmt.Errorf("failed to enable BLE adapter: %v", err)
 	}
 
-	bleManager := ble.NewManager(adapter, logger.GetLogger())
-
-	if err := bleManager.Start(); err != nil {
-		cancel()
-		return nil, fmt.Errorf("failed to start BLE manager: %v", err)
-	}
+	bleManager := ble.NewManager(adapter, log)
 
 	// Set up metadata update callback to update database whenever camera connects
 	bleManager.SetMetadataCallback(func(metadata ble.CameraMetadata) {
-		log := logger.GetLogger()
 		log.Debugf("Metadata callback invoked for camera %s", metadata.MACAddress)
 		
 		// Update camera WiFi credentials if they've changed
@@ -147,69 +97,53 @@ func NewGoProManager(dbPath, destinationDir string) (*GoProManager, error) {
 		}
 	})
 
-	// Load configuration from database
+	// If destination dir was provided via CLI and DB doesn't have one, store it
 	config := db.GetConfig()
-
-	// Prefer database destination folder if it exists
-	folderFromDb := config.DestinationFolder
-	if folderFromDb != "" {
-		destinationDir = folderFromDb
+	if config.DestinationFolder == "" && destinationDir != "" {
+		config.DestinationFolder = destinationDir
+		db.UpdateConfig(config)
 	}
 
-	// Create the manager with configuration from database
+
 	manager := &GoProManager{
-		ctx:            ctx,
-		cancel:         cancel,
-		ble:            bleManager,
-		db:             db,
-		log:            logger.GetLogger(),
-		scanInterval:   time.Duration(config.ScanIntervalSeconds) * time.Second,
-		connectTimeout: time.Duration(config.ConnectTimeoutSeconds) * time.Second,
-		inactivityTime: time.Duration(config.InactivityTimeoutSeconds) * time.Second,
-		setTimeEnabled: config.SetTimeEnabled,
-		daysThreshold:  int(config.DaysThreshold),
-		destinationDir: destinationDir,
-		// Allow up to 10 concurrent I/O operations
-		ioWorkerPool: make(chan struct{}, 10),
-		// Initialize active sync tasks
-		activeSyncTasks: make(map[string]*syncpkg.SyncTask),
-		// Initialize processing devices
-		processingDevices: make(map[string]struct{}),
-		// Initialize immediate sync trigger channel
+		ctx:                  ctx,
+		cancel:               cancel,
+		ble:                  bleManager,
+		db:                   db,
+		log:                  log,
+		activeSyncTasks:      make(map[string]*syncpkg.SyncTask),
 		immediateSyncTrigger: make(chan struct{}, 1),
 	}
 
 	// Initialize component managers
-	manager.configManager = configpkg.NewManager(db, logger.GetLogger())
-	manager.syncCoordinator = syncpkg.NewCoordinator(db, bleManager, logger.GetLogger())
-	manager.groupManager = groups.NewManager(db, logger.GetLogger())
-	manager.discoveryProcessor = discovery.NewProcessor(db, logger.GetLogger())
-	manager.pairingManager = pairing.NewManager(db, bleManager, logger.GetLogger(), nil, ctx)
+	manager.syncCoordinator = syncpkg.NewCoordinator(db, bleManager, log)
+	manager.discoveryProcessor = discovery.NewProcessor(db, log)
+	manager.pairingManager = pairing.NewManager(db, bleManager, log, ctx)
 
 	return manager, nil
 }
 
 // SetNotifier sets the update notifier component
-func (m *GoProManager) SetNotifier(notifier common.UpdateNotifier) {
+func (m *GoProManager) SetNotifier(notifier func()) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	m.notifier = notifier
 }
 
+// notify safely calls the notifier if set
+func (m *GoProManager) notify() {
+	m.mutex.RLock()
+	notifier := m.notifier
+	m.mutex.RUnlock()
+	if notifier != nil {
+		notifier()
+	}
+}
+
 // ManageCamera adds a camera to the managed camera pool
 func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, error) {
-	// Find the camera
-	var cameraState *database.CameraWithState
-
-	// Check all cameras
-	for _, state := range m.db.CameraStates {
-		if state.Camera.ID == cameraID {
-			cameraState = state
-			break
-		}
-	}
-
-	if cameraState == nil {
+	cameraState, found := m.db.GetCameraByID(cameraID)
+	if !found {
 		return nil, fmt.Errorf("camera with ID %s not found", cameraID)
 	}
 
@@ -226,14 +160,7 @@ func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, e
 
 	m.log.Infof("Camera %s added to managed pool", cameraID)
 
-	// Notify immediately after adding to managed pool
-	m.mutex.RLock()
-	notifier := m.notifier
-	m.mutex.RUnlock()
-	if notifier != nil {
-		m.log.Trace("Notifying observers about managed camera addition")
-		notifier()
-	}
+	m.notify()
 
 	// If we're in pair mode, queue pairing for the camera
 	config := m.db.GetConfig()
@@ -271,18 +198,8 @@ func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, e
 
 // UnmanageCamera removes a camera from the managed pool
 func (m *GoProManager) UnmanageCamera(cameraID string) error {
-	// Find the camera
-	var cameraState *database.CameraWithState
-
-	// Check all cameras
-	for _, state := range m.db.CameraStates {
-		if state.Camera.ID == cameraID {
-			cameraState = state
-			break
-		}
-	}
-
-	if cameraState == nil {
+	cameraState, found := m.db.GetCameraByID(cameraID)
+	if !found {
 		return fmt.Errorf("camera with ID %s not found", cameraID)
 	}
 
@@ -291,14 +208,7 @@ func (m *GoProManager) UnmanageCamera(cameraID string) error {
 
 	m.log.Infof("Camera %s removed from managed pool", cameraID)
 
-	// Notify immediately after updating
-	m.mutex.RLock()
-	notifier := m.notifier
-	m.mutex.RUnlock()
-	if notifier != nil {
-		m.log.Trace("Notifying observers about camera pool change")
-		notifier()
-	}
+	m.notify()
 
 	return nil
 }
@@ -356,4 +266,19 @@ func (m *GoProManager) ResetTransientStates() {
 	if err != nil {
 		m.log.Errorf("Failed to reset transient camera states: %v", err)
 	}
+}
+
+// PairCamera pairs with a GoPro camera using BLE
+func (m *GoProManager) PairCamera(cameraID string) (*database.ManagedCamera, error) {
+	return m.pairingManager.PairCamera(cameraID, m.BLEOperation, m.notifier)
+}
+
+// syncDevicePairingStates checks actual device pairing states and updates database accordingly
+func (m *GoProManager) syncDevicePairingStates() {
+	m.pairingManager.SyncDevicePairingStates(m.notifier)
+}
+
+// VerifyAndFixPairingState checks a specific camera's pairing state and fixes database if needed
+func (m *GoProManager) VerifyAndFixPairingState(cameraID string) error {
+	return m.pairingManager.VerifyAndFixPairingState(cameraID, m.notifier)
 }

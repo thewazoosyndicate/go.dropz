@@ -165,52 +165,6 @@ func TestSplitIntoPackets(t *testing.T) {
 	}
 }
 
-func TestValidateMessageLength(t *testing.T) {
-	tests := []struct {
-		name        string
-		length      int
-		expectError bool
-	}{
-		{
-			name:        "Valid small length",
-			length:      10,
-			expectError: false,
-		},
-		{
-			name:        "Valid max length",
-			length:      MaxMessageLength,
-			expectError: false,
-		},
-		{
-			name:        "Zero length",
-			length:      0,
-			expectError: true,
-		},
-		{
-			name:        "Negative length",
-			length:      -1,
-			expectError: true,
-		},
-		{
-			name:        "Exceeds max length",
-			length:      MaxMessageLength + 1,
-			expectError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateMessageLength(tt.length)
-			if tt.expectError && err == nil {
-				t.Errorf("Expected error for length %d", tt.length)
-			}
-			if !tt.expectError && err != nil {
-				t.Errorf("Unexpected error for length %d: %v", tt.length, err)
-			}
-		})
-	}
-}
-
 func TestPacketCounterWrapping(t *testing.T) {
 	// Test that packet counter wraps correctly from 15 to 0
 	// Create a message that needs 17 continuation packets

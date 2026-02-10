@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dropz/dropz/pkg/logger"
 	"github.com/sirupsen/logrus"
 )
 
@@ -24,21 +23,9 @@ const (
 	StatusURL     = "/gopro/camera/state"
 	BatteryURL    = "/gopro/status/battery"
 	CameraInfoURL = "/gopro/camera/info"
-	// Control endpoints
-	SleepURL   = "/gopro/camera/control/sleep"
-	ShutterURL = "/gopro/camera/control/trigger"
-	ModeURL    = "/gopro/camera/mode"
-	PresetURL  = "/gopro/camera/presets"
 	// Media endpoints
-	MediaListURL    = "/gopro/media/list"
-	MediaInfoURL    = "/gopro/media/info"
-	MediaHiLightURL = "/gopro/media/hilight"
-	MediaDeleteURL  = "/gopro/media/delete"
-	// Webcam endpoints
-	WebcamStartURL  = "/gopro/webcam/start"
-	WebcamStopURL   = "/gopro/webcam/stop"
-	WebcamStatusURL = "/gopro/webcam/status"
-	WebcamExitURL   = "/gopro/webcam/exit"
+	MediaListURL = "/gopro/media/list"
+	MediaInfoURL = "/gopro/media/info"
 )
 
 // WiFiManager handles WiFi operations for GoPro devices
@@ -47,34 +34,63 @@ type WiFiManager struct {
 }
 
 // NewWiFiManager creates a new WiFi manager
-func NewWiFiManager() (*WiFiManager, error) {
+func NewWiFiManager(log *logrus.Logger) *WiFiManager {
 	return &WiFiManager{
-		log: logger.GetLogger(),
-	}, nil
+		log: log,
+	}
 }
 
 // Connect connects to a GoPro WiFi network
 func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error {
 	m.log.Infof("Connecting to WiFi network: ssid=%s", ssid)
 
-	// Check if connection already exists
-	cmd := exec.CommandContext(ctx, "nmcli", "-t", "connection", "show", ssid)
-	if err := cmd.Run(); err == nil {
-		// Connection exists, just activate it
-		m.log.Infof("Existing WiFi connection found, activating: ssid=%s", ssid)
-		cmd = exec.CommandContext(ctx, "nmcli", "connection", "up", ssid)
-		if err := cmd.Run(); err != nil {
-			m.log.Errorf("Failed to activate existing WiFi connection: ssid=%s error=%v", ssid, err)
-			return fmt.Errorf("failed to activate existing connection %s: %v", ssid, err)
+	connName := fmt.Sprintf("dropz-%s", ssid)
+
+	// Clean up any stale connection profiles for this SSID
+	for _, name := range []string{ssid, connName} {
+		exec.CommandContext(ctx, "nmcli", "connection", "delete", "id", name).Run()
+	}
+
+	// Create a proper connection profile
+	addCmd := exec.CommandContext(ctx, "nmcli", "connection", "add",
+		"type", "wifi",
+		"con-name", connName,
+		"ifname", "*",
+		"ssid", ssid,
+		"wifi-sec.key-mgmt", "wpa-psk",
+		"wifi-sec.psk", password)
+
+	if addOutput, addErr := addCmd.CombinedOutput(); addErr != nil {
+		m.log.Errorf("Failed to create connection profile: error=%v nmcli_output=%s", addErr, string(addOutput))
+		return fmt.Errorf("failed to create WiFi connection for %s: %v", ssid, addErr)
+	}
+
+	// Try to activate, retrying while the AP becomes visible
+	var lastErr error
+	for attempt := 1; attempt <= 10; attempt++ {
+		// Trigger a WiFi rescan so nmcli can discover the new AP
+		exec.CommandContext(ctx, "nmcli", "device", "wifi", "rescan").Run()
+		time.Sleep(2 * time.Second)
+
+		upCmd := exec.CommandContext(ctx, "nmcli", "connection", "up", "id", connName)
+		if output, err := upCmd.CombinedOutput(); err != nil {
+			lastErr = fmt.Errorf("%v (nmcli: %s)", err, strings.TrimSpace(string(output)))
+			m.log.Debugf("WiFi activation attempt %d/10 failed: %v", attempt, lastErr)
+		} else {
+			m.log.Infof("WiFi connection activated: connection=%s", connName)
+			lastErr = nil
+			break
 		}
-	} else {
-		// Connection doesn't exist, create it
-		m.log.Infof("Creating new WiFi connection: ssid=%s", ssid)
-		cmd = exec.CommandContext(ctx, "nmcli", "device", "wifi", "connect", ssid, "password", password)
-		if err := cmd.Run(); err != nil {
-			m.log.Errorf("Failed to create WiFi connection: ssid=%s error=%v", ssid, err)
-			return fmt.Errorf("failed to connect to %s: %v", ssid, err)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
+	}
+
+	if lastErr != nil {
+		return fmt.Errorf("failed to activate WiFi connection %s after 10 attempts: %v", connName, lastErr)
 	}
 
 	// Verify connection with detailed progress tracking
@@ -127,10 +143,17 @@ func (m *WiFiManager) Disconnect() error {
 			m.log.Infof("Disconnecting from WiFi network: ssid=%s", ssid)
 
 			// Disconnect
-			cmd = exec.Command("nmcli", "connection", "down", ssid)
-			if err := cmd.Run(); err != nil {
-				m.log.Errorf("Failed to disconnect from WiFi network: ssid=%s error=%v", ssid, err)
-				return fmt.Errorf("failed to disconnect from %s: %v", ssid, err)
+			// Use "id" parameter to properly handle SSIDs with special characters
+			cmd = exec.Command("nmcli", "connection", "down", "id", ssid)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				// Also try with dropz- prefix
+				altName := fmt.Sprintf("dropz-%s", ssid)
+				cmd = exec.Command("nmcli", "connection", "down", "id", altName)
+				if altOutput, altErr := cmd.CombinedOutput(); altErr != nil {
+					m.log.Errorf("Failed to disconnect from WiFi network: ssid=%s error=%v nmcli_output=%s alt_error=%v alt_output=%s", 
+						ssid, err, string(output), altErr, string(altOutput))
+					return fmt.Errorf("failed to disconnect from %s: %v (nmcli: %s)", ssid, err, strings.TrimSpace(string(output)))
+				}
 			}
 
 			m.log.Infof("Successfully disconnected from WiFi network: ssid=%s", ssid)
@@ -182,7 +205,7 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	cutoffTime := time.Now().AddDate(0, 0, -daysInPast)
 	filteredMedia := filterMediaByDate(mediaFiles, cutoffTime)
 
-	m.log.Debugf("Found %d media files within the last %d days", len(filteredMedia), daysInPast)
+	m.log.Infof("Media files: %d total, %d within last %d days", len(mediaFiles), len(filteredMedia), daysInPast)
 
 	// Set up parallel download
 	var wg sync.WaitGroup
@@ -309,23 +332,25 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 // isConnectedTo checks if currently connected to the specified SSID
 func (m *WiFiManager) isConnectedTo(ssid string) bool {
 	cmd := exec.Command("nmcli", "-t", "-f", "NAME,DEVICE,STATE", "connection", "show", "--active")
-	output, err := cmd.Output()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		m.log.Errorf("Failed to check active WiFi connections: error=%v", err)
+		m.log.Errorf("Failed to check active WiFi connections: error=%v output=%s", err, string(output))
 		return false
 	}
 
 	// Look for the SSID in active connections
+	// Also check for dropz- prefixed connection name
+	altName := fmt.Sprintf("dropz-%s", ssid)
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
 		parts := strings.Split(line, ":")
-		if len(parts) >= 3 && parts[0] == ssid && parts[2] == "activated" {
-			m.log.Tracef("WiFi connection confirmed active: ssid=%s device=%s state=%s", ssid, parts[1], parts[2])
+		if len(parts) >= 3 && (parts[0] == ssid || parts[0] == altName) && parts[2] == "activated" {
+			m.log.Tracef("WiFi connection confirmed active: ssid=%s device=%s state=%s", parts[0], parts[1], parts[2])
 			return true
 		}
 	}
 
-	m.log.Tracef("WiFi connection not found in active connections: ssid=%s", ssid)
+	m.log.Tracef("WiFi connection not found in active connections: ssid=%s active_connections=%s", ssid, strings.TrimSpace(string(output)))
 	return false
 }
 
@@ -439,108 +464,6 @@ func (m *WiFiManager) GetCameraInfo(ctx context.Context) (map[string]interface{}
 
 	m.log.Tracef("Camera info retrieved successfully: info_fields=%d", len(result))
 	return result, nil
-}
-
-// TriggerShutter starts or stops capturing depending on the current mode
-func (m *WiFiManager) TriggerShutter(ctx context.Context, start bool) error {
-	m.log.Debugf("Trigger shutter: start=%v", start)
-
-	url := fmt.Sprintf("%s%s", GoProBaseURL, ShutterURL)
-
-	// Prepare the request body
-	requestBody := fmt.Sprintf(`{"start": %t}`, start)
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(requestBody))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %v", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to trigger shutter: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("shutter request failed with status: %s", resp.Status)
-	}
-
-	return nil
-}
-
-// SetMode sets the camera mode
-func (m *WiFiManager) SetMode(ctx context.Context, modeId int) error {
-	m.log.Infof("Setting camera mode: mode_id=%d", modeId)
-
-	url := fmt.Sprintf("%s%s", GoProBaseURL, ModeURL)
-
-	// Prepare the request body
-	requestBody := fmt.Sprintf(`{"mode_id": %d}`, modeId)
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(requestBody))
-	if err != nil {
-		m.log.Errorf("Failed to create mode set request: mode_id=%d error=%v", modeId, err)
-		return fmt.Errorf("failed to create request: %v", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		m.log.Errorf("Mode set request failed: mode_id=%d error=%v", modeId, err)
-		return fmt.Errorf("failed to set mode: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		m.log.Errorf("Mode set request returned error: mode_id=%d status_code=%d status=%s", modeId, resp.StatusCode, resp.Status)
-		return fmt.Errorf("set mode request failed with status: %s", resp.Status)
-	}
-
-	m.log.Infof("Camera mode set successfully: mode_id=%d", modeId)
-	return nil
-}
-
-// SleepCamera puts the camera to sleep
-func (m *WiFiManager) SleepCamera(ctx context.Context) error {
-	m.log.Info("Putting camera to sleep via HTTP API")
-
-	url := fmt.Sprintf("%s%s", GoProBaseURL, SleepURL)
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
-	if err != nil {
-		m.log.Errorf("Failed to create camera sleep request: error=%v", err)
-		return fmt.Errorf("failed to create request: %v", err)
-	}
-
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		m.log.Errorf("Camera sleep request failed: error=%v", err)
-		return fmt.Errorf("failed to put camera to sleep: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		m.log.Errorf("Camera sleep request returned error: status_code=%d status=%s", resp.StatusCode, resp.Status)
-		return fmt.Errorf("sleep request failed with status: %s", resp.Status)
-	}
-
-	m.log.Info("Camera sleep command sent successfully")
-	return nil
 }
 
 // getMediaList retrieves the list of media files from a GoPro device via HTTP API
@@ -1026,141 +949,6 @@ func filterMediaByDate(mediaFiles []MediaFile, cutoffTime time.Time) []MediaFile
 		}
 	}
 	return result
-}
-
-// WebcamState represents the current state of the webcam
-type WebcamState struct {
-	Active bool                   `json:"active"`
-	Status string                 `json:"status"`
-	Error  string                 `json:"error,omitempty"`
-	Info   map[string]interface{} `json:"info,omitempty"`
-}
-
-// StartWebcam starts the webcam mode
-func (m *WiFiManager) StartWebcam(ctx context.Context) (*WebcamState, error) {
-	m.log.Debug("Starting webcam mode")
-
-	url := fmt.Sprintf("%s%s", GoProBaseURL, WebcamStartURL)
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %v", err)
-	}
-
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to start webcam: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("start webcam request failed with status: %s", resp.Status)
-	}
-
-	var state WebcamState
-	if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
-		return nil, fmt.Errorf("failed to decode webcam state: %v", err)
-	}
-
-	return &state, nil
-}
-
-// StopWebcam stops the webcam mode
-func (m *WiFiManager) StopWebcam(ctx context.Context) (*WebcamState, error) {
-	m.log.Debug("Stopping webcam mode")
-
-	url := fmt.Sprintf("%s%s", GoProBaseURL, WebcamStopURL)
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %v", err)
-	}
-
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to stop webcam: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("stop webcam request failed with status: %s", resp.Status)
-	}
-
-	var state WebcamState
-	if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
-		return nil, fmt.Errorf("failed to decode webcam state: %v", err)
-	}
-
-	return &state, nil
-}
-
-// GetWebcamStatus retrieves the current webcam status
-func (m *WiFiManager) GetWebcamStatus(ctx context.Context) (*WebcamState, error) {
-	m.log.Trace("Getting webcam status")
-
-	url := fmt.Sprintf("%s%s", GoProBaseURL, WebcamStatusURL)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %v", err)
-	}
-
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get webcam status: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get webcam status request failed with status: %s", resp.Status)
-	}
-
-	var state WebcamState
-	if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
-		return nil, fmt.Errorf("failed to decode webcam state: %v", err)
-	}
-
-	return &state, nil
-}
-
-// ExitWebcam exits webcam mode
-func (m *WiFiManager) ExitWebcam(ctx context.Context) error {
-	m.log.Debug("Exiting webcam mode")
-
-	url := fmt.Sprintf("%s%s", GoProBaseURL, WebcamExitURL)
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %v", err)
-	}
-
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to exit webcam mode: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("exit webcam request failed with status: %s", resp.Status)
-	}
-
-	return nil
 }
 
 // fileExistsWithSize checks if a file exists and has the expected size

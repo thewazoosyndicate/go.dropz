@@ -160,7 +160,7 @@ func parseHardwareInfo(data []byte, log *logrus.Logger) (*HardwareInfo, error) {
 
 // SetThirdPartyClient identifies this client as a third-party app to the camera
 func (m *Manager) SetThirdPartyClient(macAddress string) error {
-	_, err := m.sendCommand(macAddress, CmdSetThirdPartyClient, nil)
+	_, err := m.sendCommand(macAddress, CmdRegisterClient, nil)
 	if err != nil {
 		return fmt.Errorf("failed to set third party client: %v", err)
 	}

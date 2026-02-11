@@ -19,8 +19,7 @@ import (
 const (
 	GoProBaseURL = "http://10.5.5.9:8080"
 	// Status endpoints
-	StatusURL     = "/gopro/camera/state"
-	BatteryURL    = "/gopro/status/battery"
+	StatusURL = "/gopro/camera/state"
 	// Media endpoints
 	MediaListURL      = "/gopro/media/list"
 	MediaInfoURL      = "/gopro/media/info"

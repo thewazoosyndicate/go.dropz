@@ -67,8 +67,16 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 
 	// Set up metadata update callback to update database whenever camera connects
 	bleManager.SetMetadataCallback(func(metadata ble.CameraMetadata) {
+		bleAddress := metadata.BLEAddress
+
+		// Find camera by BLE address (may be keyed by serial or BLE address)
+		dbKey := bleAddress
+		if cam, found := db.FindCameraByBLEAddress(bleAddress); found {
+			dbKey = cam.DBKey
+		}
+
 		if metadata.WiFiSSID != "" && metadata.WiFiPassword != "" {
-			db.UpdateCamera(metadata.MACAddress, func(cs *database.CameraWithState) {
+			db.UpdateCamera(dbKey, func(cs *database.CameraWithState) {
 				cs.Camera.WiFiSSID = metadata.WiFiSSID
 				cs.Camera.WiFiPassword = metadata.WiFiPassword
 			})
@@ -81,8 +89,15 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 			BatteryLevel:    int32(metadata.BatteryLevel),
 		}
 
-		if err := db.SetCameraMetadata(metadata.MACAddress, dbMetadata); err != nil {
+		if err := db.SetCameraMetadata(dbKey, dbMetadata); err != nil {
 			log.Errorf("Failed to update camera metadata: %v", err)
+		}
+
+		// Re-key from BLE address to serial number once serial is known
+		if metadata.SerialNumber != "" && dbKey != metadata.SerialNumber {
+			if err := db.RekeyCamera(dbKey, metadata.SerialNumber); err != nil {
+				log.Warnf("Failed to re-key camera to serial %s: %v", metadata.SerialNumber, err)
+			}
 		}
 	})
 
@@ -108,8 +123,37 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 	manager.discoveryProcessor = discovery.NewProcessor(db, log)
 	manager.pairingManager = pairing.NewManager(db, bleManager, log, ctx)
 
+	// Handle real-time status push notifications from camera (battery, pairing state)
+	bleManager.SetStatusCallback(func(bleAddress string, statusID byte, value []byte) {
+		if len(value) < 1 {
+			return
+		}
+
+		// Translate BLE address to DB key
+		dbKey := bleAddress
+		if cam, found := db.FindCameraByBLEAddress(bleAddress); found {
+			dbKey = cam.DBKey
+		}
+
+		switch statusID {
+		case ble.StatusBatteryPercentage:
+			if err := db.UpdateCamera(dbKey, func(cs *database.CameraWithState) {
+				cs.Metadata.BatteryLevel = int32(value[0])
+			}); err != nil {
+				log.Errorf("Failed to update battery from push notification: %v", err)
+			}
+			manager.notify()
+		case ble.StatusPairingState:
+			isPaired := int(value[0]) == ble.PairingCompleted
+			if err := db.SetCameraPaired(dbKey, isPaired); err != nil {
+				log.Errorf("Failed to update pairing state from push notification: %v", err)
+			}
+			manager.notify()
+		}
+	})
+
 	// Auto-queue cameras for sync when they reappear after being gone long enough
-	manager.discoveryProcessor.SetOnCameraReappeared(func(mac string, wasGoneFor time.Duration) {
+	manager.discoveryProcessor.SetOnCameraReappeared(func(dbKey string, wasGoneFor time.Duration) {
 		config := db.GetConfig()
 		if !config.SyncEnabled {
 			return
@@ -118,7 +162,7 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 		if wasGoneFor < syncInterval {
 			return
 		}
-		cam, ok := db.GetManagedCamera(mac)
+		cam, ok := db.GetManagedCamera(dbKey)
 		if !ok || cam.CameraState.Status.IsSyncing {
 			return
 		}
@@ -154,7 +198,7 @@ func (m *GoProManager) notify() {
 
 // ManageCamera adds a camera to the managed camera pool
 func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, error) {
-	mac, name, found := m.db.GetCameraIdentifiers(cameraID)
+	dbKey, _, name, found := m.db.GetCameraIdentifiers(cameraID)
 	if !found {
 		return nil, fmt.Errorf("camera with ID %s not found", cameraID)
 	}
@@ -162,7 +206,7 @@ func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, e
 	// Check if camera is already managed
 	cs, _ := m.db.GetCameraByID(cameraID)
 	if cs.Status.IsManaged {
-		managedCamera, _ := m.db.GetManagedCamera(mac)
+		managedCamera, _ := m.db.GetManagedCamera(dbKey)
 		return managedCamera, nil
 	}
 
@@ -183,18 +227,18 @@ func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, e
 		}
 	}
 
-	managedCamera, _ := m.db.GetManagedCamera(mac)
+	managedCamera, _ := m.db.GetManagedCamera(dbKey)
 	return managedCamera, nil
 }
 
 // UnmanageCamera removes a camera from the managed pool
 func (m *GoProManager) UnmanageCamera(cameraID string) error {
-	mac, _, found := m.db.GetCameraIdentifiers(cameraID)
+	dbKey, _, _, found := m.db.GetCameraIdentifiers(cameraID)
 	if !found {
 		return fmt.Errorf("camera with ID %s not found", cameraID)
 	}
 
-	m.db.ToggleCameraManaged(mac)
+	m.db.ToggleCameraManaged(dbKey)
 
 	m.log.Infof("Camera %s removed from managed pool", cameraID)
 	m.notify()

@@ -210,8 +210,16 @@ func (rt *ResponseTracker) UnregisterCommand(commandID byte) {
 	}
 }
 
-// RouteResponse routes a response to the appropriate waiting channel
-func (rt *ResponseTracker) RouteResponse(msg *TLVMessage) bool {
+// SetPushHandler sets the handler for unsolicited push notifications (0x92/0x93)
+func (rt *ResponseTracker) SetPushHandler(handler func(string, *TLVMessage)) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.pushHandler = handler
+}
+
+// RouteResponse routes a response to the appropriate waiting channel,
+// or dispatches to the push handler for async notifications.
+func (rt *ResponseTracker) RouteResponse(macAddress string, msg *TLVMessage) bool {
 	rt.mu.RLock()
 	defer rt.mu.RUnlock()
 
@@ -222,6 +230,12 @@ func (rt *ResponseTracker) RouteResponse(msg *TLVMessage) bool {
 		default:
 			return false
 		}
+	}
+
+	// Unsolicited push notifications have no pending command
+	if (msg.CommandID == 0x92 || msg.CommandID == 0x93) && rt.pushHandler != nil {
+		rt.pushHandler(macAddress, msg)
+		return true
 	}
 
 	return false

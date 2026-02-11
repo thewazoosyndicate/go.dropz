@@ -100,6 +100,14 @@ function pairDevice(macAddress) {
         devicePools().addOrUpdateDevice(device);
       }
 
+      // Force-refresh controls — pairingInProgress is a frontend-only flag
+      // that addOrUpdateDevice doesn't track, so the button may still show
+      // the spinner if a stream update already set isPaired before we got here.
+      document.querySelectorAll(`.device-card[data-mac="${macAddress}"]`).forEach(card => {
+        const currentDevice = state.allDevices[macAddress];
+        if (currentDevice) dc().updateDeviceElement(card, currentDevice);
+      });
+
       if (state.autoSync && device.isManaged) {
         addToSyncQueue(macAddress);
       }

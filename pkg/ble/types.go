@@ -5,7 +5,7 @@ import "time"
 // Device represents a GoPro BLE device
 type Device struct {
 	Name            string    `json:"name"`
-	MACAddress      string    `json:"mac_address"`
+	BLEAddress      string    `json:"ble_address"`
 	RSSI            int32     `json:"rssi"`
 	ModelID         int       `json:"model_id,omitempty"`
 	ModelName       string    `json:"model_name,omitempty"`
@@ -28,7 +28,7 @@ type DeviceDiscoveryCallback func(Device)
 
 // CameraMetadata represents metadata about a camera
 type CameraMetadata struct {
-	MACAddress      string
+	BLEAddress      string
 	ModelID         int
 	ModelName       string
 	FirmwareVersion string

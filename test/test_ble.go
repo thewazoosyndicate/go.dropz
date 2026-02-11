@@ -31,7 +31,7 @@ func main() {
 	// Set up metadata callback to verify it gets invoked
 	bleManager.SetMetadataCallback(func(metadata ble.CameraMetadata) {
 		fmt.Println("\n=== METADATA CALLBACK INVOKED ===")
-		fmt.Printf("✓ MAC Address: %s\n", metadata.MACAddress)
+		fmt.Printf("✓ MAC Address: %s\n", metadata.BLEAddress)
 		fmt.Printf("✓ Model: %s (ID: %d)\n", metadata.ModelName, metadata.ModelID)
 		fmt.Printf("✓ Firmware: %s\n", metadata.FirmwareVersion)
 		fmt.Printf("✓ Serial: %s\n", metadata.SerialNumber)
@@ -59,7 +59,7 @@ func main() {
 		if foundDevice == nil {
 			foundDevice = &device
 			fmt.Printf("✓ Found GoPro: %s (%s) RSSI: %d\n", 
-				device.Name, device.MACAddress, device.RSSI)
+				device.Name, device.BLEAddress, device.RSSI)
 			cancel() // Stop scanning
 		}
 	})
@@ -76,7 +76,7 @@ func main() {
 	}
 	mu.Unlock()
 
-	fmt.Printf("✓ Selected device: %s (%s)\n", foundDevice.Name, foundDevice.MACAddress)
+	fmt.Printf("✓ Selected device: %s (%s)\n", foundDevice.Name, foundDevice.BLEAddress)
 
 	// DEBUGGING: Use full Connect() but with detailed timeout tracking
 	fmt.Printf("\n1. Connecting to %s with timeout monitoring...\n", foundDevice.Name)
@@ -88,7 +88,7 @@ func main() {
 	// Run Connect() in background with progress monitoring
 	go func() {
 		fmt.Println("\n1a. Starting BLE Manager Connect() operation...")
-		err := bleManager.Connect(foundDevice.MACAddress)
+		err := bleManager.Connect(foundDevice.BLEAddress)
 		connectDone <- err
 	}()
 	
@@ -118,7 +118,7 @@ func main() {
 	
 	go func() {
 		var err error
-		ssid, password, err = bleManager.GetWifiCredentials(foundDevice.MACAddress)
+		ssid, password, err = bleManager.GetWifiCredentials(foundDevice.BLEAddress)
 		done <- err
 	}()
 	
@@ -142,7 +142,7 @@ func main() {
 	// Test battery level
 	fmt.Println("\n3a. Testing GetBatteryLevel...")
 	go func() {
-		battery, err := bleManager.GetBatteryLevel(foundDevice.MACAddress)
+		battery, err := bleManager.GetBatteryLevel(foundDevice.BLEAddress)
 		if err != nil {
 			done <- err
 		} else {
@@ -163,7 +163,7 @@ func main() {
 	// Test hardware info
 	fmt.Println("\n3b. Testing GetHardwareInfo...")
 	go func() {
-		hwInfo, err := bleManager.GetHardwareInfo(foundDevice.MACAddress)
+		hwInfo, err := bleManager.GetHardwareInfo(foundDevice.BLEAddress)
 		if err != nil {
 			done <- err
 		} else {
@@ -185,7 +185,7 @@ func main() {
 	// Test pairing state
 	fmt.Println("\n3c. Testing IsPaired...")
 	go func() {
-		isPaired, err := bleManager.IsPaired(foundDevice.MACAddress)
+		isPaired, err := bleManager.IsPaired(foundDevice.BLEAddress)
 		if err != nil {
 			done <- err
 		} else {
@@ -205,7 +205,7 @@ func main() {
 
 	// Cleanup using BLE Manager
 	fmt.Println("\n4. Disconnecting using BLE Manager...")
-	disconnectErr := bleManager.Disconnect(foundDevice.MACAddress)
+	disconnectErr := bleManager.Disconnect(foundDevice.BLEAddress)
 	if disconnectErr != nil {
 		fmt.Printf("✗ Disconnect error: %v\n", disconnectErr)
 	} else {

@@ -59,8 +59,6 @@ func (m *GoProManager) deviceManager() {
 			m.log.Debug("Device manager stopping due to context cancellation.")
 			return
 		case <-ticker.C:
-			// Sync device pairing states with database
-			m.pairingManager.SyncDevicePairingStates(m.notifier)
 			m.checkManagedDevices()
 			m.syncCoordinator.ProcessSyncQueue()
 		case <-m.immediateSyncTrigger:
@@ -95,7 +93,6 @@ func (m *GoProManager) checkManagedDevices() {
 			continue
 		}
 
-		// SyncDevicePairingStates already ran on this tick, trust the DB
 		if !camera.CameraState.Status.IsPaired {
 			m.log.Debugf("Camera %s is not paired, skipping sync", camera.CameraState.Camera.Name)
 			continue

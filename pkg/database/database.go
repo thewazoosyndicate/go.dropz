@@ -18,7 +18,7 @@ type Camera struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
 	Alias        string `json:"alias"`
-	MACAddress   string `json:"mac_address"`
+	BLEAddress   string `json:"ble_address"`
 	WiFiSSID     string `json:"wifi_ssid"`
 	WiFiPassword string `json:"wifi_password"`
 	RSSI         int32  `json:"rssi"`
@@ -230,22 +230,60 @@ func (db *Database) saveToFile() error {
 }
 
 
+// CameraLookupResult holds the result of a camera lookup by BLE address.
+type CameraLookupResult struct {
+	DBKey       string
+	CameraState *CameraWithState
+}
+
+// FindCameraByBLEAddress finds a camera by its BLE address (linear scan).
+// Returns the DB key and camera state regardless of whether the key is serial or BLE address.
+func (db *Database) FindCameraByBLEAddress(bleAddress string) (*CameraLookupResult, bool) {
+	db.mutex.RLock()
+	defer db.mutex.RUnlock()
+
+	for key, cs := range db.cameraStates {
+		if cs.Camera.BLEAddress == bleAddress {
+			csCopy := *cs
+			return &CameraLookupResult{DBKey: key, CameraState: &csCopy}, true
+		}
+	}
+	return nil, false
+}
+
+// RekeyCamera moves a camera entry from oldKey to newKey.
+func (db *Database) RekeyCamera(oldKey, newKey string) error {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+
+	cs, exists := db.cameraStates[oldKey]
+	if !exists {
+		return fmt.Errorf("camera not found: %s", oldKey)
+	}
+	if oldKey == newKey {
+		return nil
+	}
+	db.cameraStates[newKey] = cs
+	delete(db.cameraStates, oldKey)
+	return db.saveToFile()
+}
+
 // AddOrUpdateDiscoveredCamera adds or updates a discovered camera
 func (db *Database) AddOrUpdateDiscoveredCamera(camera *DiscoveredCamera) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
-	db.cameraStates[camera.CameraState.Camera.MACAddress] = camera.CameraState
+	db.cameraStates[camera.CameraState.Camera.BLEAddress] = camera.CameraState
 
 	return db.saveToFile()
 }
 
-// GetDiscoveredCamera retrieves a discovered camera by MAC address
-func (db *Database) GetDiscoveredCamera(macAddress string) (*DiscoveredCamera, bool) {
+// GetDiscoveredCamera retrieves a discovered camera by key (serial or BLE address)
+func (db *Database) GetDiscoveredCamera(key string) (*DiscoveredCamera, bool) {
 	db.mutex.RLock()
 	defer db.mutex.RUnlock()
 
-	cameraState, exists := db.cameraStates[macAddress]
+	cameraState, exists := db.cameraStates[key]
 	if !exists {
 		return nil, false
 	}
@@ -253,12 +291,12 @@ func (db *Database) GetDiscoveredCamera(macAddress string) (*DiscoveredCamera, b
 	return &DiscoveredCamera{CameraState: &csCopy}, true
 }
 
-// GetManagedCamera retrieves a managed camera by MAC address
-func (db *Database) GetManagedCamera(macAddress string) (*ManagedCamera, bool) {
+// GetManagedCamera retrieves a managed camera by key (serial or BLE address)
+func (db *Database) GetManagedCamera(key string) (*ManagedCamera, bool) {
 	db.mutex.RLock()
 	defer db.mutex.RUnlock()
 
-	cameraState, exists := db.cameraStates[macAddress]
+	cameraState, exists := db.cameraStates[key]
 	if !exists {
 		return nil, false
 	}
@@ -464,7 +502,7 @@ func (c *CameraWithState) ToProtoCameraWithState() *protocol.CameraWithState {
 			Id:           c.Camera.ID,
 			Name:         c.Camera.Name,
 			Alias:        c.Camera.Alias,
-			MacAddress:   c.Camera.MACAddress,
+			BleAddress:   c.Camera.BLEAddress,
 			WifiSsid:     c.Camera.WiFiSSID,
 			WifiPassword: c.Camera.WiFiPassword,
 			Rssi:         c.Camera.RSSI,
@@ -584,14 +622,14 @@ func DefaultConfig() Config {
 	}
 }
 
-// UpdateCamera atomically mutates a camera by MAC address under the write lock.
-func (db *Database) UpdateCamera(macAddress string, mutate func(*CameraWithState)) error {
+// UpdateCamera atomically mutates a camera by key under the write lock.
+func (db *Database) UpdateCamera(key string, mutate func(*CameraWithState)) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
-	cs, exists := db.cameraStates[macAddress]
+	cs, exists := db.cameraStates[key]
 	if !exists {
-		return fmt.Errorf("camera not found: %s", macAddress)
+		return fmt.Errorf("camera not found: %s", key)
 	}
 	mutate(cs)
 	return db.saveToFile()
@@ -611,17 +649,17 @@ func (db *Database) UpdateCameraByID(cameraID string, mutate func(*CameraWithSta
 	return fmt.Errorf("camera not found: %s", cameraID)
 }
 
-// GetCameraIdentifiers returns the MAC address and name for a camera ID (value copy, no pointer leak).
-func (db *Database) GetCameraIdentifiers(cameraID string) (mac, name string, found bool) {
+// GetCameraIdentifiers returns the DB key, BLE address, and name for a camera ID.
+func (db *Database) GetCameraIdentifiers(cameraID string) (dbKey, bleAddress, name string, found bool) {
 	db.mutex.RLock()
 	defer db.mutex.RUnlock()
 
-	for _, cs := range db.cameraStates {
+	for key, cs := range db.cameraStates {
 		if cs.Camera.ID == cameraID {
-			return cs.Camera.MACAddress, cs.Camera.Name, true
+			return key, cs.Camera.BLEAddress, cs.Camera.Name, true
 		}
 	}
-	return "", "", false
+	return "", "", "", false
 }
 
 // MarkCamerasUnreachableBefore marks all cameras last seen before cutoff as unreachable.
@@ -642,14 +680,14 @@ func (db *Database) MarkCamerasUnreachableBefore(cutoff time.Time) (bool, error)
 	return false, nil
 }
 
-// updateCameraStatus is a helper that looks up a camera by MAC and applies a mutation.
-func (db *Database) updateCameraStatus(macAddress string, mutate func(*CameraStatus) bool) error {
+// updateCameraStatus is a helper that looks up a camera by key and applies a mutation.
+func (db *Database) updateCameraStatus(key string, mutate func(*CameraStatus) bool) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
-	cameraState, exists := db.cameraStates[macAddress]
+	cameraState, exists := db.cameraStates[key]
 	if !exists {
-		return fmt.Errorf("camera with MAC address %s not found", macAddress)
+		return fmt.Errorf("camera with key %s not found", key)
 	}
 
 	if mutate(&cameraState.Status) {
@@ -659,16 +697,16 @@ func (db *Database) updateCameraStatus(macAddress string, mutate func(*CameraSta
 }
 
 // UpdateCameraPairingStatus updates a camera's pairing status
-func (db *Database) UpdateCameraPairingStatus(macAddress string, isPairing bool) error {
-	return db.updateCameraStatus(macAddress, func(s *CameraStatus) bool {
+func (db *Database) UpdateCameraPairingStatus(key string, isPairing bool) error {
+	return db.updateCameraStatus(key, func(s *CameraStatus) bool {
 		s.IsPairing = isPairing
 		return true
 	})
 }
 
 // SetCameraPaired marks a camera as paired
-func (db *Database) SetCameraPaired(macAddress string, isPaired bool) error {
-	return db.updateCameraStatus(macAddress, func(s *CameraStatus) bool {
+func (db *Database) SetCameraPaired(key string, isPaired bool) error {
+	return db.updateCameraStatus(key, func(s *CameraStatus) bool {
 		s.IsPaired = isPaired
 		s.IsPairing = false
 		return true
@@ -676,24 +714,24 @@ func (db *Database) SetCameraPaired(macAddress string, isPaired bool) error {
 }
 
 // SetCameraMetadata stores hardware metadata for a camera
-func (db *Database) SetCameraMetadata(macAddress string, metadata CameraMetadata) error {
+func (db *Database) SetCameraMetadata(key string, metadata CameraMetadata) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
-	if state, exists := db.cameraStates[macAddress]; exists {
+	if state, exists := db.cameraStates[key]; exists {
 		state.Metadata = metadata
 		return db.saveToFile()
 	}
-	return fmt.Errorf("camera not found: %s", macAddress)
+	return fmt.Errorf("camera not found: %s", key)
 }
 
 // ToggleCameraManaged toggles a camera's managed status
-func (db *Database) ToggleCameraManaged(macAddress string) error {
+func (db *Database) ToggleCameraManaged(key string) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
-	cameraState, exists := db.cameraStates[macAddress]
+	cameraState, exists := db.cameraStates[key]
 	if !exists {
-		return fmt.Errorf("camera with MAC address %s not found", macAddress)
+		return fmt.Errorf("camera with key %s not found", key)
 	}
 
 	cameraState.Status.IsManaged = !cameraState.Status.IsManaged
@@ -701,16 +739,16 @@ func (db *Database) ToggleCameraManaged(macAddress string) error {
 }
 
 // UpdateCameraSyncingStatus updates a camera's syncing status
-func (db *Database) UpdateCameraSyncingStatus(macAddress string, isSyncing bool) error {
-	return db.updateCameraStatus(macAddress, func(s *CameraStatus) bool {
+func (db *Database) UpdateCameraSyncingStatus(key string, isSyncing bool) error {
+	return db.updateCameraStatus(key, func(s *CameraStatus) bool {
 		s.IsSyncing = isSyncing
 		return true
 	})
 }
 
 // MarkCameraSynced marks a camera as synced and updates last_synced timestamp
-func (db *Database) MarkCameraSynced(macAddress string) error {
-	return db.updateCameraStatus(macAddress, func(s *CameraStatus) bool {
+func (db *Database) MarkCameraSynced(key string) error {
+	return db.updateCameraStatus(key, func(s *CameraStatus) bool {
 		s.IsSynced = true
 		s.IsSyncing = false
 		s.LastSynced = time.Now()
@@ -719,8 +757,8 @@ func (db *Database) MarkCameraSynced(macAddress string) error {
 }
 
 // ResetSyncStatus marks a camera as not synced (to trigger re-sync)
-func (db *Database) ResetSyncStatus(macAddress string) error {
-	return db.updateCameraStatus(macAddress, func(s *CameraStatus) bool {
+func (db *Database) ResetSyncStatus(key string) error {
+	return db.updateCameraStatus(key, func(s *CameraStatus) bool {
 		s.IsSynced = false
 		return true
 	})

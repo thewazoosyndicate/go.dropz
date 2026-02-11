@@ -28,7 +28,7 @@ type Camera struct {
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	Alias         string                 `protobuf:"bytes,3,opt,name=alias,proto3" json:"alias,omitempty"`
-	MacAddress    string                 `protobuf:"bytes,4,opt,name=mac_address,json=macAddress,proto3" json:"mac_address,omitempty"`
+	BleAddress    string                 `protobuf:"bytes,4,opt,name=ble_address,json=bleAddress,proto3" json:"ble_address,omitempty"`
 	WifiSsid      string                 `protobuf:"bytes,5,opt,name=wifi_ssid,json=wifiSsid,proto3" json:"wifi_ssid,omitempty"`
 	WifiPassword  string                 `protobuf:"bytes,6,opt,name=wifi_password,json=wifiPassword,proto3" json:"wifi_password,omitempty"`
 	Rssi          int32                  `protobuf:"varint,7,opt,name=rssi,proto3" json:"rssi,omitempty"` // Signal strength in dBm
@@ -87,9 +87,9 @@ func (x *Camera) GetAlias() string {
 	return ""
 }
 
-func (x *Camera) GetMacAddress() string {
+func (x *Camera) GetBleAddress() string {
 	if x != nil {
-		return x.MacAddress
+		return x.BleAddress
 	}
 	return ""
 }
@@ -1716,8 +1716,8 @@ const file_gopro_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x14\n" +
 	"\x05alias\x18\x03 \x01(\tR\x05alias\x12\x1f\n" +
-	"\vmac_address\x18\x04 \x01(\tR\n" +
-	"macAddress\x12\x1b\n" +
+	"\vble_address\x18\x04 \x01(\tR\n" +
+	"bleAddress\x12\x1b\n" +
 	"\twifi_ssid\x18\x05 \x01(\tR\bwifiSsid\x12#\n" +
 	"\rwifi_password\x18\x06 \x01(\tR\fwifiPassword\x12\x12\n" +
 	"\x04rssi\x18\a \x01(\x05R\x04rssi\"\xbe\x02\n" +

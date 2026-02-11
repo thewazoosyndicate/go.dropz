@@ -14,7 +14,7 @@ import (
 type Processor struct {
 	db                 *database.Database
 	log                *logrus.Logger
-	onCameraReappeared func(macAddress string, wasGoneFor time.Duration)
+	onCameraReappeared func(dbKey string, wasGoneFor time.Duration)
 }
 
 // NewProcessor creates a new processor
@@ -26,7 +26,7 @@ func NewProcessor(db *database.Database, log *logrus.Logger) *Processor {
 }
 
 // SetOnCameraReappeared sets a callback invoked when a camera becomes reachable again
-func (p *Processor) SetOnCameraReappeared(fn func(macAddress string, wasGoneFor time.Duration)) {
+func (p *Processor) SetOnCameraReappeared(fn func(dbKey string, wasGoneFor time.Duration)) {
 	p.onCameraReappeared = fn
 }
 
@@ -41,29 +41,30 @@ func (p *Processor) ProcessDiscoveredDeviceLive(device ble.Device, notifier func
 // processDevice processes a single discovered device
 func (p *Processor) processDevice(dev ble.Device) {
 	name := dev.Name
-	macAddress := dev.MACAddress
+	bleAddress := dev.BLEAddress
 	rssi := dev.RSSI
 
 	if name == "" || !strings.Contains(strings.ToLower(name), "gopro") {
 		return
 	}
 
-	discoveredCamera, exists := p.db.GetDiscoveredCamera(macAddress)
+	// Look up by BLE address — finds the camera even if re-keyed by serial
+	lookup, exists := p.db.FindCameraByBLEAddress(bleAddress)
 
 	if !exists {
-		p.createNewCamera(name, macAddress, rssi)
+		p.createNewCamera(name, bleAddress, rssi)
 	} else {
-		p.updateExistingCamera(discoveredCamera, name, rssi)
+		p.updateExistingCamera(lookup.DBKey, bleAddress, name, rssi)
 	}
 }
 
 // createNewCamera creates a new camera entry in the database
-func (p *Processor) createNewCamera(name, macAddress string, rssi int32) {
+func (p *Processor) createNewCamera(name, bleAddress string, rssi int32) {
 	cameraState := &database.CameraWithState{
 		Camera: database.Camera{
 			ID:         uuid.New().String(),
 			Name:       name,
-			MACAddress: macAddress,
+			BLEAddress: bleAddress,
 			RSSI:       rssi,
 		},
 		Status: database.CameraStatus{
@@ -85,15 +86,16 @@ func (p *Processor) createNewCamera(name, macAddress string, rssi int32) {
 }
 
 // updateExistingCamera atomically updates an existing camera entry in the database.
-func (p *Processor) updateExistingCamera(discoveredCamera *database.DiscoveredCamera, name string, rssi int32) {
-	macAddress := discoveredCamera.CameraState.Camera.MACAddress
-
+func (p *Processor) updateExistingCamera(dbKey, bleAddress, name string, rssi int32) {
 	var wasGoneFor time.Duration
 	wasUnreachable := false
 
-	err := p.db.UpdateCamera(macAddress, func(cs *database.CameraWithState) {
+	err := p.db.UpdateCamera(dbKey, func(cs *database.CameraWithState) {
+		// Update BLE address in case it changed (macOS assigns random UUIDs)
+		cs.Camera.BLEAddress = bleAddress
+
 		if cs.Camera.Name == "" || (!strings.Contains(cs.Camera.Name, "GoPro") && strings.Contains(name, "GoPro")) {
-			p.log.Debugf("Name updated for %s: '%s' -> '%s'", macAddress, cs.Camera.Name, name)
+			p.log.Debugf("Name updated for %s: '%s' -> '%s'", dbKey, cs.Camera.Name, name)
 			cs.Camera.Name = name
 		}
 
@@ -113,7 +115,7 @@ func (p *Processor) updateExistingCamera(discoveredCamera *database.DiscoveredCa
 	}
 
 	if wasUnreachable && p.onCameraReappeared != nil {
-		p.onCameraReappeared(macAddress, wasGoneFor)
+		p.onCameraReappeared(dbKey, wasGoneFor)
 	}
 }
 

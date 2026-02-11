@@ -56,5 +56,6 @@ type FragmentCollector struct {
 // ResponseTracker tracks pending command responses
 type ResponseTracker struct {
 	pendingCommands map[byte]chan *TLVMessage
+	pushHandler     func(string, *TLVMessage)
 	mu              sync.RWMutex
 }

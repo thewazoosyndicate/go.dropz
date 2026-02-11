@@ -17,7 +17,7 @@ function processCamera(camera) {
     if (!cameraState) return null;
     const cameraData = cameraState.getCamera();
     if (!cameraData) return null;
-    const macAddress = cameraData.getMacAddress();
+    const macAddress = cameraData.getBleAddress();
     if (!macAddress) return null;
 
     const status = cameraState.getStatus();

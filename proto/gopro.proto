@@ -11,7 +11,7 @@ message Camera {
   string id = 1;
   string name = 2;
   string alias = 3;
-  string mac_address = 4;
+  string ble_address = 4;
   string wifi_ssid = 5;
   string wifi_password = 6;
   int32 rssi = 7;  // Signal strength in dBm

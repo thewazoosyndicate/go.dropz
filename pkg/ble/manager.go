@@ -450,6 +450,12 @@ func (m *Manager) GetBatteryLevel(macAddress string) (int, error) {
 	return 0, fmt.Errorf("battery percentage not found in response")
 }
 
+// KeepAlive sends a keep-alive to prevent the camera from auto-sleeping
+func (m *Manager) KeepAlive(macAddress string) error {
+	_, err := m.sendCommand(macAddress, CmdKeepAlive, []byte{0x01, 0x42})
+	return err
+}
+
 // Sleep puts the device to sleep
 func (m *Manager) Sleep(macAddress string) error {
 	// According to OpenGoPro BLE spec, Sleep command (ID 0x05) sends a response

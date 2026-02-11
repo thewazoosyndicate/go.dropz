@@ -239,6 +239,24 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		}
 	}()
 
+	// Keep camera awake during the entire sync
+	keepAliveCtx, keepAliveCancel := context.WithCancel(syncCtx)
+	defer keepAliveCancel()
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-keepAliveCtx.Done():
+				return
+			case <-ticker.C:
+				if err := c.ble.KeepAlive(camera.Camera.MACAddress); err != nil {
+					c.log.Debugf("Keep-alive failed: %v", err)
+				}
+			}
+		}
+	}()
+
 	// Step 2: Connect to camera WiFi
 	updateProgress("Connecting to WiFi", 30)
 

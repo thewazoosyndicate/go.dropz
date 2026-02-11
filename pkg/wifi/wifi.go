@@ -23,8 +23,9 @@ const (
 	StatusURL     = "/gopro/camera/state"
 	BatteryURL    = "/gopro/status/battery"
 	// Media endpoints
-	MediaListURL = "/gopro/media/list"
-	MediaInfoURL = "/gopro/media/info"
+	MediaListURL      = "/gopro/media/list"
+	MediaInfoURL      = "/gopro/media/info"
+	TurboTransferURL  = "/gopro/media/turbo_transfer"
 )
 
 // WiFiManager handles WiFi operations for GoPro devices
@@ -166,6 +167,16 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 		return nil, nil
 	}
 
+	if err := m.SetTurboTransfer(ctx, true); err != nil {
+		m.log.Warnf("Failed to enable turbo transfer: %v", err)
+	} else {
+		defer func() {
+			if err := m.SetTurboTransfer(ctx, false); err != nil {
+				m.log.Warnf("Failed to disable turbo transfer: %v", err)
+			}
+		}()
+	}
+
 	if daysInPast <= 0 {
 		daysInPast = 7
 	}
@@ -273,6 +284,31 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	return downloadedFiles, nil
 }
 
+// SetTurboTransfer enables or disables turbo transfer mode for faster media downloads
+func (m *WiFiManager) SetTurboTransfer(ctx context.Context, enabled bool) error {
+	p := "0"
+	if enabled {
+		p = "1"
+	}
+	url := fmt.Sprintf("%s%s?p=%s", GoProBaseURL, TurboTransferURL, p)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create turbo transfer request: %v", err)
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to set turbo transfer: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("turbo transfer request failed with status: %s", resp.Status)
+	}
+	return nil
+}
+
 // isConnectedTo checks if currently connected to the specified SSID
 func (m *WiFiManager) isConnectedTo(ssid string) bool {
 	cmd := exec.Command("nmcli", "-t", "-f", "NAME,DEVICE,STATE", "connection", "show", "--active")
@@ -308,14 +344,14 @@ type GoProMediaList struct {
 type goProFile struct {
 	// Basic fields
 	Name       string      `json:"n"`
-	CreatedAt  json.Number `json:"cre,string"` // Support both string and number
-	ModifiedAt json.Number `json:"mod,string"` // Support both string and number
-	Size       json.Number `json:"s,string"`   // Support both string and number
+	CreatedAt  json.Number `json:"cre"`
+	ModifiedAt json.Number `json:"mod"`
+	Size       json.Number `json:"s"`
 
 	// Optional fields
-	RawFlag    json.Number `json:"raw,string,omitempty"`
-	LastStatus json.Number `json:"ls,string,omitempty"`
-	GLRVersion json.Number `json:"glrv,string,omitempty"`
+	RawFlag    json.Number `json:"raw,omitempty"`
+	LastStatus json.Number `json:"ls,omitempty"`
+	GLRVersion json.Number `json:"glrv,omitempty"`
 
 	// Group file fields (for time lapse/burst photos)
 	FirstID    string   `json:"b,omitempty"`

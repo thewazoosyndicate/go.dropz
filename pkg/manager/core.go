@@ -57,7 +57,7 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 		return nil, fmt.Errorf("failed to get default Bluetooth adapter")
 	}
 
-	// Enable BLE adapter directly (not in goroutine - breaks DBus thread affinity)
+	// Enable BLE adapter directly (not in goroutine - required by platform BLE stacks)
 	if err := adapter.Enable(); err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to enable BLE adapter: %v", err)
@@ -232,9 +232,8 @@ func (m *GoProManager) BLEOperation(ctx context.Context, operationName string, o
 			return opErr
 		}
 
-		// Check for BlueZ DBus interface errors that might be transient
-		if strings.Contains(opErr.Error(), "Properties.GetAll") {
-			m.log.Warnf("BlueZ DBus interface error detected during %s: %v", operationName, opErr)
+		if isTransientBLEError(opErr) {
+			m.log.Warnf("Transient BLE error detected during %s: %v", operationName, opErr)
 			m.log.Infof("Waiting %d seconds before retry attempt %d/3", (opTry+1)*3, opTry+1)
 			time.Sleep(time.Duration(opTry+1) * 3 * time.Second)
 			continue

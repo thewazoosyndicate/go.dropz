@@ -2,7 +2,7 @@ VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1
 BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -ldflags "-X main.appVersion=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
 
-.PHONY: all build clean proto test appimage
+.PHONY: all build clean proto test appimage dmg app frontend-deps
 
 all: proto build
 
@@ -47,6 +47,18 @@ appimage: build
 	@echo "Building AppImage..."
 	cd frontend && npm run build -- --linux AppImage
 	@echo "AppImage built: frontend/dist/Dropz-1.0.0.AppImage"
+
+dmg: build
+	@echo "Building macOS DMG..."
+	cd frontend && npm run build -- --mac dmg
+	@echo "DMG built in frontend/dist/"
+
+app: build
+	@echo "Building desktop app..."
+	cd frontend && npm run build
+
+frontend-deps:
+	cd frontend && npm install
 
 test:
 	@echo "Running tests..."

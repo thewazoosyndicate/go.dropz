@@ -3,15 +3,16 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 
 	"github.com/dropz/dropz/cmd/dropz/cli"
-	"github.com/dropz/dropz/pkg/logger"
 	"github.com/dropz/dropz/pkg/manager"
 	"github.com/dropz/dropz/pkg/server"
+	"github.com/sirupsen/logrus"
 )
 
 // getDefaultPath expands home directory and returns the full path
@@ -35,8 +36,7 @@ var (
 	scan  = flag.Bool("scan", false, "Run scanner once and exit")
 	mac   = flag.String("mac", "", "GoPro Mac Address - required for commands")
 	pair  = flag.Bool("pair", false, "Run and exit")
-	sync  = flag.Bool("sync", false, "Run and exit")
-	sleep = flag.Bool("exit", false, "Run and exit")
+	sleep = flag.Bool("sleep", false, "Put camera to sleep and exit")
 )
 
 // CLI
@@ -48,12 +48,64 @@ var (
 //   . enable-wifi (also returns SSID/Passwd)
 //   . get-hw-info
 //   . get-battery-level
-// - sync (args. macAddress)
 // - sleep (args. macAddress)
 
 const (
 	appVersion = "0.2.0"
 )
+
+type logFormatter struct{}
+
+func (f *logFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	var levelPrefix string
+	switch entry.Level {
+	case logrus.TraceLevel:
+		levelPrefix = "[TRACE] "
+	case logrus.DebugLevel:
+		levelPrefix = "[DEBUG] "
+	case logrus.InfoLevel:
+		levelPrefix = "[INFO] "
+	case logrus.WarnLevel:
+		levelPrefix = "[WARN] "
+	case logrus.ErrorLevel:
+		levelPrefix = "[ERROR] "
+	case logrus.FatalLevel:
+		levelPrefix = "[FATAL] "
+	case logrus.PanicLevel:
+		levelPrefix = "[PANIC] "
+	}
+
+	timestamp := entry.Time.Format("2006/01/02 15:04:05")
+	fields := ""
+	for k, v := range entry.Data {
+		fields += " " + k + "=" + fmt.Sprintf("%v", v)
+	}
+	return []byte(timestamp + " " + levelPrefix + entry.Message + fields + "\n"), nil
+}
+
+func initLogger(level, filePath string) (*logrus.Logger, error) {
+	log := logrus.New()
+	log.SetFormatter(&logFormatter{})
+
+	logLevel, err := logrus.ParseLevel(level)
+	if err != nil {
+		return nil, err
+	}
+	log.SetLevel(logLevel)
+
+	if filePath != "" {
+		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+			return nil, err
+		}
+		file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return nil, err
+		}
+		log.SetOutput(io.MultiWriter(os.Stderr, file))
+	}
+
+	return log, nil
+}
 
 func main() {
 	flag.Parse()
@@ -73,17 +125,16 @@ func main() {
 
 	// Initialize logger
 	logFile := filepath.Join(*logDir, "dropz.log")
-	if err := logger.Initialize(*logLevel, logFile); err != nil {
+	log, err := initLogger(*logLevel, logFile)
+	if err != nil {
 		fmt.Printf("Failed to initialize logger: %v\n", err)
 		os.Exit(1)
 	}
-
-	log := logger.GetLogger()
 	log.Infof("Starting dropz version %s", appVersion)
 
 	// Initialize GoPro manager
 	dbPath := filepath.Join(*dataDir, "dropz.db")
-	goProManager, err := manager.NewGoProManager(dbPath, *videoDir)
+	goProManager, err := manager.NewGoProManager(dbPath, *videoDir, log)
 	if err != nil {
 		log.Fatalf("Failed to initialize GoPro manager: %v", err)
 	}
@@ -124,14 +175,13 @@ func main() {
 
 	// Check for CLI flags that require immediate action
 	// Only call CLI function if one of the action flags is set
-	if *scan || *pair || *sync || *sleep {
+	if *scan || *pair || *sleep {
 		cli.Cli(cli.CliFlags{
 			Scan:  *scan,
 			Pair:  *pair,
-			Sync:  *sync,
 			Sleep: *sleep,
 			Mac:   *mac,
-		})
+		}, log)
 	}
 
 	// If no CLI args, start GoPro manager
@@ -140,7 +190,7 @@ func main() {
 	}
 
 	// Initialize and start gRPC server
-	dropzServer := server.NewDropzServer(goProManager)
+	dropzServer := server.NewDropzServer(goProManager, log)
 	if err := dropzServer.Start(*serverAddr); err != nil {
 		log.Fatalf("Failed to start gRPC server: %v", err)
 	}

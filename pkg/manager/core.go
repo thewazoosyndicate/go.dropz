@@ -8,89 +8,40 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/pkg/ble"
-	"github.com/dropz/dropz/pkg/common"
 	"github.com/dropz/dropz/pkg/database"
-	"github.com/dropz/dropz/pkg/logger"
-	configpkg "github.com/dropz/dropz/pkg/manager/config"
+	"github.com/sirupsen/logrus"
 	"github.com/dropz/dropz/pkg/manager/discovery"
-	"github.com/dropz/dropz/pkg/manager/groups"
 	"github.com/dropz/dropz/pkg/manager/pairing"
 	syncpkg "github.com/dropz/dropz/pkg/manager/sync"
-	"github.com/dropz/dropz/pkg/queue"
 	"tinygo.org/x/bluetooth"
 )
 
-const (
-	// Task types
-	TaskTypeConnect       = "connect"
-	TaskTypeSetDateTime   = "set_datetime"
-	TaskTypeEnableWifi    = "enable_wifi"
-	TaskTypeDownloadMedia = "download_media"
-
-	// Task priorities
-	PriorityHigh   = 3
-	PriorityNormal = 2
-	PriorityLow    = 1
-
-	// Sync priorities
-	SyncPriorityManual = 10 // Manual sync requests (ForceSync)
-	SyncPriorityAuto   = 5  // Automatic sync requests
-)
-
-// Device represents a BLE device
-type Device struct {
-	Name        string
-	MACAddress  string
-	RSSI        int32
-	IsConnected bool
-}
 
 // GoProManager is the main service that coordinates all GoPro operations
 type GoProManager struct {
 	// Core dependencies
 	db       *database.Database
-	ble      ble.BLEInterface
-	queue    *queue.TaskQueue
-	log      logger.Logger
-	notifier common.UpdateNotifier
-
-	// Configuration
-	scanInterval   time.Duration
-	connectTimeout time.Duration
-	inactivityTime time.Duration
-	setTimeEnabled bool
-	daysThreshold  int
-	destinationDir string
+	ble      *ble.Manager
+	log      *logrus.Logger
+	notifier func()
 
 	// Runtime control
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	mutex     sync.RWMutex
-	isRunning bool
-
-	// Worker pool for I/O operations
-	ioWorkerPool chan struct{}
-
-	// Active sync tasks
-	activeSyncTasks map[string]*syncpkg.SyncTask
-
-	// Processing devices
-	processingDevices map[string]struct{}
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	mutex  sync.RWMutex
 
 	// Immediate sync trigger channel
 	immediateSyncTrigger chan struct{}
 
 	// Component managers
 	syncCoordinator    *syncpkg.Coordinator
-	groupManager       *groups.Manager
 	discoveryProcessor *discovery.Processor
 	pairingManager     *pairing.Manager
-	configManager      *configpkg.Manager
 }
 
 // NewGoProManager creates a new GoPro manager instance
-func NewGoProManager(dbPath, destinationDir string) (*GoProManager, error) {
+func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProManager, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	db := database.GetDatabase()
@@ -106,189 +57,123 @@ func NewGoProManager(dbPath, destinationDir string) (*GoProManager, error) {
 		return nil, fmt.Errorf("failed to get default Bluetooth adapter")
 	}
 
-	// Enable BLE adapter with timeout
-	enableCtx, enableCancel := context.WithTimeout(ctx, 5*time.Second)
-	defer enableCancel()
+	// Enable BLE adapter directly (not in goroutine - breaks DBus thread affinity)
+	if err := adapter.Enable(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to enable BLE adapter: %v", err)
+	}
 
-	enableCh := make(chan error, 1)
-	go func() {
-		enableCh <- adapter.Enable()
-	}()
+	bleManager := ble.NewManager(adapter, log)
 
-	select {
-	case err := <-enableCh:
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("failed to enable BLE adapter: %w", err)
+	// Set up metadata update callback to update database whenever camera connects
+	bleManager.SetMetadataCallback(func(metadata ble.CameraMetadata) {
+		if metadata.WiFiSSID != "" && metadata.WiFiPassword != "" {
+			db.UpdateCamera(metadata.MACAddress, func(cs *database.CameraWithState) {
+				cs.Camera.WiFiSSID = metadata.WiFiSSID
+				cs.Camera.WiFiPassword = metadata.WiFiPassword
+			})
 		}
-	case <-enableCtx.Done():
-		cancel()
-		return nil, fmt.Errorf("timeout while enabling BLE adapter")
-	}
 
-	bleManager := ble.NewManager(adapter, logger.GetLogger())
+		dbMetadata := database.CameraMetadata{
+			Model:           metadata.ModelName,
+			FirmwareVersion: metadata.FirmwareVersion,
+			SerialNumber:    metadata.SerialNumber,
+			BatteryLevel:    int32(metadata.BatteryLevel),
+		}
 
-	if err := bleManager.Start(); err != nil {
-		cancel()
-		return nil, fmt.Errorf("failed to start BLE manager: %v", err)
-	}
+		if err := db.SetCameraMetadata(metadata.MACAddress, dbMetadata); err != nil {
+			log.Errorf("Failed to update camera metadata: %v", err)
+		}
+	})
 
-	// Initialize task queue with 5 workers and 30 second retry interval
-	taskQueue := queue.NewTaskQueue(5, 30*time.Second)
-
-	// Load configuration from database
+	// If destination dir was provided via CLI and DB doesn't have one, store it
 	config := db.GetConfig()
-
-	// Prefer database destination folder if it exists
-	folderFromDb := config.DestinationFolder
-	if folderFromDb != "" {
-		destinationDir = folderFromDb
+	if config.DestinationFolder == "" && destinationDir != "" {
+		config.DestinationFolder = destinationDir
+		db.UpdateConfig(config)
 	}
 
-	// Create the manager with configuration from database
+
 	manager := &GoProManager{
-		ctx:            ctx,
-		cancel:         cancel,
-		ble:            bleManager,
-		db:             db,
-		log:            logger.GetLogger(),
-		scanInterval:   time.Duration(config.ScanIntervalSeconds) * time.Second,
-		connectTimeout: time.Duration(config.ConnectTimeoutSeconds) * time.Second,
-		inactivityTime: time.Duration(config.InactivityTimeoutSeconds) * time.Second,
-		setTimeEnabled: config.SetTimeEnabled,
-		daysThreshold:  int(config.DaysThreshold),
-		destinationDir: destinationDir,
-		queue:          taskQueue,
-		// Allow up to 10 concurrent I/O operations
-		ioWorkerPool: make(chan struct{}, 10),
-		// Initialize active sync tasks
-		activeSyncTasks: make(map[string]*syncpkg.SyncTask),
-		// Initialize processing devices
-		processingDevices: make(map[string]struct{}),
-		// Initialize immediate sync trigger channel
+		ctx:                  ctx,
+		cancel:               cancel,
+		ble:                  bleManager,
+		db:                   db,
+		log:                  log,
 		immediateSyncTrigger: make(chan struct{}, 1),
 	}
 
-	// Initialize component managers
-	manager.configManager = configpkg.NewManager(db, logger.GetLogger())
-	manager.syncCoordinator = syncpkg.NewCoordinator(db, bleManager, logger.GetLogger())
-	manager.groupManager = groups.NewManager(db, logger.GetLogger())
-	manager.discoveryProcessor = discovery.NewProcessor(db, logger.GetLogger())
-	manager.pairingManager = pairing.NewManager(db, bleManager, logger.GetLogger(), nil, ctx)
+	// Initialize component managers (coordinator gets notify/BLEOperation as method values)
+	manager.syncCoordinator = syncpkg.NewCoordinator(db, bleManager, log, make(map[string]*syncpkg.SyncTask), manager.notify, manager.BLEOperation, ctx)
+	manager.discoveryProcessor = discovery.NewProcessor(db, log)
+	manager.pairingManager = pairing.NewManager(db, bleManager, log, ctx)
 
 	return manager, nil
 }
 
 // SetNotifier sets the update notifier component
-func (m *GoProManager) SetNotifier(notifier common.UpdateNotifier) {
+func (m *GoProManager) SetNotifier(notifier func()) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	m.notifier = notifier
 }
 
-// ManageCamera adds a camera to the managed camera pool
-func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, error) {
-	// Find the camera
-	var cameraState *database.CameraWithState
-
-	// Check all cameras
-	for _, state := range m.db.CameraStates {
-		if state.Camera.ID == cameraID {
-			cameraState = state
-			break
-		}
-	}
-
-	if cameraState == nil {
-		return nil, fmt.Errorf("camera with ID %s not found", cameraID)
-	}
-
-	// Check if camera is already managed
-	if cameraState.Status.IsManaged {
-		// Already managed, return the managed view
-		managedCamera, _ := m.db.GetManagedCamera(cameraState.Camera.MACAddress)
-		return managedCamera, nil
-	}
-
-	// Set camera as managed
-	cameraState.Status.IsManaged = true
-	m.db.SaveChanges()
-
-	m.log.Infof("Camera %s added to managed pool", cameraID)
-
-	// Notify immediately after adding to managed pool
+// notify safely calls the notifier if set
+func (m *GoProManager) notify() {
 	m.mutex.RLock()
 	notifier := m.notifier
 	m.mutex.RUnlock()
 	if notifier != nil {
-		m.log.Trace("Notifying observers about managed camera addition")
-		notifier.NotifyUpdate()
+		notifier()
+	}
+}
+
+// ManageCamera adds a camera to the managed camera pool
+func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, error) {
+	mac, name, found := m.db.GetCameraIdentifiers(cameraID)
+	if !found {
+		return nil, fmt.Errorf("camera with ID %s not found", cameraID)
 	}
 
-	// If we're in pair mode, queue pairing for the camera
+	// Check if camera is already managed
+	cs, _ := m.db.GetCameraByID(cameraID)
+	if cs.Status.IsManaged {
+		managedCamera, _ := m.db.GetManagedCamera(mac)
+		return managedCamera, nil
+	}
+
+	m.db.UpdateCameraByID(cameraID, func(cs *database.CameraWithState) {
+		cs.Status.IsManaged = true
+	})
+
+	m.log.Infof("Camera %s added to managed pool", cameraID)
+	m.notify()
+
 	config := m.db.GetConfig()
 	if config.PairModeEnabled {
-		// Check actual device pairing state instead of just database state
-		macAddress := cameraState.Camera.MACAddress
-		devicePaired, err := m.ble.IsPaired(macAddress)
-
-		if err != nil {
-			// If we can't check device state, fall back to database state
-			m.log.Tracef("Failed to check device pairing state for %s, using database state: %v",
-				cameraState.Camera.Name, err)
-			devicePaired = cameraState.Status.IsPaired
-		} else if devicePaired != cameraState.Status.IsPaired {
-			// Update database to match device state
-			m.log.Infof("Updating database pairing state for camera %s: database=%v, device=%v",
-				cameraState.Camera.Name, cameraState.Status.IsPaired, devicePaired)
-			if updateErr := m.db.SetCameraPaired(macAddress, devicePaired); updateErr != nil {
-				m.log.Warnf("Failed to update pairing state: %v", updateErr)
-			}
-		}
-
-		if !devicePaired {
-			m.log.Infof("Pair mode enabled, starting pairing for camera %s", cameraState.Camera.Name)
-			go m.PairCamera(cameraID)
+		if !cs.Status.IsPaired {
+			m.log.Infof("Pair mode enabled, starting pairing for camera %s", name)
+			m.PairCamera(cameraID)
 		} else {
-			m.log.Infof("Camera %s is already paired on device", cameraState.Camera.Name)
+			m.log.Infof("Camera %s is already paired", name)
 		}
 	}
 
-	// Return the managed camera view
-	managedCamera, _ := m.db.GetManagedCamera(cameraState.Camera.MACAddress)
+	managedCamera, _ := m.db.GetManagedCamera(mac)
 	return managedCamera, nil
 }
 
 // UnmanageCamera removes a camera from the managed pool
 func (m *GoProManager) UnmanageCamera(cameraID string) error {
-	// Find the camera
-	var cameraState *database.CameraWithState
-
-	// Check all cameras
-	for _, state := range m.db.CameraStates {
-		if state.Camera.ID == cameraID {
-			cameraState = state
-			break
-		}
-	}
-
-	if cameraState == nil {
+	mac, _, found := m.db.GetCameraIdentifiers(cameraID)
+	if !found {
 		return fmt.Errorf("camera with ID %s not found", cameraID)
 	}
 
-	// Set camera as not managed
-	m.db.ToggleCameraManaged(cameraState.Camera.MACAddress)
+	m.db.ToggleCameraManaged(mac)
 
 	m.log.Infof("Camera %s removed from managed pool", cameraID)
-
-	// Notify immediately after updating
-	m.mutex.RLock()
-	notifier := m.notifier
-	m.mutex.RUnlock()
-	if notifier != nil {
-		m.log.Trace("Notifying observers about camera pool change")
-		notifier.NotifyUpdate()
-	}
+	m.notify()
 
 	return nil
 }
@@ -346,4 +231,36 @@ func (m *GoProManager) ResetTransientStates() {
 	if err != nil {
 		m.log.Errorf("Failed to reset transient camera states: %v", err)
 	}
+}
+
+// PairCamera pairs with a GoPro camera using BLE
+func (m *GoProManager) PairCamera(cameraID string) (*database.ManagedCamera, error) {
+	return m.pairingManager.PairCamera(cameraID, m.BLEOperation, m.notifier)
+}
+
+// ForceSync adds a camera to the sync queue for immediate synchronization
+func (m *GoProManager) ForceSync(cameraID string) (*database.SyncQueueEntry, error) {
+	syncEntry, err := m.syncCoordinator.ForceSync(cameraID)
+	if err != nil {
+		return nil, err
+	}
+
+	select {
+	case m.immediateSyncTrigger <- struct{}{}:
+		m.log.Debug("Immediate sync trigger sent for manual sync request")
+	default:
+		m.log.Debug("Immediate sync trigger channel full, sync will be picked up by next cycle")
+	}
+
+	return syncEntry, nil
+}
+
+// CancelSync cancels an ongoing sync operation and removes the camera from the sync queue
+func (m *GoProManager) CancelSync(cameraID string) error {
+	return m.syncCoordinator.CancelSync(cameraID)
+}
+
+// GetVideosByCamera returns videos for a specific camera
+func (m *GoProManager) GetVideosByCamera(cameraID string, startDate, endDate time.Time, limit, offset int) ([]*database.VideoFile, int) {
+	return m.syncCoordinator.GetVideosByCamera(cameraID, startDate, endDate, limit, offset)
 }

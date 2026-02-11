@@ -6,19 +6,19 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/pkg/ble"
-	"github.com/dropz/dropz/pkg/logger"
+	"github.com/sirupsen/logrus"
 )
 
 // Scanner handles background scanning operations
 type Scanner struct {
-	ble               ble.BLEInterface
-	log               logger.Logger
+	ble               *ble.Manager
+	log               *logrus.Logger
 	scanInterval      time.Duration
 	processDeviceFunc func(ble.Device) // callback for processing individual devices
 }
 
 // NewScanner creates a new scanner
-func NewScanner(ble ble.BLEInterface, log logger.Logger, scanInterval time.Duration) *Scanner {
+func NewScanner(ble *ble.Manager, log *logrus.Logger, scanInterval time.Duration) *Scanner {
 	return &Scanner{
 		ble:          ble,
 		log:          log,
@@ -28,7 +28,7 @@ func NewScanner(ble ble.BLEInterface, log logger.Logger, scanInterval time.Durat
 
 // StartBackgroundScanner starts the background scanner with live device processing
 func (s *Scanner) StartBackgroundScanner(ctx context.Context, processDeviceFunc func(ble.Device)) {
-	s.log.Info("Starting background scanner with live device processing")
+	s.log.Debug("Starting background scanner")
 	s.processDeviceFunc = processDeviceFunc
 
 	// Create a ticker for regular scan intervals
@@ -67,7 +67,7 @@ func (s *Scanner) StartBackgroundScanner(ctx context.Context, processDeviceFunc 
 		case <-ticker.C:
 			// If we're not actively scanning, restart the continuous scanning process
 			if !scanInProgress.Load() {
-				s.log.Info("Regular scan interval triggered, restarting continuous scan")
+				s.log.Debug("Restarting continuous scan")
 				// Cancel any existing scan and create a new context
 				if cancelContinuousScan != nil {
 					cancelContinuousScan()
@@ -80,7 +80,7 @@ func (s *Scanner) StartBackgroundScanner(ctx context.Context, processDeviceFunc 
 		case <-watchdogTicker.C:
 			// Check if scanning is active, if not restart it
 			if !scanInProgress.Load() {
-				s.log.Info("Watchdog detected scan not running, restarting continuous scan")
+				s.log.Debug("Watchdog restarting scan")
 				// Cancel any existing scan and create a new context
 				if cancelContinuousScan != nil {
 					cancelContinuousScan()
@@ -117,10 +117,7 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 
 		s.log.Trace("Starting BLE scan cycle with live device processing...")
 
-		// Use the callback-based scanning for live updates
 		err := s.ble.StartScanningWithCallback(scanCtx, func(device ble.Device) {
-			// Process device immediately when discovered for real-time RSSI updates
-			s.log.Tracef("Live discovery: %s (%s) RSSI:%d", device.Name, device.MACAddress, device.RSSI)
 			if s.processDeviceFunc != nil {
 				s.processDeviceFunc(device)
 			}

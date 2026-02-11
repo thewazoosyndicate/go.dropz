@@ -140,10 +140,6 @@ p {
   background-color: var(--secondary-color);
 }
 
-.status-light.restarting {
-  background-color: var(--warning-color);
-  animation: blink 1s infinite;
-}
 
 .header-controls {
   display: flex;
@@ -288,13 +284,6 @@ p {
   font-size: 12px;
 }
 
-.restart-button {
-  background-color: var(--warning-color);
-}
-
-.restart-button:hover {
-  background-color: var(--warning-dark);
-}
 
 /* Toggle Switch Styles */
 .toggle-wrapper {

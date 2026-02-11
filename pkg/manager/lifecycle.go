@@ -3,70 +3,39 @@ package manager
 import (
 	"time"
 
+	"github.com/dropz/dropz/pkg/ble"
 	"github.com/dropz/dropz/pkg/database"
+	"github.com/dropz/dropz/pkg/manager/discovery"
+	syncpkg "github.com/dropz/dropz/pkg/manager/sync"
 )
 
 // Start starts the GoPro manager service
 func (m *GoProManager) Start() error {
 	m.log.Info("GoPro manager starting: mode=service version=1.0")
 
-	// Start BLE manager
-	m.ble.Start()
-
-	// Start task queue
-	m.queue.Start()
-
-	// Start background scanner
-	m.wg.Add(1)
-	go m.startBackgroundScanner()
-
-	// Start device manager
-	m.wg.Add(1)
-	go m.deviceManager()
-
-	m.isRunning = true
-
-	// ResetTransientStates resets transient camera states (is_syncing, is_pairing) on startup
 	m.ResetTransientStates()
 
-	// Perform initial sync of device pairing states with database
-	go func() {
-		// Wait a bit for BLE to be fully ready
-		time.Sleep(5 * time.Second)
-		m.log.Info("Device state synchronization: action=pairing_state_init phase=startup")
-		m.syncDevicePairingStates()
-	}()
+	m.wg.Add(2)
+	go m.startBackgroundScanner()
+	go m.deviceManager()
 
 	return nil
 }
 
 // Stop stops the GoPro manager service
 func (m *GoProManager) Stop() {
-	m.log.Infof("GoPro manager stopping: is_running=%t", m.isRunning)
-	if !m.isRunning {
-		m.log.Info("GoPro manager stop ignored: reason=not_running")
-		return
-	}
-
 	m.log.Info("GoPro manager shutdown: phase=initiated")
 
-	m.log.Debug("GoPro manager shutdown: phase=cancelling_context")
-	m.cancel() // Signal all internal goroutines to stop
-	m.log.Trace("GoPro manager shutdown: phase=context_cancelled")
-
-	m.log.Debug("GoPro manager shutdown: phase=stopping_task_queue")
-	m.queue.Stop() // This should be idempotent and handle being called multiple times
-	m.log.Debug("GoPro manager shutdown: phase=task_queue_stopped")
-
+	// Stop BLE first so active operations finish cleanly before context cancel
 	m.log.Debug("GoPro manager shutdown: phase=stopping_ble")
-	m.ble.Stop() // This should also be idempotent
-	m.log.Debug("GoPro manager shutdown: phase=ble_stopped")
+	m.ble.Stop()
+
+	m.log.Debug("GoPro manager shutdown: phase=cancelling_context")
+	m.cancel()
 
 	m.log.Debug("GoPro manager shutdown: phase=waiting_for_goroutines")
-	m.wg.Wait() // Wait for backgroundScanner and deviceManager
-	m.log.Debug("GoPro manager shutdown: phase=goroutines_completed")
+	m.wg.Wait()
 
-	m.isRunning = false
 	m.log.Info("GoPro manager shutdown: phase=completed status=success")
 }
 
@@ -91,17 +60,14 @@ func (m *GoProManager) deviceManager() {
 			return
 		case <-ticker.C:
 			// Sync device pairing states with database
-			m.syncDevicePairingStates()
+			m.pairingManager.SyncDevicePairingStates(m.notifier)
 			m.checkManagedDevices()
-			// Process sync queue to start sync tasks for pending cameras
-			m.processSyncQueue()
+			m.syncCoordinator.ProcessSyncQueue()
 		case <-m.immediateSyncTrigger:
-			// Immediate sync requested - process sync queue immediately
 			m.log.Debug("Immediate sync triggered - processing sync queue")
-			m.processSyncQueue()
+			m.syncCoordinator.ProcessSyncQueue()
 		case <-unreachableTicker.C:
-			// Mark unreachable devices (since we're no longer doing batch processing)
-			m.markUnreachableDevicesBackground()
+			m.discoveryProcessor.MarkUnreachableDevicesBackground(m.notifier)
 		}
 	}
 }
@@ -113,9 +79,6 @@ func (m *GoProManager) checkManagedDevices() {
 	config := m.db.GetConfig()
 
 	// Log the current sync configuration for debugging
-	m.log.Debugf("Current sync configuration: SyncEnabled=%v, DaysThreshold=%v",
-		config.SyncEnabled, config.DaysThreshold)
-
 	for _, camera := range syncCandidates {
 		// Never change status for cameras that are actively syncing or pairing
 		if camera.CameraState.Status.IsSyncing || camera.CameraState.Status.IsPairing {
@@ -130,18 +93,9 @@ func (m *GoProManager) checkManagedDevices() {
 			continue
 		}
 
-		// Double-check device pairing state for extra safety
-		macAddress := camera.CameraState.Camera.MACAddress
-		devicePaired, err := m.ble.IsPaired(macAddress)
-		if err != nil {
-			// If we can't check device state, fall back to database state
-			m.log.Tracef("Failed to check device pairing state for %s, using database state: %v",
-				camera.CameraState.Camera.Name, err)
-			devicePaired = camera.CameraState.Status.IsPaired
-		}
-
-		if !devicePaired {
-			m.log.Debugf("Camera %s is not paired on device, skipping sync", camera.CameraState.Camera.Name)
+		// SyncDevicePairingStates already ran on this tick, trust the DB
+		if !camera.CameraState.Status.IsPaired {
+			m.log.Debugf("Camera %s is not paired, skipping sync", camera.CameraState.Camera.Name)
 			continue
 		}
 
@@ -155,7 +109,7 @@ func (m *GoProManager) checkManagedDevices() {
 			syncEntry := &database.SyncQueueEntry{
 				CameraID:         camera.CameraState.Camera.ID,
 				QueuedAt:         time.Now(),
-				Priority:         SyncPriorityAuto, // Normal priority for automatic syncs
+				Priority:         syncpkg.SyncPriorityAuto,
 				ProgressPercent:  0,
 				CurrentOperation: "Waiting to start",
 			}
@@ -171,17 +125,13 @@ func (m *GoProManager) checkManagedDevices() {
 	}
 }
 
-// markUnreachableDevicesBackground marks cameras as unreachable in the background
-func (m *GoProManager) markUnreachableDevicesBackground() {
-	m.mutex.RLock()
-	notifier := m.notifier
-	discoveryProcessor := m.discoveryProcessor
-	m.mutex.RUnlock()
-
-	if discoveryProcessor != nil {
-		m.log.Trace("Running background cleanup for unreachable devices")
-		discoveryProcessor.MarkUnreachableDevicesBackground(notifier)
-	} else {
-		m.log.Warn("Discovery processor not available for background cleanup")
-	}
+// startBackgroundScanner starts the background scanner
+func (m *GoProManager) startBackgroundScanner() {
+	defer m.wg.Done()
+	config := m.db.GetConfig()
+	scanInterval := time.Duration(config.ScanIntervalSeconds) * time.Second
+	scanner := discovery.NewScanner(m.ble, m.log, scanInterval)
+	scanner.StartBackgroundScanner(m.ctx, func(device ble.Device) {
+		m.discoveryProcessor.ProcessDiscoveredDeviceLive(device, m.notifier)
+	})
 }

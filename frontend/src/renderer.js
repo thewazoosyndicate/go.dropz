@@ -6,7 +6,6 @@ const { logToFile, LOG_LEVELS } = require('./fileLogger');
 // DOM elements
 const statusLight = document.getElementById('status-light');
 const statusText = document.getElementById('status-text');
-const restartButton = document.getElementById('restart-service');
 const logContent = document.getElementById('log-content');
 const clearLogsButton = document.getElementById('clear-logs');
 const logLevelSelect = document.getElementById('log-level-select');
@@ -37,7 +36,6 @@ let isDarkMode = false;
 
 // Service state tracking
 let serviceRunning = false;
-let isRestarting = false;
 
 // GoPro devices state
 let allDevices = {}; // All detected devices by MAC address
@@ -52,6 +50,10 @@ let autoPair = false;
 
 // Streaming state
 let activeStream = null;
+
+// gRPC readiness gate - resolves when backend signals it's listening
+let grpcReadyResolve;
+let grpcReady = new Promise(resolve => { grpcReadyResolve = resolve; });
 
 // Variables to track connection state
 let connectionState = {
@@ -99,7 +101,6 @@ function init() {
   initializeToggles();
   
   // Set up event listeners
-  restartButton.addEventListener('click', restartService);
   clearLogsButton.addEventListener('click', clearLogs);
   pairAllToggle.addEventListener('change', togglePairAll);
   logLevelSelect.addEventListener('change', changeLogLevel);
@@ -128,25 +129,15 @@ function init() {
   // Periodically update device lists (to handle devices that may have gone offline)
   setInterval(cleanupDisconnectedDevices, 30000); // Check every 30 seconds
   
-  // Start streaming for gRPC-based device updates
-  setTimeout(() => {
+  // Wait for backend gRPC server to be ready before making any calls
+  grpcReady.then(() => {
     debugLog('Starting device streaming', LOG_LEVELS.INFO);
     startDeviceStreaming();
-    
-    // Load additional data after connection is established
-    setTimeout(() => {
-      // Load app configuration
-      loadConfig();
-      
-      // Load camera groups
-      loadGroups();
-      
-      // Load videos
-      loadVideos();
-      
-      debugLog('Initial data loading complete', LOG_LEVELS.INFO);
-    }, 2000); // Give time for streams to stabilize
-  }, 1000); // Delay initial connection slightly to allow backend to fully start
+    loadConfig();
+    loadGroups();
+    loadVideos();
+    debugLog('Initial data loading complete', LOG_LEVELS.INFO);
+  });
   
   // Handle app closing - cancel all streams
   window.addEventListener('beforeunload', () => {
@@ -397,7 +388,7 @@ function startManagedCamerasStream(client) {
       
       // Attempt to reconnect
       setTimeout(() => {
-        if (!isRestarting && serviceRunning) {
+        if (serviceRunning) {
           debugLog('Reconnecting to ManagedCameras stream after error', LOG_LEVELS.INFO);
           startManagedCamerasStream(client);
         }
@@ -409,7 +400,7 @@ function startManagedCamerasStream(client) {
       debugLog('ManagedCameras stream ended', LOG_LEVELS.INFO);
       
       // Attempt to reconnect if the stream ended unexpectedly
-      if (!activeStream.managedCamerasStream.intentionalCancel && !isRestarting && serviceRunning) {
+      if (!activeStream.managedCamerasStream.intentionalCancel && serviceRunning) {
         debugLog('Reconnecting to ManagedCameras stream after end', LOG_LEVELS.INFO);
         setTimeout(() => startManagedCamerasStream(client), calculateBackoffDelay());
       }
@@ -419,7 +410,7 @@ function startManagedCamerasStream(client) {
     debugLog(`Error starting ManagedCameras stream: ${error.message}`, LOG_LEVELS.ERROR);
     // Attempt to reconnect after a delay
     setTimeout(() => {
-      if (!isRestarting && serviceRunning) {
+      if (serviceRunning) {
         debugLog('Retrying ManagedCameras stream after connection error', LOG_LEVELS.INFO);
         startManagedCamerasStream(getClient());
       }
@@ -495,7 +486,7 @@ function startSyncQueueStream(client) {
       
       // Attempt to reconnect
       setTimeout(() => {
-        if (!isRestarting && serviceRunning) {
+        if (serviceRunning) {
           debugLog('Reconnecting to SyncQueue stream after error', LOG_LEVELS.INFO);
           startSyncQueueStream(client);
         }
@@ -507,7 +498,7 @@ function startSyncQueueStream(client) {
       debugLog('SyncQueue stream ended', LOG_LEVELS.INFO);
       
       // Attempt to reconnect if the stream ended unexpectedly
-      if (!activeStream.syncQueueStream.intentionalCancel && !isRestarting && serviceRunning) {
+      if (!activeStream.syncQueueStream.intentionalCancel && serviceRunning) {
         setTimeout(() => startSyncQueueStream(client), calculateBackoffDelay());
       }
     });
@@ -725,7 +716,7 @@ function handleConnectionFailure(error) {
     addLogEntry(`Connection lost. Retry in ${Math.round(delay/1000)} seconds`, 'warn');
     
     setTimeout(() => {
-      if (!isRestarting && serviceRunning) {
+      if (serviceRunning) {
         startDeviceStreaming();
       }
     }, delay);
@@ -904,32 +895,11 @@ function setupIpcListeners() {
   // Listen for Go binary status updates
   ipcRenderer.on('go-binary-status', (event, data) => {
     debugLog(`Received go-binary-status: ${JSON.stringify(data)}`);
-    
-    // If we're in a restart process, we expect to receive a 'stopped' status
-    // followed by a 'running' status, so handle it appropriately
-    if (isRestarting && !data.running) {
-      debugLog('Service stopped as part of restart process', LOG_LEVELS.INFO);
-      updateStatus(false, data.exitCode);
-      return;
-    }
-    
     updateStatus(data.running, data.exitCode);
-    
+
     if (data.running) {
       addLogEntry('Service started', 'info');
-      
-      // If this is part of a restart, don't automatically start streaming
-      // as the restart function will handle that after its timeout
-      if (!isRestarting) {
-        // Start streaming if service is running
-        setTimeout(() => {
-          // Give the gRPC server a moment to start up
-          debugLog('Starting device streaming after service start', LOG_LEVELS.INFO);
-          startDeviceStreaming();
-        }, 2000);
-      } else {
-        debugLog('Service restarted, streaming will be initiated by restart handler', LOG_LEVELS.INFO);
-      }
+      grpcReadyResolve();
     } else {
       // Cancel any active streams when the service stops to prevent reconnection attempts
       if (activeStream) {
@@ -1002,14 +972,7 @@ function updateStatus(running, exitCode) {
   
   serviceRunning = running;
   
-  if (isRestarting) {
-    statusLight.className = 'status-light restarting';
-    statusText.textContent = 'Restarting...';
-    restartButton.disabled = true;
-    
-    // Don't attempt connection checks or streaming while restarting
-    return;
-  } else if (running) {
+  if (running) {
     statusLight.className = 'status-light running';
     
     // Keep any existing error state in the status text if we're not explicitly checking connection
@@ -1017,8 +980,6 @@ function updateStatus(running, exitCode) {
         statusText.textContent !== 'Running (gRPC connection error)') {
       statusText.textContent = 'Running';
     }
-    
-    restartButton.disabled = false;
     
     // If the backend process is running but we can't connect to gRPC, show a warning
     // Only make this gRPC check after a status change to prevent excessive calls
@@ -1053,28 +1014,7 @@ function updateStatus(running, exitCode) {
     }
     
     statusText.textContent = statusMessage;
-    restartButton.disabled = false;
   }
-}
-
-// Restart the Go binary service
-function restartService() {
-  // Set restart flag to prevent reconnection attempts during restart
-  isRestarting = true;
-  
-  debugLog('Full application refresh requested', LOG_LEVELS.INFO);
-  addLogEntry('Refreshing application...', 'info');
-  
-  // Reset connection state
-  connectionState.retryCount = 0;
-  connectionState.isConnecting = false;
-  
-  // Small delay to allow log messages to be displayed
-  setTimeout(() => {
-    debugLog('Performing full page refresh', LOG_LEVELS.INFO);
-    // Force a full browser refresh (equivalent to Ctrl+R)
-    window.location.reload(true); // true forces a reload from server, not from cache
-  }, 500);
 }
 
 // Add a log entry to the log display
@@ -1226,12 +1166,11 @@ function loadCurrentLogLevel() {
   const select = document.getElementById('backend-log-level-select');
   if (!select) return;
 
-  // Set default to info if not set
   const currentLevel = localStorage.getItem('logLevel') || 'info';
   select.value = currentLevel;
 
-  // Update the backend log level
-  updateSetting('log_level', currentLevel);
+  // Defer backend call until gRPC is ready
+  grpcReady.then(() => updateSetting('log_level', currentLevel));
 }
 
 // Add or update a device in the global tracking

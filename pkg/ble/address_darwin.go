@@ -9,6 +9,9 @@ import (
 )
 
 func parseAddress(addr string) (bluetooth.Address, error) {
+	if _, err := bluetooth.ParseUUID(addr); err != nil {
+		return bluetooth.Address{}, fmt.Errorf("invalid BLE UUID: %v", err)
+	}
 	var a bluetooth.Address
 	a.Set(addr)
 	return a, nil

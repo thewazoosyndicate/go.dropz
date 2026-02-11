@@ -698,7 +698,7 @@ proto.dropz.Camera.toObject = function(includeInstance, msg) {
     id: jspb.Message.getFieldWithDefault(msg, 1, ""),
     name: jspb.Message.getFieldWithDefault(msg, 2, ""),
     alias: jspb.Message.getFieldWithDefault(msg, 3, ""),
-    macAddress: jspb.Message.getFieldWithDefault(msg, 4, ""),
+    bleAddress: jspb.Message.getFieldWithDefault(msg, 4, ""),
     wifiSsid: jspb.Message.getFieldWithDefault(msg, 5, ""),
     wifiPassword: jspb.Message.getFieldWithDefault(msg, 6, ""),
     rssi: jspb.Message.getFieldWithDefault(msg, 7, 0)
@@ -752,7 +752,7 @@ proto.dropz.Camera.deserializeBinaryFromReader = function(msg, reader) {
       break;
     case 4:
       var value = /** @type {string} */ (reader.readString());
-      msg.setMacAddress(value);
+      msg.setBleAddress(value);
       break;
     case 5:
       var value = /** @type {string} */ (reader.readString());
@@ -816,7 +816,7 @@ proto.dropz.Camera.serializeBinaryToWriter = function(message, writer) {
       f
     );
   }
-  f = message.getMacAddress();
+  f = message.getBleAddress();
   if (f.length > 0) {
     writer.writeString(
       4,
@@ -902,10 +902,10 @@ proto.dropz.Camera.prototype.setAlias = function(value) {
 
 
 /**
- * optional string mac_address = 4;
+ * optional string ble_address = 4;
  * @return {string}
  */
-proto.dropz.Camera.prototype.getMacAddress = function() {
+proto.dropz.Camera.prototype.getBleAddress = function() {
   return /** @type {string} */ (jspb.Message.getFieldWithDefault(this, 4, ""));
 };
 
@@ -914,7 +914,7 @@ proto.dropz.Camera.prototype.getMacAddress = function() {
  * @param {string} value
  * @return {!proto.dropz.Camera} returns this
  */
-proto.dropz.Camera.prototype.setMacAddress = function(value) {
+proto.dropz.Camera.prototype.setBleAddress = function(value) {
   return jspb.Message.setProto3StringField(this, 4, value);
 };
 

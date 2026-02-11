@@ -23,7 +23,8 @@ const (
 // SyncTask represents a camera sync task
 type SyncTask struct {
 	CameraID   string
-	MACAddress string
+	DBKey      string
+	BLEAddress string
 	CameraName string
 	Cancel     context.CancelFunc
 	Ctx        context.Context
@@ -98,12 +99,15 @@ func (c *Coordinator) ProcessSyncQueue() {
 		}
 
 		c.log.Infof("Starting sync for camera %s", camera.Camera.Name)
-		c.db.UpdateCameraSyncingStatus(camera.Camera.MACAddress, true)
+		// Look up the DB key for this camera
+		dbKey, _, _, _ := c.db.GetCameraIdentifiers(camera.Camera.ID)
+		c.db.UpdateCameraSyncingStatus(dbKey, true)
 
 		taskCtx, taskCancel := context.WithCancel(c.ctx)
 		syncTask := &SyncTask{
 			CameraID:   camera.Camera.ID,
-			MACAddress: camera.Camera.MACAddress,
+			DBKey:      dbKey,
+			BLEAddress: camera.Camera.BLEAddress,
 			CameraName: camera.Camera.Name,
 			Cancel:     taskCancel,
 			Ctx:        taskCtx,
@@ -127,8 +131,7 @@ func (c *Coordinator) ForceSync(cameraID string) (*database.SyncQueueEntry, erro
 		return nil, fmt.Errorf("camera %s must be managed and paired before syncing", camera.Camera.Name)
 	}
 
-	mac := camera.Camera.MACAddress
-	name := camera.Camera.Name
+	dbKey, _, name, _ := c.db.GetCameraIdentifiers(cameraID)
 
 	for _, entry := range c.db.GetSyncQueue() {
 		if entry.CameraID == cameraID {
@@ -149,7 +152,7 @@ func (c *Coordinator) ForceSync(cameraID string) (*database.SyncQueueEntry, erro
 		return nil, fmt.Errorf("failed to add camera to sync queue: %v", err)
 	}
 
-	c.db.ResetSyncStatus(mac)
+	c.db.ResetSyncStatus(dbKey)
 	c.log.Infof("Added camera %s to sync queue", name)
 	c.notifier()
 
@@ -158,7 +161,7 @@ func (c *Coordinator) ForceSync(cameraID string) (*database.SyncQueueEntry, erro
 
 // CancelSync cancels an ongoing sync operation and removes the camera from the sync queue
 func (c *Coordinator) CancelSync(cameraID string) error {
-	mac, name, found := c.db.GetCameraIdentifiers(cameraID)
+	dbKey, _, name, found := c.db.GetCameraIdentifiers(cameraID)
 	if !found {
 		return fmt.Errorf("camera with ID %s not found", cameraID)
 	}
@@ -176,7 +179,7 @@ func (c *Coordinator) CancelSync(cameraID string) error {
 	c.mutex.Unlock()
 
 	c.db.RemoveSyncQueueEntry(cameraID)
-	c.db.UpdateCameraSyncingStatus(mac, false)
+	c.db.UpdateCameraSyncingStatus(dbKey, false)
 	c.log.Infof("Cancelled sync for camera %s", name)
 	c.notifier()
 
@@ -189,12 +192,12 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		c.mutex.Lock()
 		delete(c.activeTasks, task.CameraID)
 		c.mutex.Unlock()
+		c.db.UpdateCameraSyncingStatus(task.DBKey, false)
 		c.db.RemoveSyncQueueEntry(task.CameraID)
-		c.db.UpdateCameraSyncingStatus(task.MACAddress, false)
 		c.notifier()
 	}()
 
-	c.log.Infof("Syncing camera %s (%s)", task.CameraName, task.MACAddress)
+	c.log.Infof("Syncing camera %s (%s)", task.CameraName, task.BLEAddress)
 
 	camera, found := c.db.GetCameraByID(task.CameraID)
 	if !found {
@@ -222,7 +225,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 	updateProgress("Connecting via BLE", 10)
 
 	connErr := c.bleOperation(syncCtx, "ConnectForSync", func() error {
-		return c.ble.Connect(camera.Camera.MACAddress)
+		return c.ble.Connect(task.BLEAddress)
 	})
 	if connErr != nil {
 		updateProgress("BLE Connection Failed", syncEntry.ProgressPercent)
@@ -232,7 +235,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 
 	defer func() {
 		disconnectErr := c.bleOperation(syncCtx, "DisconnectAfterSync", func() error {
-			return c.ble.Disconnect(camera.Camera.MACAddress)
+			return c.ble.Disconnect(task.BLEAddress)
 		})
 		if disconnectErr != nil {
 			c.log.Warnf("Failed to disconnect from BLE after sync: %v", disconnectErr)
@@ -250,7 +253,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 			case <-keepAliveCtx.Done():
 				return
 			case <-ticker.C:
-				if err := c.ble.KeepAlive(camera.Camera.MACAddress); err != nil {
+				if err := c.ble.KeepAlive(task.BLEAddress); err != nil {
 					c.log.Debugf("Keep-alive failed: %v", err)
 				}
 			}
@@ -326,13 +329,9 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 
 	c.log.Infof("Download complete for camera %s: %d files downloaded", camera.Camera.Name, len(downloadedFiles))
 
-	// Step 5: Finalize
-	updateProgress("Processing files", 90)
-
-	c.db.MarkCameraSynced(task.MACAddress)
+	// Step 5: Finalize — defer handles IsSyncing=false, queue cleanup, and notification
+	c.db.MarkCameraSynced(task.DBKey)
 	c.log.Infof("Camera %s synced successfully, %d files downloaded", task.CameraName, len(downloadedFiles))
-
-	updateProgress("Completed", 100)
 }
 
 // GetVideosByCamera returns videos for a specific camera

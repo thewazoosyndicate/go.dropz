@@ -352,7 +352,7 @@ func (m *Manager) connectBase(macAddress string) (hwInfo *HardwareInfo, err erro
 // finishConnection performs post-connect setup: metadata collection and callback.
 func (m *Manager) finishConnection(macAddress string, hwInfo *HardwareInfo, ssid, password string) {
 	metadata := CameraMetadata{
-		MACAddress:   macAddress,
+		BLEAddress:   macAddress,
 		WiFiSSID:     ssid,
 		WiFiPassword: password,
 	}
@@ -626,7 +626,7 @@ func (m *Manager) ConnectForPairing(macAddress string) (err error) {
 		m.mutex.RUnlock()
 		if callback != nil {
 			callback(CameraMetadata{
-				MACAddress:   macAddress,
+				BLEAddress:   macAddress,
 				WiFiSSID:     ssid,
 				WiFiPassword: password,
 			})
@@ -790,12 +790,12 @@ func (m *Manager) addDiscoveredDevice(result bluetooth.ScanResult) {
 		// Create new device
 		device := &Device{
 			Name:       localName,
-			MACAddress: macAddress,
+			BLEAddress: macAddress,
 			RSSI:       rssi,
 			LastSeen:   now,
 		}
 		m.discoveredDevices[macAddress] = device
-		m.log.Infof("Discovered new GoPro device: %s (%s) RSSI:%d", device.Name, device.MACAddress, device.RSSI)
+		m.log.Infof("Discovered new GoPro device: %s (%s) RSSI:%d", device.Name, device.BLEAddress, device.RSSI)
 
 		if m.discoveryCallback != nil {
 			deviceCopy := *device

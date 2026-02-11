@@ -13,8 +13,7 @@
     "build": "electron-builder",
     "test-build": "./test-build.sh",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "cd .. && bin/build.sh && cd frontend && npm start",
-    "dev-with-deps": "cd .. && bin/build.sh --install-deps && cd frontend && npm start"
+    "dev": "cd .. && make build && cd frontend && npm start"
   },
   "license": "ISC",
   "devDependencies": {

@@ -140,6 +140,10 @@ p {
   background-color: var(--secondary-color);
 }
 
+.status-light.reconnecting {
+  background-color: var(--warning-color);
+  animation: blink 1.5s infinite;
+}
 
 .header-controls {
   display: flex;
@@ -279,6 +283,11 @@ p {
   transform: translateY(1px);
 }
 
+.button:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
 .small-button {
   padding: 6px 12px;
   font-size: 12px;
@@ -314,7 +323,11 @@ p {
   bottom: 0;
   background-color: #ccc;
   border-radius: 20px;
-  transition: .4s;
+  transition: var(--transition-speed);
+}
+
+[data-theme="dark"] .toggle-slider {
+  background-color: #555;
 }
 
 .toggle-slider:before {
@@ -326,15 +339,15 @@ p {
   bottom: 3px;
   background-color: white;
   border-radius: 50%;
-  transition: .4s;
+  transition: var(--transition-speed);
 }
 
 input:checked + .toggle-slider {
   background-color: var(--secondary-color);
 }
 
-input:focus + .toggle-slider {
-  box-shadow: 0 0 1px var(--secondary-color);
+input:focus-visible + .toggle-slider {
+  box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.3);
 }
 
 input:checked + .toggle-slider:before {
@@ -386,7 +399,6 @@ input:checked + .toggle-slider:before {
   min-height: 250px;
   max-height: 280px;
   gap: 8px;
-  transition: background-color 0.3s ease, border-color 0.3s ease;
   border-left: 4px solid var(--border-color);
 }
 
@@ -395,34 +407,17 @@ input:checked + .toggle-slider:before {
   box-shadow: var(--shadow-md);
 }
 
-/* Status-specific card styling with left border indication */
-.device-card.status-discovered {
-  border-left-color: #9b59b6; /* Purple */
-}
+/* Status color definitions — single source of truth */
+.status-discovered  { --status-color: #9b59b6; --status-bg: #f3e5f5; --status-dark-bg: rgba(155,89,182,0.2); --status-dark-color: #d6b6e6; }
+.status-available   { --status-color: #2ecc71; --status-bg: #e8f5e9; --status-dark-bg: rgba(46,204,113,0.2); --status-dark-color: #7eeaa0; }
+.status-unavailable { --status-color: #e74c3c; --status-bg: #ffebee; --status-dark-bg: rgba(231,76,60,0.2);  --status-dark-color: #f5938a; }
+.status-managed     { --status-color: #3498db; --status-bg: #e3f2fd; --status-dark-bg: rgba(52,152,219,0.2); --status-dark-color: #7dc1f2; }
+.status-syncing     { --status-color: #f39c12; --status-bg: #fff3e0; --status-dark-bg: rgba(243,156,18,0.2); --status-dark-color: #fbc16d; }
+.status-pairing     { --status-color: #e67e22; --status-bg: #fbe9e7; --status-dark-bg: rgba(230,126,34,0.2); --status-dark-color: #f6b482; }
+.status-unreachable { --status-color: #95a5a6; --status-bg: #f5f5f5; --status-dark-bg: rgba(149,165,166,0.2); --status-dark-color: #bcc6c7; }
 
-.device-card.status-available {
-  border-left-color: #2ecc71; /* Green */
-}
-
-.device-card.status-unavailable {
-  border-left-color: #e74c3c; /* Red */
-}
-
-.device-card.status-managed {
-  border-left-color: #3498db; /* Blue */
-}
-
-.device-card.status-syncing {
-  border-left-color: #f39c12; /* Orange */
-}
-
-.device-card.status-pairing {
-  border-left-color: #e67e22; /* Dark orange */
-}
-
-.device-card.status-unreachable {
-  border-left-color: #95a5a6; /* Gray */
-}
+/* Card left border */
+.device-card[class*="status-"] { border-left-color: var(--status-color); }
 
 .device-header {
   display: flex;
@@ -442,7 +437,7 @@ input:checked + .toggle-slider:before {
   max-width: 70%;
 }
 
-/* Status badge styles */
+/* Status badge */
 .status-badge {
   display: inline-block;
   padding: 2px 8px;
@@ -453,74 +448,18 @@ input:checked + .toggle-slider:before {
   text-transform: uppercase;
   color: white;
   vertical-align: middle;
+  background-color: var(--status-color);
 }
 
-/* Visual Status Colors for the new status representations */
-.status-badge.status-discovered {
-  background-color: #9b59b6; /* Purple for discovered */
-}
+.status-badge.status-syncing,
+.status-badge.status-pairing { animation: pulse 1s infinite; }
 
-.status-badge.status-available {
-  background-color: #2ecc71; /* Green for available */
-}
+[data-theme="dark"] .status-badge { opacity: 0.9; }
 
-.status-badge.status-unavailable {
-  background-color: #e74c3c; /* Red for unavailable */
-}
-
-.status-badge.status-managed {
-  background-color: #3498db; /* Blue for managed */
-}
-
-.status-badge.status-syncing {
-  background-color: #f39c12; /* Orange for syncing */
-  animation: pulse 1s infinite;
-}
-
-.status-badge.status-pairing {
-  background-color: #e67e22; /* Dark orange for pairing */
-  animation: pulse 1s infinite;
-}
-
-.status-badge.status-unreachable {
-  background-color: #95a5a6; /* Gray for unreachable */
-}
-
-/* Legacy support for old status codes */
-.status-badge.status-d {
-  background-color: #9b59b6; /* Purple for discovered */
-}
-
-.status-badge.status-m {
-  background-color: #3498db; /* Blue for managed */
-}
-
-.status-badge.status-pr, 
-.status-badge.status-paired {
-  background-color: #2ecc71; /* Green for paired and reachable */
-}
-
-.status-badge.status-pu {
-  background-color: #95a5a6; /* Gray for paired but unreachable */
-}
-
-.status-badge.status-sp {
-  background-color: #1abc9c; /* Teal for sync pending */
-  animation: pulse 1s infinite;
-}
-
-.status-badge.status-err {
-  background-color: #e74c3c; /* Red for error */
-}
-
-/* Dark mode adjustments */
-[data-theme="dark"] .status-badge {
-  opacity: 0.9;
-}
-
+/* Device status label */
 .device-status {
   font-size: 0.8rem;
-  color: var(--text-secondary);
+  color: var(--status-color);
   margin-top: 2px;
   text-overflow: ellipsis;
   overflow: hidden;
@@ -528,82 +467,15 @@ input:checked + .toggle-slider:before {
   padding: 3px 8px;
   border-radius: 4px;
   display: inline-block;
+  background-color: var(--status-bg);
 }
 
-/* Specific styling for each visual status */
-.device-status.status-discovered {
-  background-color: #f3e5f5; /* Light purple */
-  color: #9b59b6; /* Purple */
-}
+.device-status.status-syncing,
+.device-status.status-pairing { animation: pulse 1.5s infinite; }
 
-.device-status.status-available {
-  background-color: #e8f5e9; /* Light green */
-  color: #2ecc71; /* Green */
-}
-
-.device-status.status-unavailable {
-  background-color: #ffebee; /* Light red */
-  color: #e74c3c; /* Red */
-}
-
-.device-status.status-managed {
-  background-color: #e3f2fd; /* Light blue */
-  color: #3498db; /* Blue */
-}
-
-.device-status.status-syncing {
-  background-color: #fff3e0; /* Light orange */
-  color: #f39c12; /* Orange */
-  animation: pulse 1.5s infinite;
-}
-
-.device-status.status-pairing {
-  background-color: #fbe9e7; /* Light dark orange */
-  color: #e67e22; /* Dark orange */
-  animation: pulse 1.5s infinite;
-}
-
-.device-status.status-unreachable {
-  background-color: #f5f5f5; /* Light gray */
-  color: #95a5a6; /* Gray */
-}
-
-/* Dark theme variations */
-[data-theme="dark"] .device-status.status-discovered {
-  background-color: rgba(155, 89, 182, 0.2); /* Semi-transparent purple */
-  color: #d6b6e6; /* Light purple */
-}
-
-[data-theme="dark"] .device-status.status-available {
-  background-color: rgba(46, 204, 113, 0.2); /* Semi-transparent green */
-  color: #7eeaa0; /* Light green */
-}
-
-[data-theme="dark"] .device-status.status-unavailable {
-  background-color: rgba(231, 76, 60, 0.2); /* Semi-transparent red */
-  color: #f5938a; /* Light red */
-}
-
-[data-theme="dark"] .device-status.status-managed {
-  background-color: rgba(52, 152, 219, 0.2); /* Semi-transparent blue */
-  color: #7dc1f2; /* Light blue */
-}
-
-[data-theme="dark"] .device-status.status-syncing {
-  background-color: rgba(243, 156, 18, 0.2); /* Semi-transparent orange */
-  color: #fbc16d; /* Light orange */
-  animation: pulse 1.5s infinite;
-}
-
-[data-theme="dark"] .device-status.status-pairing {
-  background-color: rgba(230, 126, 34, 0.2); /* Semi-transparent dark orange */
-  color: #f6b482; /* Light dark orange */
-  animation: pulse 1.5s infinite;
-}
-
-[data-theme="dark"] .device-status.status-unreachable {
-  background-color: rgba(149, 165, 166, 0.2); /* Semi-transparent gray */
-  color: #bcc6c7; /* Light gray */
+[data-theme="dark"] .device-status {
+  background-color: var(--status-dark-bg);
+  color: var(--status-dark-color);
 }
 
 .device-info {
@@ -635,7 +507,7 @@ input:checked + .toggle-slider:before {
 }
 
 .model-info {
-  background-color: #f8f9fa;
+  background-color: var(--light-bg);
   padding: 6px 10px;
   border-radius: 4px;
   font-size: 0.8rem;
@@ -660,13 +532,9 @@ input:checked + .toggle-slider:before {
 
 .signal-bar {
   width: 3px;
-  background-color: #ddd;
+  background-color: var(--border-color);
   border-radius: 1px;
   transition: background-color 0.3s ease;
-}
-
-[data-theme="dark"] .signal-bar {
-  background-color: #444;
 }
 
 .signal-bar:nth-child(1) {
@@ -741,6 +609,15 @@ input:checked + .toggle-slider:before {
   max-width: 100%;
 }
 
+.battery-icon.charging .battery-fill {
+  animation: charging-pulse 2s ease-in-out infinite;
+}
+
+@keyframes charging-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 .battery-fill.battery-low {
   background-color: var(--danger-color);
 }
@@ -762,6 +639,21 @@ input:checked + .toggle-slider:before {
 
 .action-button {
   flex: 1;
+}
+
+.action-button.in-progress {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.action-button.queued {
+  background-color: var(--warning-color);
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.action-button.queued:hover {
+  background-color: var(--warning-dark);
 }
 
 .pair-button {
@@ -972,12 +864,7 @@ input:checked + .toggle-slider:before {
 
 .log-entry {
   padding: 4px 0;
-  border-bottom: 1px dashed #eee;
-  transition: border-color 0.3s ease;
-}
-
-[data-theme="dark"] .log-entry {
-  border-bottom-color: #333;
+  border-bottom: 1px dashed var(--border-color);
 }
 
 .log-entry.error {
@@ -997,6 +884,16 @@ input:checked + .toggle-slider:before {
   cursor: pointer;
   transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
   color: var(--text-primary);
+}
+
+.select-dropdown:hover {
+  border-color: var(--primary-color);
+}
+
+.select-dropdown:focus-visible {
+  border-color: var(--primary-color);
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
 }
 
 [data-theme="dark"] .select-dropdown {
@@ -1026,8 +923,7 @@ input:checked + .toggle-slider:before {
 }
 
 /* Hide all detailed info in list view */
-.devices-list .device-info,
-.devices-list .essential-info {
+.devices-list .device-info {
   display: none;
 }
 
@@ -1056,14 +952,6 @@ input:checked + .toggle-slider:before {
 /* Hide status in list view */
 .devices-list .device-status {
   display: none;
-}
-
-/* Show only the RSSI signal bars */
-.devices-list .device-signal-compact {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  margin-left: 10px;
 }
 
 .devices-list .rssi-value {
@@ -1254,6 +1142,101 @@ input:checked + .toggle-slider:before {
   transition: color 0.3s ease;
 }
 
+.setting-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.setting-value {
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-family: monospace;
+  color: var(--primary-color);
+  background: rgba(52,152,219,0.1);
+  padding: 1px 8px;
+  border-radius: 4px;
+  min-width: 45px;
+  text-align: center;
+}
+
+.setting-description {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+.setting-item:has(.setting-slider) {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+/* Range slider */
+.setting-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border-color);
+  outline: none;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+}
+
+.setting-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: white;
+  border: 2px solid var(--border-color);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+
+.setting-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.setting-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: white;
+  border: 2px solid var(--border-color);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+
+.setting-slider::-moz-range-thumb:hover {
+  transform: scale(1.15);
+}
+
+.setting-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border-color);
+  border: none;
+}
+
+[data-theme="dark"] .setting-slider::-webkit-slider-thumb {
+  background: #2c2c2c;
+}
+
+[data-theme="dark"] .setting-slider::-moz-range-thumb {
+  background: #2c2c2c;
+}
+
+.setting-slider:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 4px;
+}
+
 .setting-control {
   display: flex;
   align-items: center;
@@ -1274,6 +1257,16 @@ input:checked + .toggle-slider:before {
   font-size: 0.9rem;
   width: 100px;
   transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+}
+
+.setting-input:hover, .setting-select:hover {
+  border-color: var(--primary-color);
+}
+
+.setting-input:focus-visible, .setting-select:focus-visible {
+  border-color: var(--primary-color);
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
 }
 
 .setting-control.full-width .setting-input {
@@ -1305,4 +1298,68 @@ input:checked + .toggle-slider:before {
   0% { background-color: rgba(52, 152, 219, 0); }
   50% { background-color: rgba(52, 152, 219, 0.2); }
   100% { background-color: rgba(52, 152, 219, 0); }
+}
+
+/* Toast Notifications */
+#toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  max-width: 380px;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-radius: 6px;
+  color: white;
+  font-size: 0.9rem;
+  box-shadow: var(--shadow-md);
+  animation: toast-slide-in 0.3s ease;
+  cursor: default;
+}
+
+.toast.removing {
+  animation: toast-slide-out 0.3s ease forwards;
+}
+
+.toast.success { background-color: var(--secondary-dark); }
+.toast.error   { background-color: var(--danger-dark); }
+.toast.info    { background-color: var(--primary-dark); }
+
+.toast-close {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 1.1rem;
+  cursor: pointer;
+  opacity: 0.7;
+  margin-left: 12px;
+  padding: 0 4px;
+}
+
+.toast-close:hover { opacity: 1; }
+
+@keyframes toast-slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+@keyframes toast-slide-out {
+  from { transform: translateX(0);    opacity: 1; }
+  to   { transform: translateX(100%); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

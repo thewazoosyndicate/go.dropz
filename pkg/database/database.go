@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"github.com/dropz/dropz/pkg/protocol"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -98,17 +97,6 @@ type VideoFile struct {
 	HasProcessed    bool      `json:"has_processed"`
 }
 
-// LogEntry represents a system log entry
-type LogEntry struct {
-	Timestamp  time.Time `json:"timestamp"`
-	Level      string    `json:"level"`
-	Message    string    `json:"message"`
-	CameraID   string    `json:"camera_id"`
-	Component  string    `json:"component"`
-	SourceFile string    `json:"source_file"`
-	LineNumber int32     `json:"line_number"`
-}
-
 // Config represents the system-wide configuration settings
 type Config struct {
 	PairModeEnabled               bool      `json:"pair_mode_enabled"`
@@ -130,11 +118,9 @@ type Database struct {
 	SyncQueue    []*SyncQueueEntry `json:"sync_queue"`
 	Groups       []*Group          `json:"groups"`
 	Videos       []*VideoFile      `json:"videos"`
-	Logs         []*LogEntry       `json:"logs"`
 	Config       Config            `json:"config"`
 	filePath     string
 	mutex        sync.RWMutex
-	log          *logrus.Logger
 }
 
 // databaseJSON is the JSON-serializable representation of Database.
@@ -143,7 +129,6 @@ type databaseJSON struct {
 	SyncQueue    []*SyncQueueEntry           `json:"sync_queue"`
 	Groups       []*Group                    `json:"groups"`
 	Videos       []*VideoFile                `json:"videos"`
-	Logs         []*LogEntry                 `json:"logs"`
 	Config       Config                      `json:"config"`
 }
 
@@ -153,7 +138,6 @@ func (db *Database) MarshalJSON() ([]byte, error) {
 		SyncQueue:    db.SyncQueue,
 		Groups:       db.Groups,
 		Videos:       db.Videos,
-		Logs:         db.Logs,
 		Config:       db.Config,
 	})
 }
@@ -167,7 +151,6 @@ func (db *Database) UnmarshalJSON(data []byte) error {
 	db.SyncQueue = aux.SyncQueue
 	db.Groups = aux.Groups
 	db.Videos = aux.Videos
-	db.Logs = aux.Logs
 	db.Config = aux.Config
 	return nil
 }
@@ -183,9 +166,7 @@ func GetDatabase() *Database {
 			SyncQueue:    make([]*SyncQueueEntry, 0),
 			Groups:       make([]*Group, 0),
 			Videos:       make([]*VideoFile, 0),
-			Logs:         make([]*LogEntry, 0),
 			Config:       DefaultConfig(),
-			log:          logrus.New(),
 		}
 	})
 	return instance
@@ -210,7 +191,6 @@ func (db *Database) Initialize(filePath string) error {
 		if err := db.saveToFile(); err != nil {
 			return fmt.Errorf("failed to create database file: %v", err)
 		}
-		db.log.WithFields(logrus.Fields{"path": filePath}).Info("Created new database file")
 		return nil
 	}
 
@@ -229,7 +209,6 @@ func (db *Database) loadFromFile() error {
 		return fmt.Errorf("failed to unmarshal database: %v", err)
 	}
 
-	db.log.WithFields(logrus.Fields{"path": db.filePath, "cameras_count": len(db.cameraStates), "groups_count": len(db.Groups), "videos_count": len(db.Videos)}).Info("Loaded database from file")
 	return nil
 }
 
@@ -255,12 +234,6 @@ func (db *Database) saveToFile() error {
 func (db *Database) AddOrUpdateDiscoveredCamera(camera *DiscoveredCamera) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
-
-	_, exists := db.cameraStates[camera.CameraState.Camera.MACAddress]
-	if !exists {
-		db.log.Infof("New camera discovered: %s (%s)",
-			camera.CameraState.Camera.Name, camera.CameraState.Camera.MACAddress)
-	}
 
 	db.cameraStates[camera.CameraState.Camera.MACAddress] = camera.CameraState
 
@@ -332,16 +305,12 @@ func (db *Database) AddSyncQueueEntry(entry *SyncQueueEntry) error {
 	// Check if the camera is already in the queue
 	for _, existing := range db.SyncQueue {
 		if existing.CameraID == entry.CameraID {
-			// Already in queue, update it
 			*existing = *entry
-			db.log.Debug("Sync queue entry updated", "camera_id", entry.CameraID, "operation", entry.CurrentOperation, "progress", entry.ProgressPercent)
 			return db.saveToFile()
 		}
 	}
 
-	// Add to queue
 	db.SyncQueue = append(db.SyncQueue, entry)
-	db.log.WithFields(logrus.Fields{"camera_id": entry.CameraID, "operation": entry.CurrentOperation, "queue_length": len(db.SyncQueue)}).Info("Camera added to sync queue")
 	return db.saveToFile()
 }
 
@@ -372,11 +341,9 @@ func (db *Database) UpdateSyncQueueEntry(entry *SyncQueueEntry) error {
 	for i, existing := range db.SyncQueue {
 		if existing.CameraID == entry.CameraID {
 			db.SyncQueue[i] = entry
-			db.log.Debug("Sync queue entry progress updated", "camera_id", entry.CameraID, "operation", entry.CurrentOperation, "progress", entry.ProgressPercent)
 			return db.saveToFile()
 		}
 	}
-	db.log.Warn("Attempted to update non-existent sync queue entry", "camera_id", entry.CameraID)
 	return fmt.Errorf("sync queue entry for camera %s not found", entry.CameraID)
 }
 
@@ -387,15 +354,12 @@ func (db *Database) RemoveSyncQueueEntry(cameraID string) error {
 
 	for i, entry := range db.SyncQueue {
 		if entry.CameraID == cameraID {
-			// Remove entry by replacing it with the last one and truncating
 			db.SyncQueue[i] = db.SyncQueue[len(db.SyncQueue)-1]
 			db.SyncQueue = db.SyncQueue[:len(db.SyncQueue)-1]
-			db.log.WithFields(logrus.Fields{"camera_id": cameraID, "queue_length": len(db.SyncQueue)}).Info("Camera removed from sync queue")
 			return db.saveToFile()
 		}
 	}
-	db.log.Trace("Camera not found in sync queue for removal", "camera_id", cameraID)
-	return nil // Not found, not an error
+	return nil
 }
 
 // AddOrUpdateGroup adds or updates a group
@@ -406,14 +370,11 @@ func (db *Database) AddOrUpdateGroup(group *Group) error {
 	for i, existing := range db.Groups {
 		if existing.ID == group.ID {
 			db.Groups[i] = group
-			db.log.WithFields(logrus.Fields{"group_id": group.ID, "group_name": group.Name, "camera_count": len(group.CameraIDs)}).Info("Group updated")
 			return db.saveToFile()
 		}
 	}
 
-	// Add new group
 	db.Groups = append(db.Groups, group)
-	db.log.WithFields(logrus.Fields{"group_id": group.ID, "group_name": group.Name, "camera_count": len(group.CameraIDs), "total_groups": len(db.Groups)}).Info("Group created")
 	return db.saveToFile()
 }
 
@@ -448,14 +409,11 @@ func (db *Database) RemoveGroup(id string) error {
 
 	for i, group := range db.Groups {
 		if group.ID == id {
-			// Remove group by replacing it with the last one and truncating
 			db.Groups[i] = db.Groups[len(db.Groups)-1]
 			db.Groups = db.Groups[:len(db.Groups)-1]
-			db.log.WithFields(logrus.Fields{"group_id": id, "group_name": group.Name, "remaining_groups": len(db.Groups)}).Info("Group removed")
 			return db.saveToFile()
 		}
 	}
-	db.log.Warn("Attempted to remove non-existent group", "group_id", id)
 	return fmt.Errorf("group with ID %s not found", id)
 }
 
@@ -465,7 +423,6 @@ func (db *Database) AddVideo(video *VideoFile) error {
 	defer db.mutex.Unlock()
 
 	db.Videos = append(db.Videos, video)
-	db.log.WithFields(logrus.Fields{"video_name": video.Name, "camera_id": video.CameraID, "size_bytes": video.SizeBytes, "duration_seconds": video.DurationSeconds, "total_videos": len(db.Videos)}).Info("Video file added")
 	return db.saveToFile()
 }
 
@@ -481,63 +438,6 @@ func (db *Database) GetVideosByCamera(cameraID string) []*VideoFile {
 		}
 	}
 	return result
-}
-
-// AddLogEntry adds a log entry
-func (db *Database) AddLogEntry(entry *LogEntry) error {
-	db.mutex.Lock()
-	defer db.mutex.Unlock()
-
-	db.Logs = append(db.Logs, entry)
-
-	// Limit log entries to avoid excessive memory usage
-	if len(db.Logs) > 10000 {
-		db.Logs = db.Logs[len(db.Logs)-10000:]
-		db.log.Trace("Log entries trimmed to limit memory usage", "max_entries", 10000, "current_entries", len(db.Logs))
-	}
-
-	return nil // Don't save to file for every log entry
-}
-
-// GetLogs returns log entries filtered by criteria
-func (db *Database) GetLogs(level, cameraID, component string, startTime, endTime time.Time, limit, offset int) ([]*LogEntry, int) {
-	db.mutex.RLock()
-	defer db.mutex.RUnlock()
-
-	var filtered []*LogEntry
-	for _, entry := range db.Logs {
-		if level != "" && entry.Level != level {
-			continue
-		}
-		if cameraID != "" && entry.CameraID != cameraID {
-			continue
-		}
-		if component != "" && entry.Component != component {
-			continue
-		}
-		if !startTime.IsZero() && entry.Timestamp.Before(startTime) {
-			continue
-		}
-		if !endTime.IsZero() && entry.Timestamp.After(endTime) {
-			continue
-		}
-		filtered = append(filtered, entry)
-	}
-
-	// Calculate total
-	total := len(filtered)
-
-	// Apply pagination
-	if offset >= total {
-		return []*LogEntry{}, total
-	}
-
-	end := offset + limit
-	if end > total {
-		end = total
-	}
-
-	return filtered[offset:end], total
 }
 
 // GetConfig returns the current configuration
@@ -660,19 +560,6 @@ func (c *Config) ToProtoConfig() *protocol.Config {
 		SetTimeEnabled:                c.SetTimeEnabled,
 		LogLevel:                      c.LogLevel,
 		LastUpdated:                   timestamppb.New(c.LastUpdated),
-	}
-}
-
-// ToProtoLogEntry converts a LogEntry to protocol LogEntry
-func (l *LogEntry) ToProtoLogEntry() *protocol.LogEntry {
-	return &protocol.LogEntry{
-		Timestamp:  timestamppb.New(l.Timestamp),
-		Level:      l.Level,
-		Message:    l.Message,
-		CameraId:   l.CameraID,
-		Component:  l.Component,
-		SourceFile: l.SourceFile,
-		LineNumber: l.LineNumber,
 	}
 }
 
@@ -866,27 +753,12 @@ func (db *Database) GetCamerasForDiscoveredPool() []*DiscoveredCamera {
 	defer db.mutex.RUnlock()
 
 	cameras := make([]*DiscoveredCamera, 0)
-
-	// Log all cameras and their states for debugging
-	db.log.Tracef("GetCamerasForDiscoveredPool: examining %d total cameras", len(db.cameraStates))
-
-	for macAddress, cameraState := range db.cameraStates {
-		db.log.Tracef("Camera %s (%s): Reachable=%v, Paired=%v, Managed=%v",
-			cameraState.Camera.Name, macAddress,
-			cameraState.Status.IsReachable,
-			cameraState.Status.IsPaired,
-			cameraState.Status.IsManaged)
-
+	for _, cameraState := range db.cameraStates {
 		if !cameraState.Status.IsPaired || !cameraState.Status.IsManaged {
 			csCopy := *cameraState
 			cameras = append(cameras, &DiscoveredCamera{CameraState: &csCopy})
-			db.log.Tracef("Camera %s INCLUDED in discovered pool", cameraState.Camera.Name)
-		} else {
-			db.log.Tracef("Camera %s EXCLUDED from discovered pool (criteria not met)", cameraState.Camera.Name)
 		}
 	}
-
-	db.log.Tracef("GetCamerasForDiscoveredPool returning %d cameras", len(cameras))
 	return cameras
 }
 
@@ -902,8 +774,6 @@ func (db *Database) GetCamerasForManagedPool() []*ManagedCamera {
 			cameras = append(cameras, &ManagedCamera{CameraState: &csCopy})
 		}
 	}
-
-	db.log.Tracef("GetCamerasForManagedPool returning %d cameras", len(cameras))
 	return cameras
 }
 

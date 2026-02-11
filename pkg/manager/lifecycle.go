@@ -67,7 +67,9 @@ func (m *GoProManager) deviceManager() {
 			m.log.Debug("Immediate sync triggered - processing sync queue")
 			m.syncCoordinator.ProcessSyncQueue()
 		case <-unreachableTicker.C:
-			m.discoveryProcessor.MarkUnreachableDevicesBackground(m.notifier)
+			config := m.db.GetConfig()
+			timeout := time.Duration(config.InactivityTimeoutSeconds) * time.Second
+			m.discoveryProcessor.MarkUnreachableDevicesBackground(timeout, m.notifier)
 		}
 	}
 }

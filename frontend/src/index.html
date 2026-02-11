@@ -159,9 +159,9 @@
           </div>
           <div class="panel-content">
             <div class="settings-grid">
-              <!-- Toggle Settings Section -->
+              <!-- Scanning & Connectivity -->
               <div class="settings-section">
-                <h3>General Settings</h3>
+                <h3>Scanning & Connectivity</h3>
                 <div class="setting-item">
                   <div class="setting-label">Set Camera Time</div>
                   <div class="toggle-wrapper">
@@ -171,46 +171,66 @@
                     </label>
                   </div>
                 </div>
-              </div>
-              
-              <!-- Numeric Settings Section -->
-              <div class="settings-section">
-                <h3>Timing Parameters</h3>
                 <div class="setting-item">
-                  <div class="setting-label">Scan Interval (seconds)</div>
-                  <div class="setting-control">
-                    <input type="number" id="scan-interval-input" class="setting-input" data-setting="scan_interval_seconds" min="5" max="120">
+                  <div class="setting-label-row">
+                    <span class="setting-label">Scan Interval</span>
+                    <span class="setting-value" id="scan-interval-value">30s</span>
                   </div>
+                  <div class="setting-description">How often to scan for nearby cameras</div>
+                  <input type="range" class="setting-slider setting-input"
+                         id="scan-interval-input" data-setting="scan_interval_seconds"
+                         min="5" max="120" step="5">
                 </div>
                 <div class="setting-item">
-                  <div class="setting-label">Connect Timeout (seconds)</div>
-                  <div class="setting-control">
-                    <input type="number" id="connect-timeout-input" class="setting-input" data-setting="connect_timeout_seconds" min="5" max="120">
+                  <div class="setting-label-row">
+                    <span class="setting-label">Connect Timeout</span>
+                    <span class="setting-value" id="connect-timeout-value">30s</span>
                   </div>
+                  <div class="setting-description">Maximum time to wait when connecting to a camera</div>
+                  <input type="range" class="setting-slider setting-input"
+                         id="connect-timeout-input" data-setting="connect_timeout_seconds"
+                         min="5" max="60" step="5">
                 </div>
                 <div class="setting-item">
-                  <div class="setting-label">Inactivity Timeout (seconds)</div>
-                  <div class="setting-control">
-                    <input type="number" id="inactivity-timeout-input" class="setting-input" data-setting="inactivity_timeout_seconds" min="30" max="3600">
+                  <div class="setting-label-row">
+                    <span class="setting-label">Inactivity Timeout</span>
+                    <span class="setting-value" id="inactivity-timeout-value">60s</span>
                   </div>
-                </div>
-                <div class="setting-item">
-                  <div class="setting-label">Inactivity Sync Interval (seconds)</div>
-                  <div class="setting-control">
-                    <input type="number" id="inactivity-sync-interval-input" class="setting-input" data-setting="inactivity_sync_interval_seconds" min="60" max="3600">
-                  </div>
-                </div>
-                <div class="setting-item">
-                  <div class="setting-label">Media Age Threshold (days)</div>
-                  <div class="setting-control">
-                    <input type="number" id="days-threshold-input" class="setting-input" data-setting="days_threshold" min="1" max="365">
-                  </div>
+                  <div class="setting-description">Time after losing signal before marking camera unreachable</div>
+                  <input type="range" class="setting-slider setting-input"
+                         id="inactivity-timeout-input" data-setting="inactivity_timeout_seconds"
+                         min="30" max="300" step="15">
                 </div>
               </div>
-              
-              <!-- Path and Level Settings -->
+
+              <!-- Download -->
               <div class="settings-section">
-                <h3>System Settings</h3>
+                <h3>Download</h3>
+                <div class="setting-item">
+                  <div class="setting-label-row">
+                    <span class="setting-label">Auto-Sync Delay</span>
+                    <span class="setting-value" id="inactivity-sync-interval-value">10min</span>
+                  </div>
+                  <div class="setting-description">Absence duration before auto-queuing camera for download</div>
+                  <input type="range" class="setting-slider setting-input"
+                         id="inactivity-sync-interval-input" data-setting="inactivity_sync_interval_seconds"
+                         min="0" max="12" step="1">
+                </div>
+                <div class="setting-item">
+                  <div class="setting-label-row">
+                    <span class="setting-label">Media Age</span>
+                    <span class="setting-value" id="days-threshold-value">7d</span>
+                  </div>
+                  <div class="setting-description">Only download media newer than this many days</div>
+                  <input type="range" class="setting-slider setting-input"
+                         id="days-threshold-input" data-setting="days_threshold"
+                         min="0" max="26" step="1">
+                </div>
+              </div>
+
+              <!-- Storage -->
+              <div class="settings-section">
+                <h3>Storage</h3>
                 <div class="setting-item">
                   <div class="setting-label">Destination Folder</div>
                   <div class="setting-control full-width">
@@ -218,18 +238,6 @@
                     <button id="browse-folder" class="button small-button">
                       <i class="fas fa-folder-open"></i>
                     </button>
-                  </div>
-                </div>
-                <div class="setting-item">
-                  <div class="setting-label">Log Level</div>
-                  <div class="setting-control">
-                    <select id="backend-log-level-select" class="setting-select" data-setting="log_level">
-                      <option value="trace">Trace</option>
-                      <option value="debug">Debug</option>
-                      <option value="info">Info</option>
-                      <option value="warn">Warn</option>
-                      <option value="error">Error</option>
-                    </select>
                   </div>
                 </div>
               </div>
@@ -283,6 +291,7 @@
     </div>
   </template>
   
+  <div id="toast-container"></div>
   <script src="renderer.js"></script>
 </body>
 </html> 

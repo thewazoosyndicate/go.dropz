@@ -3,6 +3,7 @@ const path = require('path');
 const log = require('electron-log');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const { shouldFilterLogMessage } = require('./log-filters');
 
 // GPU workarounds for Linux AppImage compatibility
 app.commandLine.appendSwitch('disable-gpu-vsync');
@@ -75,87 +76,25 @@ function startGoBinary() {
     
     log.info(`Go binary process started with PID: ${childProcess.pid}`);
     
-    // Capture stdout and forward to renderer process and log file
-    childProcess.stdout.on('data', (data) => {
+    function processGoOutput(data) {
       const output = data.toString().trim();
-      if (output) {
-        // Process multi-line logs 
-        output.split('\n').forEach(line => {
-          if (line.trim()) {
-            const trimmedLine = line.trim();
-            
-            // Skip MapToStruct warnings
-            if (shouldFilterLogMessage(trimmedLine)) {
-              return;
-            }
-            
-            // Determine log level by content
-            let logLevel = 'info';
-            if (trimmedLine.includes('[ERROR]') || 
-                trimmedLine.includes('error:') || 
-                trimmedLine.match(/\bERROR\b/i)) {
-              logLevel = 'error';
-            } else if (trimmedLine.includes('[WARN]') || 
-                       trimmedLine.includes('warning:') || 
-                       trimmedLine.match(/\bWARN\b/i)) {
-              logLevel = 'warn';
-            }
-            
-            // Log to appropriate electron-log level
-            if (logLevel === 'error') {
-              log.error(`[Go stdout] ${trimmedLine}`);
-            } else if (logLevel === 'warn') {
-              log.warn(`[Go stdout] ${trimmedLine}`);
-            } else {
-              log.info(`[Go stdout] ${trimmedLine}`);
-            }
-            
-            checkGrpcReady(trimmedLine);
+      if (!output) return;
+      output.split('\n').forEach(line => {
+        const trimmedLine = line.trim();
+        if (!trimmedLine || shouldFilterLogMessage(trimmedLine)) return;
 
-            // Forward to renderer
-            if (mainWindow && mainWindow.webContents) {
-              mainWindow.webContents.send('go-binary-log', trimmedLine);
-            }
-          }
-        });
-      }
-    });
+        log.info(`[Go] ${trimmedLine}`);
 
-    // Capture stderr and forward to renderer process and log file
-    childProcess.stderr.on('data', (data) => {
-      const output = data.toString().trim();
-      if (output) {
-        // Process multi-line logs
-        output.split('\n').forEach(line => {
-          if (line.trim()) {
-            const trimmedLine = line.trim();
-            
-            // Skip MapToStruct warnings
-            if (shouldFilterLogMessage(trimmedLine)) {
-              return;
-            }
-            
-            // Parse log level from Go output
-            if (trimmedLine.includes('panic:') || trimmedLine.includes('fatal:') || trimmedLine.includes('[FATAL]')) {
-              log.error(`[Go] ${trimmedLine}`);
-            } else if (trimmedLine.includes('level=error') || trimmedLine.includes('[ERROR]')) {
-              log.error(`[Go] ${trimmedLine}`);
-            } else if (trimmedLine.includes('level=warning') || trimmedLine.includes('[WARN]')) {
-              log.warn(`[Go] ${trimmedLine}`);
-            } else {
-              log.info(`[Go] ${trimmedLine}`);
-            }
-            
-            checkGrpcReady(trimmedLine);
+        checkGrpcReady(trimmedLine);
 
-            // Forward to renderer with original formatting
-            if (mainWindow && mainWindow.webContents) {
-              mainWindow.webContents.send('go-binary-log', trimmedLine);
-            }
-          }
-        });
-      }
-    });
+        if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send('go-binary-log', trimmedLine);
+        }
+      });
+    }
+
+    childProcess.stdout.on('data', processGoOutput);
+    childProcess.stderr.on('data', processGoOutput);
     
     // Only track process lifecycle events
     childProcess.on('close', (code) => {
@@ -194,6 +133,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 800,
+    autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -214,7 +154,14 @@ function createWindow() {
   });
   
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
-  
+
+  // Re-send backend status after reload (Ctrl+R)
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (grpcReady) {
+      mainWindow.webContents.send('go-binary-status', { running: true });
+    }
+  });
+
   // Show window when ready
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
@@ -289,23 +236,3 @@ ipcMain.on('open-folder-dialog', (event) => {
 ipcMain.on('debug-log', (event, message) => {
   log.info(`[RENDERER DEBUG] ${message}`);
 });
-
-// Helper function to filter MapToStruct warnings
-function shouldFilterLogMessage(message) {
-  // Filter MapToStruct warnings
-  const filterPatterns = [
-    "MapToStruct: invalid field detected *adapter.Adapter1Properties.Connectable",
-    "MapToStruct: invalid field detected *adapter.Adapter1Properties.PowerState",
-    "MapToStruct: invalid field detected *adapter.Adapter1Properties.Version",
-    "MapToStruct: invalid field detected *adapter.Adapter1Properties.Manufacturer",
-    "MapToStruct: invalid field detected *device.Device1Properties.Bonded"
-  ];
-  
-  // Only filter out warnings
-  if (!message.includes('[WARN]') && !message.includes('WARN')) {
-    return false;
-  }
-  
-  // Check if message contains any of the filter patterns
-  return filterPatterns.some(pattern => message.includes(pattern));
-}

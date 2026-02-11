@@ -12,8 +12,9 @@ import (
 
 // Processor handles discovery processing operations
 type Processor struct {
-	db  *database.Database
-	log *logrus.Logger
+	db                 *database.Database
+	log                *logrus.Logger
+	onCameraReappeared func(macAddress string, wasGoneFor time.Duration)
 }
 
 // NewProcessor creates a new processor
@@ -22,6 +23,11 @@ func NewProcessor(db *database.Database, log *logrus.Logger) *Processor {
 		db:  db,
 		log: log,
 	}
+}
+
+// SetOnCameraReappeared sets a callback invoked when a camera becomes reachable again
+func (p *Processor) SetOnCameraReappeared(fn func(macAddress string, wasGoneFor time.Duration)) {
+	p.onCameraReappeared = fn
 }
 
 // ProcessDiscoveredDeviceLive handles a single discovered device immediately (for live updates)
@@ -82,6 +88,9 @@ func (p *Processor) createNewCamera(name, macAddress string, rssi int32) {
 func (p *Processor) updateExistingCamera(discoveredCamera *database.DiscoveredCamera, name string, rssi int32) {
 	macAddress := discoveredCamera.CameraState.Camera.MACAddress
 
+	var wasGoneFor time.Duration
+	wasUnreachable := false
+
 	err := p.db.UpdateCamera(macAddress, func(cs *database.CameraWithState) {
 		if cs.Camera.Name == "" || (!strings.Contains(cs.Camera.Name, "GoPro") && strings.Contains(name, "GoPro")) {
 			p.log.Debugf("Name updated for %s: '%s' -> '%s'", macAddress, cs.Camera.Name, name)
@@ -89,7 +98,9 @@ func (p *Processor) updateExistingCamera(discoveredCamera *database.DiscoveredCa
 		}
 
 		if !cs.Status.IsReachable {
-			p.log.Infof("Marking camera %s as reachable again (was unreachable)", cs.Camera.Name)
+			wasGoneFor = time.Since(cs.Status.LastSeen)
+			wasUnreachable = true
+			p.log.Infof("Marking camera %s as reachable again (was gone for %v)", cs.Camera.Name, wasGoneFor)
 			cs.Status.IsReachable = true
 		}
 
@@ -98,12 +109,17 @@ func (p *Processor) updateExistingCamera(discoveredCamera *database.DiscoveredCa
 	})
 	if err != nil {
 		p.log.Errorf("Failed to update discovered camera: %v", err)
+		return
+	}
+
+	if wasUnreachable && p.onCameraReappeared != nil {
+		p.onCameraReappeared(macAddress, wasGoneFor)
 	}
 }
 
 // MarkUnreachableDevicesBackground marks cameras as unreachable from background tasks.
-func (p *Processor) MarkUnreachableDevicesBackground(notifier func()) {
-	cutoff := time.Now().Add(-45 * time.Second)
+func (p *Processor) MarkUnreachableDevicesBackground(inactivityTimeout time.Duration, notifier func()) {
+	cutoff := time.Now().Add(-inactivityTimeout)
 	changed, err := p.db.MarkCamerasUnreachableBefore(cutoff)
 	if err != nil {
 		p.log.Errorf("Failed to save camera state changes: %v", err)

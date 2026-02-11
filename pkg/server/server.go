@@ -663,30 +663,3 @@ func (s *DropzServer) ResetSetting(ctx context.Context, req *protocol.ResetSetti
 	return config.ToProtoConfig(), nil
 }
 
-// GetLogs implements the GetLogs RPC method
-func (s *DropzServer) GetLogs(ctx context.Context, req *protocol.GetLogsRequest) (*protocol.GetLogsResponse, error) {
-	if s.ctx.Err() != nil {
-		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
-	}
-
-	db := database.GetDatabase()
-
-	var startTime, endTime time.Time
-	if req.StartTime != nil {
-		startTime = req.StartTime.AsTime()
-	}
-	if req.EndTime != nil {
-		endTime = req.EndTime.AsTime()
-	}
-
-	logs, totalCount := db.GetLogs(req.Level, req.CameraId, req.Component, startTime, endTime, int(req.Limit), int(req.Offset))
-	protoLogs := make([]*protocol.LogEntry, len(logs))
-	for i, logEntry := range logs {
-		protoLogs[i] = logEntry.ToProtoLogEntry()
-	}
-
-	return &protocol.GetLogsResponse{
-		Logs:       protoLogs,
-		TotalCount: int32(totalCount),
-	}, nil
-}

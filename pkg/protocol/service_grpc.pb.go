@@ -40,7 +40,6 @@ const (
 	DropzService_GetSetting_FullMethodName             = "/dropz.DropzService/GetSetting"
 	DropzService_UpdateSetting_FullMethodName          = "/dropz.DropzService/UpdateSetting"
 	DropzService_ResetSetting_FullMethodName           = "/dropz.DropzService/ResetSetting"
-	DropzService_GetLogs_FullMethodName                = "/dropz.DropzService/GetLogs"
 )
 
 // DropzServiceClient is the client API for DropzService service.
@@ -77,8 +76,6 @@ type DropzServiceClient interface {
 	GetSetting(ctx context.Context, in *GetSettingRequest, opts ...grpc.CallOption) (*GetSettingResponse, error)
 	UpdateSetting(ctx context.Context, in *UpdateSettingRequest, opts ...grpc.CallOption) (*Config, error)
 	ResetSetting(ctx context.Context, in *ResetSettingRequest, opts ...grpc.CallOption) (*Config, error)
-	// Logs
-	GetLogs(ctx context.Context, in *GetLogsRequest, opts ...grpc.CallOption) (*GetLogsResponse, error)
 }
 
 type dropzServiceClient struct {
@@ -326,16 +323,6 @@ func (c *dropzServiceClient) ResetSetting(ctx context.Context, in *ResetSettingR
 	return out, nil
 }
 
-func (c *dropzServiceClient) GetLogs(ctx context.Context, in *GetLogsRequest, opts ...grpc.CallOption) (*GetLogsResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetLogsResponse)
-	err := c.cc.Invoke(ctx, DropzService_GetLogs_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // DropzServiceServer is the server API for DropzService service.
 // All implementations must embed UnimplementedDropzServiceServer
 // for forward compatibility.
@@ -370,8 +357,6 @@ type DropzServiceServer interface {
 	GetSetting(context.Context, *GetSettingRequest) (*GetSettingResponse, error)
 	UpdateSetting(context.Context, *UpdateSettingRequest) (*Config, error)
 	ResetSetting(context.Context, *ResetSettingRequest) (*Config, error)
-	// Logs
-	GetLogs(context.Context, *GetLogsRequest) (*GetLogsResponse, error)
 	mustEmbedUnimplementedDropzServiceServer()
 }
 
@@ -444,9 +429,6 @@ func (UnimplementedDropzServiceServer) UpdateSetting(context.Context, *UpdateSet
 }
 func (UnimplementedDropzServiceServer) ResetSetting(context.Context, *ResetSettingRequest) (*Config, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ResetSetting not implemented")
-}
-func (UnimplementedDropzServiceServer) GetLogs(context.Context, *GetLogsRequest) (*GetLogsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetLogs not implemented")
 }
 func (UnimplementedDropzServiceServer) mustEmbedUnimplementedDropzServiceServer() {}
 func (UnimplementedDropzServiceServer) testEmbeddedByValue()                      {}
@@ -826,24 +808,6 @@ func _DropzService_ResetSetting_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
-func _DropzService_GetLogs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetLogsRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(DropzServiceServer).GetLogs(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: DropzService_GetLogs_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(DropzServiceServer).GetLogs(ctx, req.(*GetLogsRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // DropzService_ServiceDesc is the grpc.ServiceDesc for DropzService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -922,10 +886,6 @@ var DropzService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ResetSetting",
 			Handler:    _DropzService_ResetSetting_Handler,
-		},
-		{
-			MethodName: "GetLogs",
-			Handler:    _DropzService_GetLogs_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

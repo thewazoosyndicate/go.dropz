@@ -25,8 +25,6 @@ var gopro_pb = require('./gopro_pb.js');
 goog.object.extend(proto, gopro_pb);
 var video_pb = require('./video_pb.js');
 goog.object.extend(proto, video_pb);
-var logs_pb = require('./logs_pb.js');
-goog.object.extend(proto, logs_pb);
 var config_pb = require('./config_pb.js');
 goog.object.extend(proto, config_pb);
 var common_pb = require('./common_pb.js');

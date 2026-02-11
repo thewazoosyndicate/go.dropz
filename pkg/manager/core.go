@@ -108,6 +108,30 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 	manager.discoveryProcessor = discovery.NewProcessor(db, log)
 	manager.pairingManager = pairing.NewManager(db, bleManager, log, ctx)
 
+	// Auto-queue cameras for sync when they reappear after being gone long enough
+	manager.discoveryProcessor.SetOnCameraReappeared(func(mac string, wasGoneFor time.Duration) {
+		config := db.GetConfig()
+		if !config.SyncEnabled {
+			return
+		}
+		syncInterval := time.Duration(config.InactivitySyncIntervalSeconds) * time.Second
+		if wasGoneFor < syncInterval {
+			return
+		}
+		cam, ok := db.GetManagedCamera(mac)
+		if !ok || cam.CameraState.Status.IsSyncing {
+			return
+		}
+		log.Infof("Auto-queuing %s for sync (was gone for %v)", cam.CameraState.Camera.Name, wasGoneFor)
+		db.AddSyncQueueEntry(&database.SyncQueueEntry{
+			CameraID:         cam.CameraState.Camera.ID,
+			QueuedAt:         time.Now(),
+			Priority:         syncpkg.SyncPriorityAuto,
+			CurrentOperation: "Waiting to start",
+		})
+		manager.notify()
+	})
+
 	return manager, nil
 }
 

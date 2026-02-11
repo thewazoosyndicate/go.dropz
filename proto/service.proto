@@ -5,7 +5,6 @@ option go_package = "github.com/dropz/dropz/pkg/protocol";
 
 import "gopro.proto";
 import "video.proto";
-import "logs.proto";
 import "config.proto";
 import "common.proto";
 
@@ -45,7 +44,4 @@ service DropzService {
   rpc GetSetting(GetSettingRequest) returns (GetSettingResponse);
   rpc UpdateSetting(UpdateSettingRequest) returns (Config);
   rpc ResetSetting(ResetSettingRequest) returns (Config);
-  
-  // Logs
-  rpc GetLogs(GetLogsRequest) returns (GetLogsResponse);
-} 
+  } 

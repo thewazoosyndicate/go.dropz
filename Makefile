@@ -22,13 +22,11 @@ proto:
 		--go_opt=Mservice.proto=github.com/dropz/dropz/pkg/protocol \
 		--go_opt=Mgopro.proto=github.com/dropz/dropz/pkg/protocol \
 		--go_opt=Mconfig.proto=github.com/dropz/dropz/pkg/protocol \
-		--go_opt=Mlogs.proto=github.com/dropz/dropz/pkg/protocol \
 		--go_opt=Mvideo.proto=github.com/dropz/dropz/pkg/protocol \
 		--go_opt=Mcommon.proto=github.com/dropz/dropz/pkg/protocol \
 		--go-grpc_opt=Mservice.proto=github.com/dropz/dropz/pkg/protocol \
 		--go-grpc_opt=Mgopro.proto=github.com/dropz/dropz/pkg/protocol \
 		--go-grpc_opt=Mconfig.proto=github.com/dropz/dropz/pkg/protocol \
-		--go-grpc_opt=Mlogs.proto=github.com/dropz/dropz/pkg/protocol \
 		--go-grpc_opt=Mvideo.proto=github.com/dropz/dropz/pkg/protocol \
 		--go-grpc_opt=Mcommon.proto=github.com/dropz/dropz/pkg/protocol \
 		proto/*.proto

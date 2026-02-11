@@ -7,7 +7,6 @@ const serviceGrpc = require('./proto/service_grpc_pb');
 // Import generated proto message definitions
 const goProProto = require('./proto/gopro_pb');
 const videoProto = require('./proto/video_pb');
-const logsProto = require('./proto/logs_pb');
 const configProto = require('./proto/config_pb');
 const commonProto = require('./proto/common_pb');
 
@@ -79,10 +78,6 @@ module.exports = {
   GetSettingResponse: configProto.GetSettingResponse,
   UpdateSettingRequest: configProto.UpdateSettingRequest,
   ResetSettingRequest: configProto.ResetSettingRequest,
-  
-  // Request/Response types for Log operations
-  GetLogsRequest: logsProto.GetLogsRequest,
-  GetLogsResponse: logsProto.GetLogsResponse,
   
   // Common types
   CameraStatus: commonProto.CameraStatus,

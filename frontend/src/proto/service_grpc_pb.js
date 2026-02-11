@@ -4,7 +4,6 @@
 var grpc = require('@grpc/grpc-js');
 var gopro_pb = require('./gopro_pb.js');
 var video_pb = require('./video_pb.js');
-var logs_pb = require('./logs_pb.js');
 var config_pb = require('./config_pb.js');
 var common_pb = require('./common_pb.js');
 
@@ -149,28 +148,6 @@ function serialize_dropz_GetGroupsResponse(arg) {
 
 function deserialize_dropz_GetGroupsResponse(buffer_arg) {
   return gopro_pb.GetGroupsResponse.deserializeBinary(new Uint8Array(buffer_arg));
-}
-
-function serialize_dropz_GetLogsRequest(arg) {
-  if (!(arg instanceof logs_pb.GetLogsRequest)) {
-    throw new Error('Expected argument of type dropz.GetLogsRequest');
-  }
-  return Buffer.from(arg.serializeBinary());
-}
-
-function deserialize_dropz_GetLogsRequest(buffer_arg) {
-  return logs_pb.GetLogsRequest.deserializeBinary(new Uint8Array(buffer_arg));
-}
-
-function serialize_dropz_GetLogsResponse(arg) {
-  if (!(arg instanceof logs_pb.GetLogsResponse)) {
-    throw new Error('Expected argument of type dropz.GetLogsResponse');
-  }
-  return Buffer.from(arg.serializeBinary());
-}
-
-function deserialize_dropz_GetLogsResponse(buffer_arg) {
-  return logs_pb.GetLogsResponse.deserializeBinary(new Uint8Array(buffer_arg));
 }
 
 function serialize_dropz_GetManagedCamerasRequest(arg) {
@@ -644,18 +621,6 @@ getConfig: {
     requestDeserialize: deserialize_dropz_ResetSettingRequest,
     responseSerialize: serialize_dropz_Config,
     responseDeserialize: deserialize_dropz_Config,
-  },
-  // Logs
-getLogs: {
-    path: '/dropz.DropzService/GetLogs',
-    requestStream: false,
-    responseStream: false,
-    requestType: logs_pb.GetLogsRequest,
-    responseType: logs_pb.GetLogsResponse,
-    requestSerialize: serialize_dropz_GetLogsRequest,
-    requestDeserialize: deserialize_dropz_GetLogsRequest,
-    responseSerialize: serialize_dropz_GetLogsResponse,
-    responseDeserialize: deserialize_dropz_GetLogsResponse,
   },
 };
 

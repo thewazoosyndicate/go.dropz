@@ -36,7 +36,6 @@ var (
 	scan  = flag.Bool("scan", false, "Run scanner once and exit")
 	mac   = flag.String("mac", "", "GoPro Mac Address - required for commands")
 	pair  = flag.Bool("pair", false, "Run and exit")
-	sync  = flag.Bool("sync", false, "Run and exit")
 	sleep = flag.Bool("sleep", false, "Put camera to sleep and exit")
 )
 
@@ -49,7 +48,6 @@ var (
 //   . enable-wifi (also returns SSID/Passwd)
 //   . get-hw-info
 //   . get-battery-level
-// - sync (args. macAddress)
 // - sleep (args. macAddress)
 
 const (
@@ -103,7 +101,7 @@ func initLogger(level, filePath string) (*logrus.Logger, error) {
 		if err != nil {
 			return nil, err
 		}
-		log.SetOutput(io.MultiWriter(os.Stdout, file))
+		log.SetOutput(io.MultiWriter(os.Stderr, file))
 	}
 
 	return log, nil
@@ -177,11 +175,10 @@ func main() {
 
 	// Check for CLI flags that require immediate action
 	// Only call CLI function if one of the action flags is set
-	if *scan || *pair || *sync || *sleep {
+	if *scan || *pair || *sleep {
 		cli.Cli(cli.CliFlags{
 			Scan:  *scan,
 			Pair:  *pair,
-			Sync:  *sync,
 			Sleep: *sleep,
 			Mac:   *mac,
 		}, log)

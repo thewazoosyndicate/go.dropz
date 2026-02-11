@@ -10,11 +10,17 @@ func NewFragmentCollector(timeout time.Duration) *FragmentCollector {
 	fc := &FragmentCollector{
 		fragments: make(map[byte]*MessageFragments),
 		timeout:   timeout,
+		stopCh:    make(chan struct{}),
 	}
 
 	go fc.cleanupStaleFragments()
 
 	return fc
+}
+
+// Stop terminates the background cleanup goroutine
+func (fc *FragmentCollector) Stop() {
+	close(fc.stopCh)
 }
 
 // ProcessFragment processes a TLV packet fragment and returns a complete message if ready
@@ -154,17 +160,20 @@ func (fc *FragmentCollector) cleanupStaleFragments() {
 	ticker := time.NewTicker(time.Duration(CleanupInterval) * time.Millisecond)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		fc.mu.Lock()
-		now := time.Now()
-
-		for cmdID, fragments := range fc.fragments {
-			if now.Sub(fragments.startTime) > fc.timeout {
-				delete(fc.fragments, cmdID)
+	for {
+		select {
+		case <-fc.stopCh:
+			return
+		case <-ticker.C:
+			fc.mu.Lock()
+			now := time.Now()
+			for cmdID, fragments := range fc.fragments {
+				if now.Sub(fragments.startTime) > fc.timeout {
+					delete(fc.fragments, cmdID)
+				}
 			}
+			fc.mu.Unlock()
 		}
-
-		fc.mu.Unlock()
 	}
 }
 

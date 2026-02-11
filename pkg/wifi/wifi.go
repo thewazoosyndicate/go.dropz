@@ -22,7 +22,6 @@ const (
 	// Status endpoints
 	StatusURL     = "/gopro/camera/state"
 	BatteryURL    = "/gopro/status/battery"
-	CameraInfoURL = "/gopro/camera/info"
 	// Media endpoints
 	MediaListURL = "/gopro/media/list"
 	MediaInfoURL = "/gopro/media/info"
@@ -42,7 +41,7 @@ func NewWiFiManager(log *logrus.Logger) *WiFiManager {
 
 // Connect connects to a GoPro WiFi network
 func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error {
-	m.log.Infof("Connecting to WiFi network: ssid=%s", ssid)
+	m.log.Debugf("Connecting to WiFi network: ssid=%s", ssid)
 
 	connName := fmt.Sprintf("dropz-%s", ssid)
 
@@ -77,7 +76,7 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 			lastErr = fmt.Errorf("%v (nmcli: %s)", err, strings.TrimSpace(string(output)))
 			m.log.Debugf("WiFi activation attempt %d/10 failed: %v", attempt, lastErr)
 		} else {
-			m.log.Infof("WiFi connection activated: connection=%s", connName)
+			m.log.Debugf("WiFi connection activated: connection=%s", connName)
 			lastErr = nil
 			break
 		}
@@ -93,33 +92,21 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 		return fmt.Errorf("failed to activate WiFi connection %s after 10 attempts: %v", connName, lastErr)
 	}
 
-	// Verify connection with detailed progress tracking
-	m.log.Tracef("Verifying WiFi connection establishment: ssid=%s max_attempts=10", ssid)
 	for i := 0; i < 10; i++ {
 		if m.isConnectedTo(ssid) {
-			m.log.Infof("WiFi connection established successfully: ssid=%s verification_attempts=%d", ssid, i+1)
 			return nil
 		}
-
-		m.log.Tracef("WiFi connection verification attempt: ssid=%s attempt=%d/10", ssid, i+1)
-
 		select {
 		case <-ctx.Done():
-			m.log.Warnf("WiFi connection verification cancelled: ssid=%s context_error=%v", ssid, ctx.Err())
 			return ctx.Err()
 		case <-time.After(1 * time.Second):
-			// Continue checking
 		}
 	}
-
-	m.log.Errorf("WiFi connection verification timeout: ssid=%s timeout=10s", ssid)
 	return fmt.Errorf("timed out waiting for connection to %s", ssid)
 }
 
 // Disconnect disconnects from the current WiFi network
 func (m *WiFiManager) Disconnect() error {
-	m.log.Info("Initiating WiFi network disconnection")
-
 	// Get current active connection
 	cmd := exec.Command("nmcli", "-t", "-f", "NAME,TYPE", "connection", "show", "--active")
 	output, err := cmd.Output()
@@ -140,7 +127,6 @@ func (m *WiFiManager) Disconnect() error {
 			}
 
 			ssid := parts[0]
-			m.log.Infof("Disconnecting from WiFi network: ssid=%s", ssid)
 
 			// Disconnect
 			// Use "id" parameter to properly handle SSIDs with special characters
@@ -156,56 +142,38 @@ func (m *WiFiManager) Disconnect() error {
 				}
 			}
 
-			m.log.Infof("Successfully disconnected from WiFi network: ssid=%s", ssid)
 			disconnectedCount++
 		}
 	}
-
-	if disconnectedCount == 0 {
-		m.log.Debug("No active WiFi connections found to disconnect")
-	} else {
-		m.log.Infof("WiFi disconnection completed: networks_disconnected=%d", disconnectedCount)
-	}
+	_ = disconnectedCount
 
 	return nil
 }
 
 // DownloadVideos downloads videos from a GoPro device
 func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysInPast int) ([]string, error) {
-	m.log.Infof("Starting video download: destination=%s days_past=%d", destDir, daysInPast)
-
-	// Create destination directory if it doesn't exist
 	if err := os.MkdirAll(destDir, 0755); err != nil {
-		m.log.Errorf("Failed to create destination directory: path=%s error=%v", destDir, err)
 		return nil, fmt.Errorf("failed to create destination directory: %v", err)
 	}
 
-	// Get media list from GoPro
-	m.log.Debug("Retrieving media list from GoPro device")
 	mediaFiles, err := m.getMediaList(ctx)
 	if err != nil {
-		m.log.Errorf("Failed to retrieve media list from GoPro: error=%v", err)
 		return nil, fmt.Errorf("failed to get media list: %v", err)
 	}
 
-	m.log.Infof("Media list retrieved: total_files=%d", len(mediaFiles))
-
-	// If no media files found, return early
 	if len(mediaFiles) == 0 {
-		m.log.Info("No media files found on GoPro device")
+		m.log.Info("No media files found on GoPro")
 		return nil, nil
 	}
-	// If no days specified, default to 7 days
+
 	if daysInPast <= 0 {
 		daysInPast = 7
-		m.log.Debugf("No days specified, defaulting to %d days", daysInPast)
 	}
 
-	// Filter by date
 	cutoffTime := time.Now().AddDate(0, 0, -daysInPast)
 	filteredMedia := filterMediaByDate(mediaFiles, cutoffTime)
 
-	m.log.Infof("Media files: %d total, %d within last %d days", len(mediaFiles), len(filteredMedia), daysInPast)
+	m.log.Infof("Found %d media files (%d within last %d days)", len(mediaFiles), len(filteredMedia), daysInPast)
 
 	// Set up parallel download
 	var wg sync.WaitGroup
@@ -233,32 +201,21 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 		outputPath := filepath.Join(destDir, media.Name)
 
 		// Check if file already exists with correct size
-		exists, err := m.fileExistsWithSize(outputPath, media.Size)
-		if err != nil {
-			m.log.Warnf("Error checking if file exists: file=%s error=%v", media.Name, err)
-		}
+		exists, _ := m.fileExistsWithSize(outputPath, media.Size)
 		if exists {
-			m.log.Infof("File already exists with correct size, skipping download: file=%s size=%d bytes",
-				media.Name, media.Size)
 			mu.Lock()
 			downloadedFiles = append(downloadedFiles, outputPath)
 			skippedCount++
 			mu.Unlock()
-			m.log.Debugf("Added existing file to results: total_files_so_far=%d skipped_so_far=%d",
-				len(downloadedFiles), skippedCount)
 			continue
 		}
 
-		// Check if this file is already being downloaded by another goroutine
 		downloadMutex.Lock()
 		if downloadingFiles[media.Name] {
-			m.log.Infof("File %s is already being downloaded by another operation, skipping to avoid duplicate download", media.Name)
 			downloadMutex.Unlock()
 			continue
 		}
-		// Mark this file as being downloaded
 		downloadingFiles[media.Name] = true
-		m.log.Tracef("Marked file %s as being downloaded to prevent concurrent downloads", media.Name)
 		downloadMutex.Unlock()
 
 		// File doesn't exist or has wrong size - proceed with download
@@ -280,21 +237,14 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 			// Double-check: verify file doesn't exist just before downloading
 			// This prevents race conditions where the file was created between
 			// the initial check and when this goroutine starts
-			existsDouble, errDouble := m.fileExistsWithSize(outputPath, media.Size)
-			if errDouble != nil {
-				m.log.Warnf("Error double-checking file existence for %s: %v", media.Name, errDouble)
-			}
+			existsDouble, _ := m.fileExistsWithSize(outputPath, media.Size)
 			if existsDouble {
-				m.log.Infof("File already exists with correct size (double-check), skipping download: file=%s size=%d bytes",
-					media.Name, media.Size)
 				mu.Lock()
 				downloadedFiles = append(downloadedFiles, outputPath)
 				skippedCount++
 				mu.Unlock()
 				return
 			}
-
-			m.log.Debugf("Downloading %s to %s", media.Name, outputPath)
 
 			// Download the file - use chunked download for large files
 			var err error
@@ -312,7 +262,6 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 			mu.Lock()
 			downloadedFiles = append(downloadedFiles, outputPath)
 			mu.Unlock()
-			m.log.Debugf("Successfully downloaded %s", media.Name)
 		}(media, outputPath)
 	}
 
@@ -320,12 +269,7 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	wg.Wait()
 
 	actualDownloads := len(downloadedFiles) - skippedCount
-	if skippedCount > 0 {
-		m.log.Infof("Video download completed: total_files=%d downloaded=%d skipped=%d destination=%s",
-			len(downloadedFiles), actualDownloads, skippedCount, destDir)
-	} else {
-		m.log.Infof("Video download completed: total_downloaded=%d destination=%s", len(downloadedFiles), destDir)
-	}
+	m.log.Infof("Download complete: %d downloaded, %d skipped", actualDownloads, skippedCount)
 	return downloadedFiles, nil
 }
 
@@ -345,12 +289,9 @@ func (m *WiFiManager) isConnectedTo(ssid string) bool {
 	for _, line := range lines {
 		parts := strings.Split(line, ":")
 		if len(parts) >= 3 && (parts[0] == ssid || parts[0] == altName) && parts[2] == "activated" {
-			m.log.Tracef("WiFi connection confirmed active: ssid=%s device=%s state=%s", parts[0], parts[1], parts[2])
 			return true
 		}
 	}
-
-	m.log.Tracef("WiFi connection not found in active connections: ssid=%s active_connections=%s", ssid, strings.TrimSpace(string(output)))
 	return false
 }
 
@@ -394,82 +335,32 @@ type MediaFile struct {
 
 // GetCameraStatus retrieves the camera status via HTTP API
 func (m *WiFiManager) GetCameraStatus(ctx context.Context) (map[string]interface{}, error) {
-	m.log.Debug("Retrieving camera status via HTTP API")
-
 	url := fmt.Sprintf("%s%s", GoProBaseURL, StatusURL)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		m.log.Errorf("Failed to create camera status request: error=%v", err)
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
 
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-	}
-
+	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		m.log.Errorf("Camera status request failed: error=%v", err)
 		return nil, fmt.Errorf("failed to get camera status: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		m.log.Errorf("Camera status request returned error: status_code=%d status=%s", resp.StatusCode, resp.Status)
 		return nil, fmt.Errorf("camera status request failed with status: %s", resp.Status)
 	}
 
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		m.log.Errorf("Failed to decode camera status response: error=%v", err)
 		return nil, fmt.Errorf("failed to decode camera status: %v", err)
 	}
-
-	m.log.Tracef("Camera status retrieved successfully: status_fields=%d", len(result))
-	return result, nil
-}
-
-// GetCameraInfo retrieves the camera information via HTTP API
-func (m *WiFiManager) GetCameraInfo(ctx context.Context) (map[string]interface{}, error) {
-	m.log.Debug("Retrieving camera information via HTTP API")
-
-	url := fmt.Sprintf("%s%s", GoProBaseURL, CameraInfoURL)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		m.log.Errorf("Failed to create camera info request: error=%v", err)
-		return nil, fmt.Errorf("failed to create request: %v", err)
-	}
-
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		m.log.Errorf("Camera info request failed: error=%v", err)
-		return nil, fmt.Errorf("failed to get camera info: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		m.log.Errorf("Camera info request returned error: status_code=%d status=%s", resp.StatusCode, resp.Status)
-		return nil, fmt.Errorf("camera info request failed with status: %s", resp.Status)
-	}
-
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		m.log.Errorf("Failed to decode camera info response: error=%v", err)
-		return nil, fmt.Errorf("failed to decode camera info: %v", err)
-	}
-
-	m.log.Tracef("Camera info retrieved successfully: info_fields=%d", len(result))
 	return result, nil
 }
 
 // getMediaList retrieves the list of media files from a GoPro device via HTTP API
 func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
-	m.log.Trace("Getting media list from GoPro")
-
 	url := fmt.Sprintf("%s%s", GoProBaseURL, MediaListURL)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -495,10 +386,6 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&mediaList); err != nil {
 		return nil, fmt.Errorf("failed to decode media list: %v", err)
 	}
-
-	// For debugging
-	responseBytes, _ := json.Marshal(mediaList)
-	m.log.Tracef("Received media list response: %s", string(responseBytes))
 
 	// Convert to our internal format
 	result := make([]MediaFile, 0)
@@ -537,7 +424,7 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 		}
 	}
 
-	m.log.Debugf("Found %d media files", len(result))
+	m.log.Debugf("Media list: %d files", len(result))
 	return result, nil
 }
 
@@ -956,20 +843,9 @@ func (m *WiFiManager) fileExistsWithSize(filePath string, expectedSize int64) (b
 	fi, err := os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			m.log.Debugf("File does not exist: file=%s - WILL DOWNLOAD", filepath.Base(filePath))
-			return false, nil // File doesn't exist
+			return false, nil
 		}
-		m.log.Warnf("Error checking file existence: file=%s error=%v", filepath.Base(filePath), err)
 		return false, err
 	}
-
-	if fi.Size() == expectedSize {
-		m.log.Infof("File already exists with correct size, skipping download: file=%s size=%d bytes",
-			filepath.Base(filePath), expectedSize)
-		return true, nil
-	}
-
-	m.log.Infof("File exists but size mismatch: file=%s actual_size=%d expected_size=%d - WILL DOWNLOAD",
-		filepath.Base(filePath), fi.Size(), expectedSize)
-	return false, nil
+	return fi.Size() == expectedSize, nil
 }

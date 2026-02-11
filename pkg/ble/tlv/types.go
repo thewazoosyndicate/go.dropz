@@ -50,6 +50,7 @@ type FragmentCollector struct {
 	fragments map[byte]*MessageFragments // commandID -> fragments
 	mu        sync.RWMutex
 	timeout   time.Duration
+	stopCh    chan struct{}
 }
 
 // ResponseTracker tracks pending command responses

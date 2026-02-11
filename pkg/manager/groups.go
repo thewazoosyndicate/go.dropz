@@ -29,7 +29,6 @@ func (m *GoProManager) CreateGroup(name string, cameraIDs []string) (*database.G
 	for _, cameraID := range cameraIDs {
 		m.setCameraGroup(cameraID, group.ID)
 	}
-	m.db.SaveChanges()
 
 	m.log.Infof("Created group %s with %d cameras", name, len(cameraIDs))
 	return group, nil
@@ -77,7 +76,6 @@ func (m *GoProManager) UpdateGroup(groupID, name string, cameraIDs []string) (*d
 		}
 	}
 
-	m.db.SaveChanges()
 	m.log.Infof("Updated group %s with %d cameras", name, len(cameraIDs))
 	return group, nil
 }
@@ -97,7 +95,6 @@ func (m *GoProManager) DeleteGroup(groupID string) error {
 		return fmt.Errorf("failed to delete group: %v", err)
 	}
 
-	m.db.SaveChanges()
 	m.log.Infof("Deleted group %s", group.Name)
 	return nil
 }
@@ -112,7 +109,7 @@ func (m *GoProManager) validateCamerasExist(cameraIDs []string) error {
 }
 
 func (m *GoProManager) setCameraGroup(cameraID, groupID string) {
-	if state, found := m.db.GetCameraByID(cameraID); found {
-		state.GroupID = groupID
-	}
+	m.db.UpdateCameraByID(cameraID, func(cs *database.CameraWithState) {
+		cs.GroupID = groupID
+	})
 }

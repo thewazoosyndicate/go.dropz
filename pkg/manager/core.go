@@ -26,14 +26,10 @@ type GoProManager struct {
 	notifier func()
 
 	// Runtime control
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	mutex     sync.RWMutex
-	isRunning bool
-
-	// Active sync tasks
-	activeSyncTasks map[string]*syncpkg.SyncTask
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	mutex  sync.RWMutex
 
 	// Immediate sync trigger channel
 	immediateSyncTrigger chan struct{}
@@ -71,29 +67,22 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 
 	// Set up metadata update callback to update database whenever camera connects
 	bleManager.SetMetadataCallback(func(metadata ble.CameraMetadata) {
-		log.Debugf("Metadata callback invoked for camera %s", metadata.MACAddress)
-		
-		// Update camera WiFi credentials if they've changed
-		if state, exists := db.CameraStates[metadata.MACAddress]; exists {
-			if metadata.WiFiSSID != "" && metadata.WiFiPassword != "" {
-				state.Camera.WiFiSSID = metadata.WiFiSSID
-				state.Camera.WiFiPassword = metadata.WiFiPassword
-			}
+		if metadata.WiFiSSID != "" && metadata.WiFiPassword != "" {
+			db.UpdateCamera(metadata.MACAddress, func(cs *database.CameraWithState) {
+				cs.Camera.WiFiSSID = metadata.WiFiSSID
+				cs.Camera.WiFiPassword = metadata.WiFiPassword
+			})
 		}
-		
-		// Update camera metadata in database
+
 		dbMetadata := database.CameraMetadata{
 			Model:           metadata.ModelName,
 			FirmwareVersion: metadata.FirmwareVersion,
 			SerialNumber:    metadata.SerialNumber,
 			BatteryLevel:    int32(metadata.BatteryLevel),
 		}
-		
+
 		if err := db.SetCameraMetadata(metadata.MACAddress, dbMetadata); err != nil {
-			log.Errorf("Failed to update camera metadata in database: %v", err)
-		} else {
-			log.Infof("Updated metadata for camera %s: battery=%d%%, model=%s", 
-				metadata.MACAddress, metadata.BatteryLevel, metadata.ModelName)
+			log.Errorf("Failed to update camera metadata: %v", err)
 		}
 	})
 
@@ -111,12 +100,11 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 		ble:                  bleManager,
 		db:                   db,
 		log:                  log,
-		activeSyncTasks:      make(map[string]*syncpkg.SyncTask),
 		immediateSyncTrigger: make(chan struct{}, 1),
 	}
 
-	// Initialize component managers
-	manager.syncCoordinator = syncpkg.NewCoordinator(db, bleManager, log)
+	// Initialize component managers (coordinator gets notify/BLEOperation as method values)
+	manager.syncCoordinator = syncpkg.NewCoordinator(db, bleManager, log, make(map[string]*syncpkg.SyncTask), manager.notify, manager.BLEOperation, ctx)
 	manager.discoveryProcessor = discovery.NewProcessor(db, log)
 	manager.pairingManager = pairing.NewManager(db, bleManager, log, ctx)
 
@@ -142,54 +130,49 @@ func (m *GoProManager) notify() {
 
 // ManageCamera adds a camera to the managed camera pool
 func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, error) {
-	cameraState, found := m.db.GetCameraByID(cameraID)
+	mac, name, found := m.db.GetCameraIdentifiers(cameraID)
 	if !found {
 		return nil, fmt.Errorf("camera with ID %s not found", cameraID)
 	}
 
 	// Check if camera is already managed
-	if cameraState.Status.IsManaged {
-		// Already managed, return the managed view
-		managedCamera, _ := m.db.GetManagedCamera(cameraState.Camera.MACAddress)
+	cs, _ := m.db.GetCameraByID(cameraID)
+	if cs.Status.IsManaged {
+		managedCamera, _ := m.db.GetManagedCamera(mac)
 		return managedCamera, nil
 	}
 
-	// Set camera as managed
-	cameraState.Status.IsManaged = true
-	m.db.SaveChanges()
+	m.db.UpdateCameraByID(cameraID, func(cs *database.CameraWithState) {
+		cs.Status.IsManaged = true
+	})
 
 	m.log.Infof("Camera %s added to managed pool", cameraID)
-
 	m.notify()
 
-	// If we're in pair mode, queue pairing for the camera
 	config := m.db.GetConfig()
 	if config.PairModeEnabled {
-		if !cameraState.Status.IsPaired {
-			m.log.Infof("Pair mode enabled, starting pairing for camera %s", cameraState.Camera.Name)
+		if !cs.Status.IsPaired {
+			m.log.Infof("Pair mode enabled, starting pairing for camera %s", name)
 			m.PairCamera(cameraID)
 		} else {
-			m.log.Infof("Camera %s is already paired", cameraState.Camera.Name)
+			m.log.Infof("Camera %s is already paired", name)
 		}
 	}
 
-	// Return the managed camera view
-	managedCamera, _ := m.db.GetManagedCamera(cameraState.Camera.MACAddress)
+	managedCamera, _ := m.db.GetManagedCamera(mac)
 	return managedCamera, nil
 }
 
 // UnmanageCamera removes a camera from the managed pool
 func (m *GoProManager) UnmanageCamera(cameraID string) error {
-	cameraState, found := m.db.GetCameraByID(cameraID)
+	mac, _, found := m.db.GetCameraIdentifiers(cameraID)
 	if !found {
 		return fmt.Errorf("camera with ID %s not found", cameraID)
 	}
 
-	// Set camera as not managed
-	m.db.ToggleCameraManaged(cameraState.Camera.MACAddress)
+	m.db.ToggleCameraManaged(mac)
 
 	m.log.Infof("Camera %s removed from managed pool", cameraID)
-
 	m.notify()
 
 	return nil
@@ -255,12 +238,29 @@ func (m *GoProManager) PairCamera(cameraID string) (*database.ManagedCamera, err
 	return m.pairingManager.PairCamera(cameraID, m.BLEOperation, m.notifier)
 }
 
-// syncDevicePairingStates checks actual device pairing states and updates database accordingly
-func (m *GoProManager) syncDevicePairingStates() {
-	m.pairingManager.SyncDevicePairingStates(m.notifier)
+// ForceSync adds a camera to the sync queue for immediate synchronization
+func (m *GoProManager) ForceSync(cameraID string) (*database.SyncQueueEntry, error) {
+	syncEntry, err := m.syncCoordinator.ForceSync(cameraID)
+	if err != nil {
+		return nil, err
+	}
+
+	select {
+	case m.immediateSyncTrigger <- struct{}{}:
+		m.log.Debug("Immediate sync trigger sent for manual sync request")
+	default:
+		m.log.Debug("Immediate sync trigger channel full, sync will be picked up by next cycle")
+	}
+
+	return syncEntry, nil
 }
 
-// VerifyAndFixPairingState checks a specific camera's pairing state and fixes database if needed
-func (m *GoProManager) VerifyAndFixPairingState(cameraID string) error {
-	return m.pairingManager.VerifyAndFixPairingState(cameraID, m.notifier)
+// CancelSync cancels an ongoing sync operation and removes the camera from the sync queue
+func (m *GoProManager) CancelSync(cameraID string) error {
+	return m.syncCoordinator.CancelSync(cameraID)
+}
+
+// GetVideosByCamera returns videos for a specific camera
+func (m *GoProManager) GetVideosByCamera(cameraID string, startDate, endDate time.Time, limit, offset int) ([]*database.VideoFile, int) {
+	return m.syncCoordinator.GetVideosByCamera(cameraID, startDate, endDate, limit, offset)
 }

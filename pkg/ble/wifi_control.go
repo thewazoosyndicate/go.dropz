@@ -29,7 +29,7 @@ type HardwareInfo struct {
 
 // SetAPControl controls the WiFi Access Point using the proper OpenGoPro command
 func (m *Manager) SetAPControl(macAddress string, mode WiFiAPMode) error {
-	m.log.Infof("Setting WiFi AP control: mode=%d device=%s", mode, macAddress)
+	m.log.Debugf("Setting WiFi AP control: mode=%d device=%s", mode, macAddress)
 
 	// Validate mode
 	if mode > WiFiAPModeBounce {
@@ -48,12 +48,8 @@ func (m *Manager) SetAPControl(macAddress string, mode WiFiAPMode) error {
 		return fmt.Errorf("WiFi AP control failed: status=0x%02X", response.Status)
 	}
 
-	m.log.Debugf("WiFi AP control command successful: status=0x%02X", response.Status)
-
-	// For enable mode, wait a bit for the AP to come up
 	if mode == WiFiAPModeEnable || mode == WiFiAPModeBounce {
 		time.Sleep(2 * time.Second)
-		m.log.Debug("WiFi AP enable command sent successfully, waiting for AP to start")
 	}
 
 	return nil
@@ -61,8 +57,6 @@ func (m *Manager) SetAPControl(macAddress string, mode WiFiAPMode) error {
 
 // GetHardwareInfo retrieves hardware information from the camera
 func (m *Manager) GetHardwareInfo(macAddress string) (*HardwareInfo, error) {
-	m.log.Debug("Getting hardware info from device")
-
 	response, err := m.sendCommand(macAddress, CmdGetHardwareInfo, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get hardware info: %v", err)
@@ -73,9 +67,6 @@ func (m *Manager) GetHardwareInfo(macAddress string) (*HardwareInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse hardware info: %v", err)
 	}
-
-	m.log.Infof("Hardware info: Model=%s, FW=%s, SN=%s, SSID=%s",
-		info.ModelName, info.FirmwareVersion, info.SerialNumber, info.APSSID)
 
 	return info, nil
 }
@@ -169,8 +160,6 @@ func parseHardwareInfo(data []byte, log *logrus.Logger) (*HardwareInfo, error) {
 
 // SetThirdPartyClient identifies this client as a third-party app to the camera
 func (m *Manager) SetThirdPartyClient(macAddress string) error {
-	m.log.Debug("Setting third party client flag")
-
 	_, err := m.sendCommand(macAddress, CmdSetThirdPartyClient, nil)
 	if err != nil {
 		return fmt.Errorf("failed to set third party client: %v", err)

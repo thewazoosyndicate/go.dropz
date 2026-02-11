@@ -23,13 +23,12 @@ func NewManager(db *database.Database, ble *ble.Manager, log *logrus.Logger, ctx
 
 // PairCamera pairs with a GoPro camera using BLE
 func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context, string, func() error) error, notifier func()) (*database.ManagedCamera, error) {
-	cameraState, found := pm.db.GetCameraByID(cameraID)
+	macAddress, name, found := pm.db.GetCameraIdentifiers(cameraID)
 	if !found {
 		return nil, fmt.Errorf("camera with ID %s not found", cameraID)
 	}
 
-	macAddress := cameraState.Camera.MACAddress
-	pm.log.Infof("Starting pairing process for camera %s", cameraState.Camera.Name)
+	pm.log.Infof("Starting pairing process for camera %s", name)
 
 	pm.db.UpdateCameraPairingStatus(macAddress, true)
 	notifier()
@@ -50,11 +49,11 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 		isPaired, err := pm.ble.IsPaired(macAddress)
 		if err != nil {
 			pm.log.Warnf("Failed to query pairing state, falling back to WiFi credential check: %v", err)
-			updatedState, exists := pm.db.CameraStates[macAddress]
+			cam, exists := pm.db.GetDiscoveredCamera(macAddress)
 			if !exists {
 				return fmt.Errorf("camera state not found after connection")
 			}
-			isPaired = updatedState.Camera.WiFiSSID != "" && updatedState.Camera.WiFiPassword != ""
+			isPaired = cam.CameraState.Camera.WiFiSSID != "" && cam.CameraState.Camera.WiFiPassword != ""
 		}
 
 		if isPaired {
@@ -91,9 +90,12 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 
 	managedCamera, exists := pm.db.GetManagedCamera(macAddress)
 	if !exists {
-		managedCamera = &database.ManagedCamera{CameraState: cameraState}
+		cs, _ := pm.db.GetDiscoveredCamera(macAddress)
+		if cs != nil {
+			managedCamera = &database.ManagedCamera{CameraState: cs.CameraState}
+		}
 	}
 
-	pm.log.Infof("Camera %s pairing completed. isPaired=%v", cameraState.Camera.Name, verifiedPairingState)
+	pm.log.Infof("Camera %s pairing completed. isPaired=%v", name, verifiedPairingState)
 	return managedCamera, nil
 }

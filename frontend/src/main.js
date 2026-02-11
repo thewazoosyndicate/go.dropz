@@ -4,20 +4,34 @@ const log = require('electron-log');
 const fs = require('fs');
 const { spawn } = require('child_process');
 
-// Disable GPU VSync to prevent VSync parameter errors
+// GPU workarounds for Linux AppImage compatibility
 app.commandLine.appendSwitch('disable-gpu-vsync');
+app.commandLine.appendSwitch('disable-gpu-compositing');
+app.commandLine.appendSwitch('enable-features', 'VaapiVideoDecoder');
+app.commandLine.appendSwitch('disable-software-rasterizer');
 
 // Configure logging
 // Set to 'info' for normal operation, 'debug' for troubleshooting, 'warn' for minimal logging
 log.transports.file.level = 'info';
 log.transports.file.maxSize = 5 * 1024 * 1024; // Limit log file to 5MB
-log.transports.console.level = 'warn';  // Less verbose in console
+log.transports.console.level = 'info';
 log.info('Application starting...');
 
 // Keep a global reference of objects to prevent garbage collection
 let mainWindow;
 let goBinary;
 let isQuitting = false;
+let grpcReady = false;
+
+function checkGrpcReady(line) {
+  if (!grpcReady && line.includes('gRPC server started')) {
+    grpcReady = true;
+    log.info('gRPC server ready, notifying renderer');
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('go-binary-status', { running: true });
+    }
+  }
+}
 
 // Get the path to the Go binary based on the platform
 function getGoBinaryPath() {
@@ -96,6 +110,8 @@ function startGoBinary() {
               log.info(`[Go stdout] ${trimmedLine}`);
             }
             
+            checkGrpcReady(trimmedLine);
+
             // Forward to renderer
             if (mainWindow && mainWindow.webContents) {
               mainWindow.webContents.send('go-binary-log', trimmedLine);
@@ -104,7 +120,7 @@ function startGoBinary() {
         });
       }
     });
-    
+
     // Capture stderr and forward to renderer process and log file
     childProcess.stderr.on('data', (data) => {
       const output = data.toString().trim();
@@ -119,14 +135,19 @@ function startGoBinary() {
               return;
             }
             
-            // All stderr output is considered error level by default
-            // But check for panic/fatal which are more severe
-            if (trimmedLine.includes('panic:') || trimmedLine.includes('fatal:')) {
-              log.error(`[Go stderr FATAL] ${trimmedLine}`);
+            // Parse log level from Go output
+            if (trimmedLine.includes('panic:') || trimmedLine.includes('fatal:') || trimmedLine.includes('[FATAL]')) {
+              log.error(`[Go] ${trimmedLine}`);
+            } else if (trimmedLine.includes('level=error') || trimmedLine.includes('[ERROR]')) {
+              log.error(`[Go] ${trimmedLine}`);
+            } else if (trimmedLine.includes('level=warning') || trimmedLine.includes('[WARN]')) {
+              log.warn(`[Go] ${trimmedLine}`);
             } else {
-              log.error(`[Go stderr] ${trimmedLine}`);
+              log.info(`[Go] ${trimmedLine}`);
             }
             
+            checkGrpcReady(trimmedLine);
+
             // Forward to renderer with original formatting
             if (mainWindow && mainWindow.webContents) {
               mainWindow.webContents.send('go-binary-log', trimmedLine);
@@ -138,6 +159,7 @@ function startGoBinary() {
     
     // Only track process lifecycle events
     childProcess.on('close', (code) => {
+      grpcReady = false;
       log.info(`Go binary process exited with code ${code}`);
       if (mainWindow) {
         mainWindow.webContents.send('go-binary-status', { running: false, exitCode: code });
@@ -158,11 +180,6 @@ function startGoBinary() {
         mainWindow.webContents.send('go-binary-error', err.message);
       }
     });
-    
-    if (mainWindow) {
-      log.info('Sending running status to renderer process');
-      mainWindow.webContents.send('go-binary-status', { running: true });
-    }
     
     return childProcess;
   } catch (err) {

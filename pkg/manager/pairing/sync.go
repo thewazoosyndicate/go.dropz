@@ -1,9 +1,5 @@
 package pairing
 
-import (
-	"fmt"
-)
-
 // SyncDevicePairingStates checks actual device pairing states and updates database accordingly
 func (pm *Manager) SyncDevicePairingStates(notifier func()) {
 	managedCameras := pm.db.GetCamerasForManagedPool()
@@ -12,6 +8,11 @@ func (pm *Manager) SyncDevicePairingStates(notifier func()) {
 		macAddress := camera.CameraState.Camera.MACAddress
 
 		if !camera.CameraState.Status.IsReachable || camera.CameraState.Status.IsPairing {
+			continue
+		}
+
+		// Skip cameras without an active BLE connection — querying would always fail
+		if !pm.ble.IsConnected(macAddress) {
 			continue
 		}
 
@@ -36,27 +37,3 @@ func (pm *Manager) SyncDevicePairingStates(notifier func()) {
 	}
 }
 
-// VerifyAndFixPairingState checks a specific camera's pairing state and fixes database if needed
-func (pm *Manager) VerifyAndFixPairingState(cameraID string, notifier func()) error {
-	cameraState, found := pm.db.GetCameraByID(cameraID)
-	if !found {
-		return fmt.Errorf("camera with ID %s not found", cameraID)
-	}
-
-	macAddress := cameraState.Camera.MACAddress
-	devicePaired, err := pm.ble.IsPaired(macAddress)
-	if err != nil {
-		return fmt.Errorf("failed to query device pairing state: %v", err)
-	}
-
-	if cameraState.Status.IsPaired != devicePaired {
-		pm.log.Infof("Fixing pairing state mismatch for camera %s: database=%v, device=%v",
-			cameraState.Camera.Name, cameraState.Status.IsPaired, devicePaired)
-		if err := pm.db.SetCameraPaired(macAddress, devicePaired); err != nil {
-			return fmt.Errorf("failed to update pairing state: %v", err)
-		}
-		notifier()
-	}
-
-	return nil
-}

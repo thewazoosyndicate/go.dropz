@@ -23,6 +23,8 @@ func (m *GoProManager) GetSetting(settingName string) (interface{}, error) {
 	config := m.db.GetConfig()
 
 	switch settingName {
+	case "pair_mode_enabled":
+		return config.PairModeEnabled, nil
 	case "sync_enabled":
 		return config.SyncEnabled, nil
 	case "scan_interval_seconds":

@@ -45,24 +45,20 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 			return fmt.Errorf("failed to connect: %v", err)
 		}
 
-		// Query actual device pairing state instead of relying on WiFi credentials
-		isPaired, err := pm.ble.IsPaired(macAddress)
-		if err != nil {
-			pm.log.Warnf("Failed to query pairing state, falling back to WiFi credential check: %v", err)
-			cam, exists := pm.db.GetDiscoveredCamera(macAddress)
-			if !exists {
-				return fmt.Errorf("camera state not found after connection")
-			}
-			isPaired = cam.CameraState.Camera.WiFiSSID != "" && cam.CameraState.Camera.WiFiPassword != ""
-		}
+		// Verify pairing succeeded by checking if WiFi credentials were read.
+		// ConnectForPairing reads them after D-Bus bonding and the metadata
+		// callback persists them to the database.
+		cam, exists := pm.db.GetDiscoveredCamera(macAddress)
+		isPaired := exists && cam.CameraState != nil &&
+			cam.CameraState.Camera.WiFiSSID != "" && cam.CameraState.Camera.WiFiPassword != ""
 
 		if isPaired {
-			pm.log.Infof("Pairing verified via device status query")
+			pm.log.Infof("Pairing verified — WiFi credentials received")
 		} else {
-			pm.log.Warnf("Pairing may be incomplete - device reports not paired")
+			pm.log.Warnf("Pairing completed but WiFi credentials not available yet")
 		}
 
-		if err := pm.db.SetCameraPaired(macAddress, isPaired); err != nil {
+		if err := pm.db.SetCameraPaired(macAddress, true); err != nil {
 			pm.log.Errorf("Failed to set camera paired status: %v", err)
 		}
 

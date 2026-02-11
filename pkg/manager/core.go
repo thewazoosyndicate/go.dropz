@@ -108,6 +108,28 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 	manager.discoveryProcessor = discovery.NewProcessor(db, log)
 	manager.pairingManager = pairing.NewManager(db, bleManager, log, ctx)
 
+	// Handle real-time status push notifications from camera (battery, pairing state)
+	bleManager.SetStatusCallback(func(macAddress string, statusID byte, value []byte) {
+		if len(value) < 1 {
+			return
+		}
+		switch statusID {
+		case ble.StatusBatteryPercentage:
+			if err := db.UpdateCamera(macAddress, func(cs *database.CameraWithState) {
+				cs.Metadata.BatteryLevel = int32(value[0])
+			}); err != nil {
+				log.Errorf("Failed to update battery from push notification: %v", err)
+			}
+			manager.notify()
+		case ble.StatusPairingState:
+			isPaired := int(value[0]) == ble.PairingCompleted
+			if err := db.SetCameraPaired(macAddress, isPaired); err != nil {
+				log.Errorf("Failed to update pairing state from push notification: %v", err)
+			}
+			manager.notify()
+		}
+	})
+
 	// Auto-queue cameras for sync when they reappear after being gone long enough
 	manager.discoveryProcessor.SetOnCameraReappeared(func(mac string, wasGoneFor time.Duration) {
 		config := db.GetConfig()

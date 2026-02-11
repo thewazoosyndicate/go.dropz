@@ -65,9 +65,8 @@ func (s *Scanner) StartBackgroundScanner(ctx context.Context, processDeviceFunc 
 			return
 
 		case <-ticker.C:
-			// If we're not actively scanning, restart the continuous scanning process
 			if !scanInProgress.Load() {
-				s.log.Debug("Restarting continuous scan")
+				s.log.Debug("Restarting scan after external stop")
 				// Cancel any existing scan and create a new context
 				if cancelContinuousScan != nil {
 					cancelContinuousScan()
@@ -139,7 +138,9 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 
 		s.log.Tracef("BLE scan started with live processing, waiting for scan to complete...")
 
-		// Wait for scan to complete or context cancellation
+		scanDone := s.ble.ScanDone()
+
+		// Wait for scan to complete, external stop, or context cancellation
 		select {
 		case <-scanCtx.Done():
 			if scanCtx.Err() != context.Canceled {
@@ -149,6 +150,18 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 			cancel()
 			s.log.Debug("Parent context canceled during scan")
 			return
+		case <-scanDone:
+			s.log.Debug("Scan stopped externally, waiting for connection to finish")
+			// Wait for the BLE connection to complete before restarting scan
+			if ch := s.ble.ConnectingDone(); ch != nil {
+				select {
+				case <-ch:
+					s.log.Debug("Connection finished, will restart scan")
+				case <-ctx.Done():
+					cancel()
+					return
+				}
+			}
 		}
 
 		cancel() // Always cancel the context
@@ -158,7 +171,6 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 		case <-ctx.Done():
 			return
 		case <-time.After(100 * time.Millisecond):
-			// Very short pause to ensure continuous scanning
 		}
 	}
 }

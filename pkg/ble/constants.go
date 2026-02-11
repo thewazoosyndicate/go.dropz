@@ -25,6 +25,10 @@ const (
 	CharQuery            = "b5f90076-aa8d-11e3-9046-0002a5d5c51b" // GP-0076
 	CharQueryResponse    = "b5f90077-aa8d-11e3-9046-0002a5d5c51b" // GP-0077
 
+	// Network Management Characteristics (GP-0090)
+	CharNetworkMgmtCommand  = "b5f90091-aa8d-11e3-9046-0002a5d5c51b" // GP-0091
+	CharNetworkMgmtResponse = "b5f90092-aa8d-11e3-9046-0002a5d5c51b" // GP-0092
+
 	// Discovery UUID for scanning
 	AdvertisementService = "0000fea6-0000-1000-8000-00805f9b34fb" // Same as ServiceControl
 
@@ -35,10 +39,16 @@ const (
 	CmdSetAPControl        = 0x17 // Control WiFi Access Point
 	CmdGetHardwareInfo     = 0x3C
 	CmdKeepAlive           = 0x5B // Keep camera awake during transfers
-	CmdSetThirdPartyClient = 0x6B // Identify as third party app
+	// Not a spec-defined TLV command; empirically works as raw byte to register as third-party client
+	CmdRegisterClient = 0x6B
 
 	// Query IDs
-	QueryGetStatus   = 0x13
+	QueryGetStatus               = 0x13
+	QueryRegisterStatusUpdates   = 0x53
+	QueryUnregisterStatusUpdates = 0x73
+
+	// Async notification IDs (unsolicited push from camera)
+	AsyncStatusNotification = 0x93
 
 	// Status IDs
 	StatusBatteryPercentage = 70 // Internal Battery Percentage (OpenGoPro spec)
@@ -52,7 +62,8 @@ const (
 	// Connection and Discovery Timeouts
 	ServiceDiscoveryTimeout = 10 * time.Second
 	ServiceDiscoveryRetries = 3
-	PostConnectDelay        = 3 * time.Second  // Connection stabilization delay
+	PostConnectDelay        = 500 * time.Millisecond // Connection stabilization delay
+	ScanToConnectDelay      = 200 * time.Millisecond // Delay after stopping scan before connecting
 	CharDiscoveryTimeout    = 5 * time.Second
 	PairingTimeout          = 15 * time.Second
 	CameraReadyTimeout      = 10 * time.Second
@@ -77,6 +88,10 @@ func GetCharacteristicName(uuid string) string {
 		return "WiFi SSID (GP-0002)"
 	case CharWifiPassword:
 		return "WiFi Password (GP-0003)"
+	case CharNetworkMgmtCommand:
+		return "Network Mgmt Command (GP-0091)"
+	case CharNetworkMgmtResponse:
+		return "Network Mgmt Response (GP-0092)"
 	default:
 		return "Unknown Characteristic"
 	}

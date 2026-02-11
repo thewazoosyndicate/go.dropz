@@ -24,14 +24,13 @@ func (pm *Manager) SyncDevicePairingStates(notifier func()) {
 
 		dbPairingState := camera.CameraState.Status.IsPaired
 		if dbPairingState != devicePaired {
-			if devicePaired {
-				if err := pm.db.SetCameraPaired(macAddress, true); err != nil {
-					pm.log.Errorf("Failed to update pairing state for camera %s: %v",
-						camera.CameraState.Camera.Name, err)
-				} else {
-					pm.log.Infof("Synced pairing state for camera %s to paired", camera.CameraState.Camera.Name)
-					notify(notifier)
-				}
+			if err := pm.db.SetCameraPaired(macAddress, devicePaired); err != nil {
+				pm.log.Errorf("Failed to update pairing state for camera %s: %v",
+					camera.CameraState.Camera.Name, err)
+			} else {
+				pm.log.Infof("Synced pairing state for camera %s: %v -> %v",
+					camera.CameraState.Camera.Name, dbPairingState, devicePaired)
+				notifier()
 			}
 		}
 	}
@@ -56,7 +55,7 @@ func (pm *Manager) VerifyAndFixPairingState(cameraID string, notifier func()) er
 		if err := pm.db.SetCameraPaired(macAddress, devicePaired); err != nil {
 			return fmt.Errorf("failed to update pairing state: %v", err)
 		}
-		notify(notifier)
+		notifier()
 	}
 
 	return nil

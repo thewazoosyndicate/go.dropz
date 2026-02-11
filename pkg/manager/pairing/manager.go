@@ -32,7 +32,7 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 	pm.log.Infof("Starting pairing process for camera %s", cameraState.Camera.Name)
 
 	pm.db.UpdateCameraPairingStatus(macAddress, true)
-	notify(notifier)
+	notifier()
 
 	ctx, cancel := context.WithTimeout(pm.ctx, 30*time.Second)
 	defer cancel()
@@ -42,28 +42,32 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 	bleErr := bleOperation(ctx, "PairCamera", func() error {
 		pm.log.Infof("Connecting to device %s for pairing", macAddress)
 
-		if err := pm.ble.Connect(macAddress); err != nil {
+		if err := pm.ble.ConnectForPairing(macAddress); err != nil {
 			return fmt.Errorf("failed to connect: %v", err)
 		}
 
-		updatedState, exists := pm.db.CameraStates[macAddress]
-		if !exists {
-			return fmt.Errorf("camera state not found after connection")
+		// Query actual device pairing state instead of relying on WiFi credentials
+		isPaired, err := pm.ble.IsPaired(macAddress)
+		if err != nil {
+			pm.log.Warnf("Failed to query pairing state, falling back to WiFi credential check: %v", err)
+			updatedState, exists := pm.db.CameraStates[macAddress]
+			if !exists {
+				return fmt.Errorf("camera state not found after connection")
+			}
+			isPaired = updatedState.Camera.WiFiSSID != "" && updatedState.Camera.WiFiPassword != ""
 		}
 
-		isPaired := updatedState.Camera.WiFiSSID != "" && updatedState.Camera.WiFiPassword != ""
-
 		if isPaired {
-			pm.log.Infof("Pairing successful - WiFi credentials obtained: SSID=%s", updatedState.Camera.WiFiSSID)
+			pm.log.Infof("Pairing verified via device status query")
 		} else {
-			pm.log.Warnf("Pairing may be incomplete - no WiFi credentials obtained")
+			pm.log.Warnf("Pairing may be incomplete - device reports not paired")
 		}
 
 		if err := pm.db.SetCameraPaired(macAddress, isPaired); err != nil {
 			pm.log.Errorf("Failed to set camera paired status: %v", err)
 		}
 
-		notify(notifier)
+		notifier()
 		verifiedPairingState = isPaired
 
 		if err := pm.ble.Disconnect(macAddress); err != nil {
@@ -76,12 +80,14 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 	if bleErr != nil {
 		pm.log.Errorf("BLE pairing operation failed: %v", bleErr)
 		pm.db.UpdateCameraPairingStatus(macAddress, false)
+		pm.db.SetCameraPaired(macAddress, false)
+		notifier()
 		return nil, fmt.Errorf("failed in BLE pairing operation: %v", bleErr)
 	}
 
 	// Complete pairing
 	pm.db.UpdateCameraPairingStatus(macAddress, false)
-	notify(notifier)
+	notifier()
 
 	managedCamera, exists := pm.db.GetManagedCamera(macAddress)
 	if !exists {
@@ -90,10 +96,4 @@ func (pm *Manager) PairCamera(cameraID string, bleOperation func(context.Context
 
 	pm.log.Infof("Camera %s pairing completed. isPaired=%v", cameraState.Camera.Name, verifiedPairingState)
 	return managedCamera, nil
-}
-
-func notify(notifier func()) {
-	if notifier != nil {
-		notifier()
-	}
 }

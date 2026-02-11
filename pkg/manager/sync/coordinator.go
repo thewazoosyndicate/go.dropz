@@ -323,6 +323,8 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 		return
 	}
 
+	c.log.Infof("WiFi connected to camera %s (SSID: %s)", camera.CameraState.Camera.Name, camera.CameraState.Camera.WiFiSSID)
+
 	// Ensure we disconnect from WiFi when done
 	defer func() {
 		disconnectErr := wifiManager.Disconnect()
@@ -397,6 +399,8 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask, activeSyncTasks map[stri
 		c.log.Errorf("Failed to download media: %v", err)
 		return
 	}
+
+	c.log.Infof("Download complete for camera %s: %d files downloaded", camera.CameraState.Camera.Name, len(downloadedFiles))
 
 	// Step 5: Process files (add metadata, etc.)
 	syncEntry.CurrentOperation = "Processing files"

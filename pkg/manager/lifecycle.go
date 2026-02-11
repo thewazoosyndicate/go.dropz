@@ -121,18 +121,9 @@ func (m *GoProManager) checkManagedDevices() {
 			continue
 		}
 
-		// Double-check device pairing state for extra safety
-		macAddress := camera.CameraState.Camera.MACAddress
-		devicePaired, err := m.ble.IsPaired(macAddress)
-		if err != nil {
-			// If we can't check device state, fall back to database state
-			m.log.Tracef("Failed to check device pairing state for %s, using database state: %v",
-				camera.CameraState.Camera.Name, err)
-			devicePaired = camera.CameraState.Status.IsPaired
-		}
-
-		if !devicePaired {
-			m.log.Debugf("Camera %s is not paired on device, skipping sync", camera.CameraState.Camera.Name)
+		// syncDevicePairingStates() already ran on this tick, trust the DB
+		if !camera.CameraState.Status.IsPaired {
+			m.log.Debugf("Camera %s is not paired, skipping sync", camera.CameraState.Camera.Name)
 			continue
 		}
 

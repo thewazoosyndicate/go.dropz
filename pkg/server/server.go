@@ -90,7 +90,7 @@ func (s *DropzServer) Start(address string) error {
 	s.server = grpc.NewServer()
 	protocol.RegisterDropzServiceServer(s.server, s)
 
-	s.log.Info("gRPC server started", "address", address)
+	s.log.WithFields(logrus.Fields{"address": address}).Info("gRPC server started")
 
 	s.wg.Add(2)
 	go s.streamUpdateHandler()
@@ -351,7 +351,7 @@ func (s *DropzServer) ManageCamera(ctx context.Context, req *protocol.ManageCame
 	if s.ctx.Err() != nil {
 		return &protocol.ManageCameraResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
 	}
-	s.log.Info("Handling ManageCamera request", "camera_id", req.CameraId)
+	s.log.WithFields(logrus.Fields{"camera_id": req.CameraId}).Info("Handling ManageCamera request")
 
 	managedCamera, err := s.manager.ManageCamera(req.CameraId)
 	if err != nil {

@@ -180,7 +180,7 @@ func (db *Database) Initialize(filePath string) error {
 		if err := db.saveToFile(); err != nil {
 			return fmt.Errorf("failed to create database file: %v", err)
 		}
-		db.log.Info("Created new database file", "path", filePath)
+		db.log.WithFields(logrus.Fields{"path": filePath}).Info("Created new database file")
 		return nil
 	}
 
@@ -199,7 +199,7 @@ func (db *Database) loadFromFile() error {
 		return fmt.Errorf("failed to unmarshal database: %v", err)
 	}
 
-	db.log.Info("Loaded database from file", "path", db.filePath, "cameras_count", len(db.CameraStates), "groups_count", len(db.Groups), "videos_count", len(db.Videos))
+	db.log.WithFields(logrus.Fields{"path": db.filePath, "cameras_count": len(db.CameraStates), "groups_count": len(db.Groups), "videos_count": len(db.Videos)}).Info("Loaded database from file")
 	return nil
 }
 
@@ -326,7 +326,7 @@ func (db *Database) RemoveManagedCamera(macAddress string) error {
 	if exists {
 		// Just update the camera status, don't remove it from the database
 		cameraState.Status.IsManaged = false
-		db.log.Info("Camera removed from managed pool", "mac_address", macAddress, "camera_name", cameraState.Camera.Name)
+		db.log.WithFields(logrus.Fields{"mac_address": macAddress, "camera_name": cameraState.Camera.Name}).Info("Camera removed from managed pool")
 		return db.saveToFile()
 	}
 	db.log.Warn("Attempted to remove non-existent managed camera", "mac_address", macAddress)
@@ -350,7 +350,7 @@ func (db *Database) AddSyncQueueEntry(entry *SyncQueueEntry) error {
 
 	// Add to queue
 	db.SyncQueue = append(db.SyncQueue, entry)
-	db.log.Info("Camera added to sync queue", "camera_id", entry.CameraID, "operation", entry.CurrentOperation, "queue_length", len(db.SyncQueue))
+	db.log.WithFields(logrus.Fields{"camera_id": entry.CameraID, "operation": entry.CurrentOperation, "queue_length": len(db.SyncQueue)}).Info("Camera added to sync queue")
 	return db.saveToFile()
 }
 
@@ -399,7 +399,7 @@ func (db *Database) RemoveSyncQueueEntry(cameraID string) error {
 			// Remove entry by replacing it with the last one and truncating
 			db.SyncQueue[i] = db.SyncQueue[len(db.SyncQueue)-1]
 			db.SyncQueue = db.SyncQueue[:len(db.SyncQueue)-1]
-			db.log.Info("Camera removed from sync queue", "camera_id", cameraID, "queue_length", len(db.SyncQueue))
+			db.log.WithFields(logrus.Fields{"camera_id": cameraID, "queue_length": len(db.SyncQueue)}).Info("Camera removed from sync queue")
 			return db.saveToFile()
 		}
 	}
@@ -415,14 +415,14 @@ func (db *Database) AddOrUpdateGroup(group *Group) error {
 	for i, existing := range db.Groups {
 		if existing.ID == group.ID {
 			db.Groups[i] = group
-			db.log.Info("Group updated", "group_id", group.ID, "group_name", group.Name, "camera_count", len(group.CameraIDs))
+			db.log.WithFields(logrus.Fields{"group_id": group.ID, "group_name": group.Name, "camera_count": len(group.CameraIDs)}).Info("Group updated")
 			return db.saveToFile()
 		}
 	}
 
 	// Add new group
 	db.Groups = append(db.Groups, group)
-	db.log.Info("Group created", "group_id", group.ID, "group_name", group.Name, "camera_count", len(group.CameraIDs), "total_groups", len(db.Groups))
+	db.log.WithFields(logrus.Fields{"group_id": group.ID, "group_name": group.Name, "camera_count": len(group.CameraIDs), "total_groups": len(db.Groups)}).Info("Group created")
 	return db.saveToFile()
 }
 
@@ -460,7 +460,7 @@ func (db *Database) RemoveGroup(id string) error {
 			// Remove group by replacing it with the last one and truncating
 			db.Groups[i] = db.Groups[len(db.Groups)-1]
 			db.Groups = db.Groups[:len(db.Groups)-1]
-			db.log.Info("Group removed", "group_id", id, "group_name", group.Name, "remaining_groups", len(db.Groups))
+			db.log.WithFields(logrus.Fields{"group_id": id, "group_name": group.Name, "remaining_groups": len(db.Groups)}).Info("Group removed")
 			return db.saveToFile()
 		}
 	}
@@ -474,7 +474,7 @@ func (db *Database) AddVideo(video *VideoFile) error {
 	defer db.mutex.Unlock()
 
 	db.Videos = append(db.Videos, video)
-	db.log.Info("Video file added", "video_name", video.Name, "camera_id", video.CameraID, "size_bytes", video.SizeBytes, "duration_seconds", video.DurationSeconds, "total_videos", len(db.Videos))
+	db.log.WithFields(logrus.Fields{"video_name": video.Name, "camera_id": video.CameraID, "size_bytes": video.SizeBytes, "duration_seconds": video.DurationSeconds, "total_videos": len(db.Videos)}).Info("Video file added")
 	return db.saveToFile()
 }
 

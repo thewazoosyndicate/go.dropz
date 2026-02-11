@@ -165,29 +165,11 @@ func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, e
 	// If we're in pair mode, queue pairing for the camera
 	config := m.db.GetConfig()
 	if config.PairModeEnabled {
-		// Check actual device pairing state instead of just database state
-		macAddress := cameraState.Camera.MACAddress
-		devicePaired, err := m.ble.IsPaired(macAddress)
-
-		if err != nil {
-			// If we can't check device state, fall back to database state
-			m.log.Tracef("Failed to check device pairing state for %s, using database state: %v",
-				cameraState.Camera.Name, err)
-			devicePaired = cameraState.Status.IsPaired
-		} else if devicePaired != cameraState.Status.IsPaired {
-			// Update database to match device state
-			m.log.Infof("Updating database pairing state for camera %s: database=%v, device=%v",
-				cameraState.Camera.Name, cameraState.Status.IsPaired, devicePaired)
-			if updateErr := m.db.SetCameraPaired(macAddress, devicePaired); updateErr != nil {
-				m.log.Warnf("Failed to update pairing state: %v", updateErr)
-			}
-		}
-
-		if !devicePaired {
+		if !cameraState.Status.IsPaired {
 			m.log.Infof("Pair mode enabled, starting pairing for camera %s", cameraState.Camera.Name)
 			m.PairCamera(cameraID)
 		} else {
-			m.log.Infof("Camera %s is already paired on device", cameraState.Camera.Name)
+			m.log.Infof("Camera %s is already paired", cameraState.Camera.Name)
 		}
 	}
 

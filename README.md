@@ -31,7 +31,7 @@ cd frontend && npm start
 
 ## Flags
 
-```
+```bash
 -data-dir       Data directory (default: ~/.dropz/data)
 -video-dir      Video download directory (default: ~/Videos)
 -log-dir        Log directory (default: ~/.dropz/logs)

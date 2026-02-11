@@ -2,7 +2,7 @@ VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1
 BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -ldflags "-X main.appVersion=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
 
-.PHONY: all build clean proto test appimage dmg app frontend-deps
+.PHONY: all build build-darwin-universal clean proto test appimage dmg app frontend-deps
 
 all: proto build
 
@@ -43,12 +43,20 @@ proto:
 		../proto/*.proto
 	@echo "Protobuf code generation complete."
 
+build-darwin-universal:
+	@echo "Building universal macOS binary..."
+	@mkdir -p bin
+	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/dropz-amd64 cmd/dropz/main.go
+	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/dropz-arm64 cmd/dropz/main.go
+	lipo -create bin/dropz-amd64 bin/dropz-arm64 -output bin/dropz
+	@rm bin/dropz-amd64 bin/dropz-arm64
+
 appimage: build
 	@echo "Building AppImage..."
 	cd frontend && npm run build -- --linux AppImage
 	@echo "AppImage built: frontend/dist/Dropz-1.0.0.AppImage"
 
-dmg: build
+dmg: build-darwin-universal
 	@echo "Building macOS DMG..."
 	cd frontend && npm run build -- --mac dmg
 	@echo "DMG built in frontend/dist/"

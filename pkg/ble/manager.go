@@ -101,8 +101,8 @@ func (m *Manager) StopScanning() error {
 // connectBase establishes a BLE connection, discovers services/characteristics,
 // and polls until the camera is ready. Shared by Connect and ConnectForPairing.
 func (m *Manager) connectBase(macAddress string) (hwInfo *HardwareInfo, err error) {
-	if err := m.validateMAC(macAddress); err != nil {
-		return nil, fmt.Errorf("invalid MAC address: %v", err)
+	if err := validateAddress(macAddress); err != nil {
+		return nil, fmt.Errorf("invalid device address: %v", err)
 	}
 
 	// Check if already connected
@@ -116,13 +116,11 @@ func (m *Manager) connectBase(macAddress string) (hwInfo *HardwareInfo, err erro
 
 	m.log.Debugf("Connecting to GoPro device: %s", macAddress)
 
-	// Parse MAC and connect
-	mac, parseErr := bluetooth.ParseMAC(macAddress)
+	addr, parseErr := parseAddress(macAddress)
 	if parseErr != nil {
-		return nil, fmt.Errorf("failed to parse MAC: %v", parseErr)
+		return nil, parseErr
 	}
 
-	addr := bluetooth.Address{MACAddress: bluetooth.MACAddress{MAC: mac}}
 	device, connErr := m.adapter.Connect(addr, bluetooth.ConnectionParams{})
 	if connErr != nil {
 		return nil, fmt.Errorf("BLE connection failed: %v", connErr)
@@ -450,6 +448,12 @@ func (m *Manager) GetBatteryLevel(macAddress string) (int, error) {
 	return 0, fmt.Errorf("battery percentage not found in response")
 }
 
+// KeepAlive sends a keep-alive to prevent the camera from auto-sleeping
+func (m *Manager) KeepAlive(macAddress string) error {
+	_, err := m.sendCommand(macAddress, CmdKeepAlive, []byte{0x01, 0x42})
+	return err
+}
+
 // Sleep puts the device to sleep
 func (m *Manager) Sleep(macAddress string) error {
 	// According to OpenGoPro BLE spec, Sleep command (ID 0x05) sends a response
@@ -573,14 +577,6 @@ func (m *Manager) handleNotification(macAddress string, data []byte) {
 			m.responseTracker.RouteResponse(message)
 		}
 	}
-}
-
-func (m *Manager) validateMAC(macAddress string) error {
-	if len(macAddress) != 17 {
-		return fmt.Errorf("invalid MAC address length")
-	}
-	// Add more validation if needed
-	return nil
 }
 
 // IsConnected checks if a device has an active BLE connection

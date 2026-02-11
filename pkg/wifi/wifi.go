@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -23,8 +22,9 @@ const (
 	StatusURL     = "/gopro/camera/state"
 	BatteryURL    = "/gopro/status/battery"
 	// Media endpoints
-	MediaListURL = "/gopro/media/list"
-	MediaInfoURL = "/gopro/media/info"
+	MediaListURL      = "/gopro/media/list"
+	MediaInfoURL      = "/gopro/media/info"
+	TurboTransferURL  = "/gopro/media/turbo_transfer"
 )
 
 // WiFiManager handles WiFi operations for GoPro devices
@@ -37,117 +37,6 @@ func NewWiFiManager(log *logrus.Logger) *WiFiManager {
 	return &WiFiManager{
 		log: log,
 	}
-}
-
-// Connect connects to a GoPro WiFi network
-func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error {
-	m.log.Debugf("Connecting to WiFi network: ssid=%s", ssid)
-
-	connName := fmt.Sprintf("dropz-%s", ssid)
-
-	// Clean up any stale connection profiles for this SSID
-	for _, name := range []string{ssid, connName} {
-		exec.CommandContext(ctx, "nmcli", "connection", "delete", "id", name).Run()
-	}
-
-	// Create a proper connection profile
-	addCmd := exec.CommandContext(ctx, "nmcli", "connection", "add",
-		"type", "wifi",
-		"con-name", connName,
-		"ifname", "*",
-		"ssid", ssid,
-		"wifi-sec.key-mgmt", "wpa-psk",
-		"wifi-sec.psk", password)
-
-	if addOutput, addErr := addCmd.CombinedOutput(); addErr != nil {
-		m.log.Errorf("Failed to create connection profile: error=%v nmcli_output=%s", addErr, string(addOutput))
-		return fmt.Errorf("failed to create WiFi connection for %s: %v", ssid, addErr)
-	}
-
-	// Try to activate, retrying while the AP becomes visible
-	var lastErr error
-	for attempt := 1; attempt <= 10; attempt++ {
-		// Trigger a WiFi rescan so nmcli can discover the new AP
-		exec.CommandContext(ctx, "nmcli", "device", "wifi", "rescan").Run()
-		time.Sleep(2 * time.Second)
-
-		upCmd := exec.CommandContext(ctx, "nmcli", "connection", "up", "id", connName)
-		if output, err := upCmd.CombinedOutput(); err != nil {
-			lastErr = fmt.Errorf("%v (nmcli: %s)", err, strings.TrimSpace(string(output)))
-			m.log.Debugf("WiFi activation attempt %d/10 failed: %v", attempt, lastErr)
-		} else {
-			m.log.Debugf("WiFi connection activated: connection=%s", connName)
-			lastErr = nil
-			break
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-	}
-
-	if lastErr != nil {
-		return fmt.Errorf("failed to activate WiFi connection %s after 10 attempts: %v", connName, lastErr)
-	}
-
-	for i := 0; i < 10; i++ {
-		if m.isConnectedTo(ssid) {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(1 * time.Second):
-		}
-	}
-	return fmt.Errorf("timed out waiting for connection to %s", ssid)
-}
-
-// Disconnect disconnects from the current WiFi network
-func (m *WiFiManager) Disconnect() error {
-	// Get current active connection
-	cmd := exec.Command("nmcli", "-t", "-f", "NAME,TYPE", "connection", "show", "--active")
-	output, err := cmd.Output()
-	if err != nil {
-		m.log.Errorf("Failed to get active WiFi connections: error=%v", err)
-		return fmt.Errorf("failed to get active connections: %v", err)
-	}
-
-	// Find WiFi connections
-	lines := strings.Split(string(output), "\n")
-	disconnectedCount := 0
-
-	for _, line := range lines {
-		if strings.Contains(line, ":802-11-wireless") {
-			parts := strings.Split(line, ":")
-			if len(parts) < 1 {
-				continue
-			}
-
-			ssid := parts[0]
-
-			// Disconnect
-			// Use "id" parameter to properly handle SSIDs with special characters
-			cmd = exec.Command("nmcli", "connection", "down", "id", ssid)
-			if output, err := cmd.CombinedOutput(); err != nil {
-				// Also try with dropz- prefix
-				altName := fmt.Sprintf("dropz-%s", ssid)
-				cmd = exec.Command("nmcli", "connection", "down", "id", altName)
-				if altOutput, altErr := cmd.CombinedOutput(); altErr != nil {
-					m.log.Errorf("Failed to disconnect from WiFi network: ssid=%s error=%v nmcli_output=%s alt_error=%v alt_output=%s", 
-						ssid, err, string(output), altErr, string(altOutput))
-					return fmt.Errorf("failed to disconnect from %s: %v (nmcli: %s)", ssid, err, strings.TrimSpace(string(output)))
-				}
-			}
-
-			disconnectedCount++
-		}
-	}
-	_ = disconnectedCount
-
-	return nil
 }
 
 // DownloadVideos downloads videos from a GoPro device
@@ -164,6 +53,16 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	if len(mediaFiles) == 0 {
 		m.log.Info("No media files found on GoPro")
 		return nil, nil
+	}
+
+	if err := m.SetTurboTransfer(ctx, true); err != nil {
+		m.log.Warnf("Failed to enable turbo transfer: %v", err)
+	} else {
+		defer func() {
+			if err := m.SetTurboTransfer(ctx, false); err != nil {
+				m.log.Warnf("Failed to disable turbo transfer: %v", err)
+			}
+		}()
 	}
 
 	if daysInPast <= 0 {
@@ -273,26 +172,29 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	return downloadedFiles, nil
 }
 
-// isConnectedTo checks if currently connected to the specified SSID
-func (m *WiFiManager) isConnectedTo(ssid string) bool {
-	cmd := exec.Command("nmcli", "-t", "-f", "NAME,DEVICE,STATE", "connection", "show", "--active")
-	output, err := cmd.CombinedOutput()
+// SetTurboTransfer enables or disables turbo transfer mode for faster media downloads
+func (m *WiFiManager) SetTurboTransfer(ctx context.Context, enabled bool) error {
+	p := "0"
+	if enabled {
+		p = "1"
+	}
+	url := fmt.Sprintf("%s%s?p=%s", GoProBaseURL, TurboTransferURL, p)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		m.log.Errorf("Failed to check active WiFi connections: error=%v output=%s", err, string(output))
-		return false
+		return fmt.Errorf("failed to create turbo transfer request: %v", err)
 	}
 
-	// Look for the SSID in active connections
-	// Also check for dropz- prefixed connection name
-	altName := fmt.Sprintf("dropz-%s", ssid)
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		parts := strings.Split(line, ":")
-		if len(parts) >= 3 && (parts[0] == ssid || parts[0] == altName) && parts[2] == "activated" {
-			return true
-		}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to set turbo transfer: %v", err)
 	}
-	return false
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("turbo transfer request failed with status: %s", resp.Status)
+	}
+	return nil
 }
 
 // GoProMediaList represents the JSON response from the GoPro media list API
@@ -308,14 +210,14 @@ type GoProMediaList struct {
 type goProFile struct {
 	// Basic fields
 	Name       string      `json:"n"`
-	CreatedAt  json.Number `json:"cre,string"` // Support both string and number
-	ModifiedAt json.Number `json:"mod,string"` // Support both string and number
-	Size       json.Number `json:"s,string"`   // Support both string and number
+	CreatedAt  json.Number `json:"cre"`
+	ModifiedAt json.Number `json:"mod"`
+	Size       json.Number `json:"s"`
 
 	// Optional fields
-	RawFlag    json.Number `json:"raw,string,omitempty"`
-	LastStatus json.Number `json:"ls,string,omitempty"`
-	GLRVersion json.Number `json:"glrv,string,omitempty"`
+	RawFlag    json.Number `json:"raw,omitempty"`
+	LastStatus json.Number `json:"ls,omitempty"`
+	GLRVersion json.Number `json:"glrv,omitempty"`
 
 	// Group file fields (for time lapse/burst photos)
 	FirstID    string   `json:"b,omitempty"`

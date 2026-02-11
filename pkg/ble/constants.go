@@ -34,6 +34,7 @@ const (
 	CmdSetLocalDateTime    = 0x0F // Set date/time with timezone + DST
 	CmdSetAPControl        = 0x17 // Control WiFi Access Point
 	CmdGetHardwareInfo     = 0x3C
+	CmdKeepAlive           = 0x5B // Keep camera awake during transfers
 	CmdSetThirdPartyClient = 0x6B // Identify as third party app
 
 	// Query IDs

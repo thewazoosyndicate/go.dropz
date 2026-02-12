@@ -768,7 +768,7 @@ func (m *Manager) handleNotification(macAddress string, data []byte) {
 	m.mutex.RLock()
 	device := m.connectedDevices[macAddress]
 	m.mutex.RUnlock()
-	
+
 	if device == nil {
 		return
 	}
@@ -776,9 +776,11 @@ func (m *Manager) handleNotification(macAddress string, data []byte) {
 	if m.tlvCollector != nil {
 		message, err := m.tlvCollector.ProcessFragment(data)
 		if err != nil {
-			m.log.Debugf("Error processing TLV fragment: %v", err)
+			m.log.Debugf("Error processing TLV fragment (raw %x): %v", data, err)
 		} else if message != nil && m.responseTracker != nil {
-			m.responseTracker.RouteResponse(macAddress, message)
+			if !m.responseTracker.RouteResponse(macAddress, message) {
+				m.log.Debugf("Unrouted notification: cmd=0x%02x status=%d len=%d", message.CommandID, message.Status, len(message.Payload))
+			}
 		}
 	}
 }

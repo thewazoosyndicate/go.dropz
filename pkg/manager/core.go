@@ -36,6 +36,9 @@ type GoProManager struct {
 	wg     sync.WaitGroup
 	mutex  sync.RWMutex
 
+	// Serializes pairing (BLE adapter is single-threaded)
+	pairingMu sync.Mutex
+
 	// Channels for the deviceManager select loop
 	immediateSyncTrigger chan struct{}
 	statusCheckRequest   chan string
@@ -85,6 +88,7 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 				cs.Camera.WiFiPassword = metadata.WiFiPassword
 			}
 			cs.Metadata.Model = metadata.ModelName
+			cs.Metadata.ModelID = metadata.ModelID
 			cs.Metadata.FirmwareVersion = metadata.FirmwareVersion
 			cs.Metadata.SerialNumber = metadata.SerialNumber
 			if metadata.BatteryLevel > 0 {
@@ -272,6 +276,13 @@ func (m *GoProManager) ResetTransientStates() {
 
 // PairCamera pairs with a GoPro camera using BLE
 func (m *GoProManager) PairCamera(cameraID string) (*database.ManagedCamera, error) {
+	// Mark as pairing immediately so UI shows spinner even while queued
+	m.db.UpdateCameraPairingStatusByID(cameraID, true)
+	m.notify()
+
+	m.pairingMu.Lock()
+	defer m.pairingMu.Unlock()
+
 	result, err := m.pairingManager.PairCamera(cameraID, m.BLEOperation, m.notify)
 	if err != nil {
 		return result, err

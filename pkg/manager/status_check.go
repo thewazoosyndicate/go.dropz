@@ -65,6 +65,21 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 	}
 
 	syncQueued = m.processStatusResults(cs, statuses)
+
+	// HERO13+/MAX2 (Broadcom BCM4381, model ID >= 64) ignore Sleep on the
+	// first BLE connection from idle. Reconnect so Sleep works on the second.
+	// ModelID 0 = unknown (not yet set by full connect) — assume new gen.
+	modelID := cs.Metadata.ModelID
+	needsReconnectToSleep := !syncQueued && (modelID == 0 || modelID >= 64)
+
+	if needsReconnectToSleep {
+		m.ble.DisconnectQuietly(bleAddress)
+		if err := m.ble.ConnectForStatusCheck(bleAddress); err != nil {
+			m.log.Debugf("Sleep reconnect failed for %s: %v", cs.Camera.Name, err)
+			return
+		}
+	}
+
 	if syncQueued {
 		m.ble.DisconnectQuietly(bleAddress)
 	} else {

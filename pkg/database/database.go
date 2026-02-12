@@ -42,6 +42,7 @@ type CameraMetadata struct {
 	ID               string `json:"id"` // References the camera ID
 	FirmwareVersion  string `json:"firmware_version"`
 	Model            string `json:"model"`
+	ModelID          int    `json:"model_id"`
 	SerialNumber     string `json:"serial_number"`
 	BatteryLevel     int32  `json:"battery_level"` // percentage
 	HardwareVersion  string `json:"hardware_version"`

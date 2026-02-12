@@ -1,20 +1,75 @@
-Biggest Gaps (ranked by impact)                                                                       
-                                                                                                        
-  1. Video Library / Media Management — Files get downloaded to disk but the app immediately "forgets"  
-  about them. db.AddVideo() is never called during sync, GetVideos always returns empty, and there's no
-  UI to browse/play downloaded content. This is the gap between "sync tool" and "media manager."
-  2. Group Management UI — Backend is 100% done (create, update, delete, assign cameras), proto is
-  complete, gRPC RPCs work — but zero frontend. All that infrastructure sits unused.
-  3. Photo Download — Status checks track NumPhotos but sync only downloads videos. No DownloadPhotos
-  logic exists.
-  4. Sync Visibility — Progress percent and current operation are tracked but the UI doesn't surface
-  file-by-file download status, ETAs, or queue position.
-
-  My Recommendation
-
-  Video metadata persistence + Video Library UI is the highest-impact next feature. It turns the app
-  from a "background sync daemon" into something you'd actually open and use daily. The backend pieces
-  mostly exist (VideoFile type, GetVideos RPC, AddVideo in DB) — they just need to be wired together,
-  and then a frontend view built.
+# TODO
 
 
+## Sync Visibility
+
+— Progress percent and current operation are tracked but the UI doesn't surface
+ file-by-file download status, ETAs, or queue position.
+
+## DJI Support
+
+Existing DJI Action Camera Protocol Work
+
+https://github.com/datagutt/node-osmo — The most relevant project
+
+A TypeScript library that already reverse-engineered the BLE protocol for DJI Osmo Action 3/4/5 and
+Pocket 3. It implements:
+
+- BLE pairing
+- WiFi connection triggering
+- Resolution/FPS/bitrate/stabilizer control
+- Battery percentage reading
+- RTMP live streaming setup
+
+It's early-stage (65 stars, 30 commits, stability issues acknowledged), but the protocol fundamentals
+are decoded. The original reverse-engineering was done by someone credited as "Spillmaker".
+
+https://github.com/eerimoq/moblin — iOS streaming app
+
+A free iOS app that controls DJI Action cameras via BLE to start live streams. Tested with OA3, OA4,
+and Pocket 3. It inspired node-osmo's implementation. No media download support though — it's
+streaming-focused.
+
+Other DJI reverse-engineering projects
+
+- https://github.com/samuelsadok/dji_protocol — Partial documentation of DJI's proprietary protocols
+(more drone-focused)
+- https://github.com/vm32/Reverse-Engineering-DJI-drones — Toolkit for protocol analysis and firmware
+exploration
+- https://www.digidow.eu/publications/2021-christof-masterthesis/Christof_2021_MasterThesis_DJIProtoco
+lReverseEngineering.pdf — Academic work on DJI WiFi protocol (drone-focused)
+
+What's covered vs. what's missing
+┌────────────────────────────┬────────────────────────────────────┐
+│         Capability         │               Status               │
+├────────────────────────────┼────────────────────────────────────┤
+│ BLE discovery & pairing    │ Solved (node-osmo)                 │
+├────────────────────────────┼────────────────────────────────────┤
+│ WiFi AP activation via BLE │ Solved (node-osmo)                 │
+├────────────────────────────┼────────────────────────────────────┤
+│ Battery/status queries     │ Partially solved                   │
+├────────────────────────────┼────────────────────────────────────┤
+│ Camera settings control    │ Partially solved                   │
+├────────────────────────────┼────────────────────────────────────┤
+│ Media listing via WiFi     │ Unknown — not implemented anywhere │
+├────────────────────────────┼────────────────────────────────────┤
+│ Media download via WiFi    │ Unknown — not implemented anywhere │
+└────────────────────────────┴────────────────────────────────────┘
+Bottom line
+
+The BLE control side is largely solved thanks to node-osmo — we'd be porting their TypeScript protocol
+ knowledge to Go, not reverse-engineering from scratch. The big unknown is the WiFi/HTTP media layer —
+ nobody seems to have reverse-engineered DJI's media list/download API yet. That would require
+sniffing the DJI Mimo app's WiFi traffic to figure out how it lists and downloads files.
+
+So the effort would be: ~30% porting known protocol, ~70% reverse-engineering the media/WiFi side
+(unless DJI happens to use a standard protocol like FTP or a REST API on their WiFi AP, which would
+make it much easier to discover).
+
+Sources:
+- https://github.com/datagutt/node-osmo
+- https://github.com/eerimoq/moblin
+- https://github.com/samuelsadok/dji_protocol
+- https://github.com/vm32/Reverse-Engineering-DJI-drones
+- https://www.digidow.eu/publications/2021-christof-masterthesis/Christof_2021_MasterThesis_DJIProtoco
+lReverseEngineering.pdf

@@ -203,7 +203,8 @@ export function loadConfig() {
           destinationFolder: config.getDestinationFolder(),
           setTimeEnabled: config.getSetTimeEnabled(),
           inactivityTimeoutSeconds: config.getInactivityTimeoutSeconds(),
-          inactivitySyncIntervalSeconds: config.getInactivitySyncIntervalSeconds(),
+          statusCheckIntervalSeconds: config.getStatusCheckIntervalSeconds(),
+          checkOnReturn: config.getCheckOnReturn(),
           logLevel: config.getLogLevel()
         });
       } catch (e) {
@@ -212,7 +213,8 @@ export function loadConfig() {
           scanIntervalSeconds: 30, connectTimeoutSeconds: 30,
           daysThreshold: 7, destinationFolder: '',
           setTimeEnabled: true, inactivityTimeoutSeconds: 60,
-          inactivitySyncIntervalSeconds: 600, logLevel: 'info'
+          statusCheckIntervalSeconds: 300, checkOnReturn: true,
+          logLevel: 'info'
         });
       }
       resolve();
@@ -258,7 +260,8 @@ export function resetAllSettings() {
       destinationFolder: config.getDestinationFolder(),
       setTimeEnabled: config.getSetTimeEnabled(),
       inactivityTimeoutSeconds: config.getInactivityTimeoutSeconds(),
-      inactivitySyncIntervalSeconds: config.getInactivitySyncIntervalSeconds(),
+      statusCheckIntervalSeconds: config.getStatusCheckIntervalSeconds(),
+      checkOnReturn: config.getCheckOnReturn(),
       logLevel: config.getLogLevel()
     });
 

@@ -17,8 +17,10 @@ message Config {
   int32 days_threshold = 5;    // Only sync content newer than this many days
   string destination_folder = 6;
   int32 inactivity_timeout_seconds = 7;
-  int32 inactivity_sync_interval_seconds = 8;  // Interval between sync attempts during inactivity
-  
+  reserved 8; // was inactivity_sync_interval_seconds
+  int32 status_check_interval_seconds = 12;  // Interval between BLE status checks (0 = off)
+  bool check_on_return = 13;  // Check for new media when camera reappears
+
   // Camera behavior settings
   bool set_time_enabled = 9;   // Set camera time when connecting
   

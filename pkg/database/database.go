@@ -32,18 +32,23 @@ type CameraStatus struct {
 	IsPaired    bool      `json:"is_paired"`
 	IsManaged   bool      `json:"is_managed"`
 	IsReachable bool      `json:"is_reachable"`
-	IsSynced    bool      `json:"is_synced"`
-	IsSyncing   bool      `json:"is_syncing"`
+	IsSynced      bool      `json:"is_synced"`
+	IsSyncing     bool      `json:"is_syncing"`
+	LastSyncError string    `json:"last_sync_error,omitempty"`
 }
 
 // CameraMetadata represents technical details about a camera
 type CameraMetadata struct {
-	ID              string `json:"id"` // References the camera ID
-	FirmwareVersion string `json:"firmware_version"`
-	Model           string `json:"model"`
-	SerialNumber    string `json:"serial_number"`
-	BatteryLevel    int32  `json:"battery_level"` // percentage
-	HardwareVersion string `json:"hardware_version"`
+	ID               string `json:"id"` // References the camera ID
+	FirmwareVersion  string `json:"firmware_version"`
+	Model            string `json:"model"`
+	SerialNumber     string `json:"serial_number"`
+	BatteryLevel     int32  `json:"battery_level"` // percentage
+	HardwareVersion  string `json:"hardware_version"`
+	NumPhotos        int32  `json:"num_photos"`
+	NumVideos        int32  `json:"num_videos"`
+	SDCardStatusCode int32  `json:"sd_card_status"`
+	RemainingSpaceKB int64  `json:"remaining_space_kb"`
 }
 
 // CameraWithState represents a complete camera with all its information
@@ -99,17 +104,18 @@ type VideoFile struct {
 
 // Config represents the system-wide configuration settings
 type Config struct {
-	PairModeEnabled               bool      `json:"pair_mode_enabled"`
-	SyncEnabled                   bool      `json:"sync_enabled"`
-	ScanIntervalSeconds           int32     `json:"scan_interval_seconds"`
-	ConnectTimeoutSeconds         int32     `json:"connect_timeout_seconds"`
-	DaysThreshold                 int32     `json:"days_threshold"`
-	DestinationFolder             string    `json:"destination_folder"`
-	InactivityTimeoutSeconds      int32     `json:"inactivity_timeout_seconds"`
-	InactivitySyncIntervalSeconds int32     `json:"inactivity_sync_interval_seconds"`
-	SetTimeEnabled                bool      `json:"set_time_enabled"`
-	LogLevel                      string    `json:"log_level"`
-	LastUpdated                   time.Time `json:"last_updated"`
+	PairModeEnabled            bool      `json:"pair_mode_enabled"`
+	SyncEnabled                bool      `json:"sync_enabled"`
+	ScanIntervalSeconds        int32     `json:"scan_interval_seconds"`
+	ConnectTimeoutSeconds      int32     `json:"connect_timeout_seconds"`
+	DaysThreshold              int32     `json:"days_threshold"`
+	DestinationFolder          string    `json:"destination_folder"`
+	InactivityTimeoutSeconds   int32     `json:"inactivity_timeout_seconds"`
+	StatusCheckIntervalSeconds int32     `json:"status_check_interval_seconds"`
+	CheckOnReturn              bool      `json:"check_on_return"`
+	SetTimeEnabled             bool      `json:"set_time_enabled"`
+	LogLevel                   string    `json:"log_level"`
+	LastUpdated                time.Time `json:"last_updated"`
 }
 
 // Database represents the in-memory database with JSON persistence
@@ -207,6 +213,12 @@ func (db *Database) loadFromFile() error {
 
 	if err := json.Unmarshal(data, db); err != nil {
 		return fmt.Errorf("failed to unmarshal database: %v", err)
+	}
+
+	// Migration: existing DBs won't have check_on_return set (zero value = false).
+	// Default to true for users who had periodic checks enabled.
+	if db.Config.StatusCheckIntervalSeconds > 0 && !db.Config.CheckOnReturn {
+		db.Config.CheckOnReturn = true
 	}
 
 	return nil
@@ -343,8 +355,11 @@ func (db *Database) AddSyncQueueEntry(entry *SyncQueueEntry) error {
 	// Check if the camera is already in the queue
 	for _, existing := range db.SyncQueue {
 		if existing.CameraID == entry.CameraID {
-			*existing = *entry
-			return db.saveToFile()
+			if entry.Priority > existing.Priority {
+				*existing = *entry
+				return db.saveToFile()
+			}
+			return nil
 		}
 	}
 
@@ -464,18 +479,34 @@ func (db *Database) AddVideo(video *VideoFile) error {
 	return db.saveToFile()
 }
 
-// GetVideosByCamera returns videos for a specific camera
-func (db *Database) GetVideosByCamera(cameraID string) []*VideoFile {
+// GetVideosByCamera returns videos for a specific camera with optional date filtering and pagination.
+func (db *Database) GetVideosByCamera(cameraID string, startDate, endDate time.Time, limit, offset int) ([]*VideoFile, int) {
 	db.mutex.RLock()
 	defer db.mutex.RUnlock()
 
-	var result []*VideoFile
+	var filtered []*VideoFile
 	for _, video := range db.Videos {
-		if video.CameraID == cameraID {
-			result = append(result, video)
+		if video.CameraID != cameraID {
+			continue
 		}
+		if !startDate.IsZero() && video.CreatedAt.Before(startDate) {
+			continue
+		}
+		if !endDate.IsZero() && video.CreatedAt.After(endDate) {
+			continue
+		}
+		filtered = append(filtered, video)
 	}
-	return result
+
+	totalCount := len(filtered)
+	if offset >= totalCount {
+		return []*VideoFile{}, totalCount
+	}
+	end := offset + limit
+	if end > totalCount {
+		end = totalCount
+	}
+	return filtered[offset:end], totalCount
 }
 
 // GetConfig returns the current configuration
@@ -508,23 +539,28 @@ func (c *CameraWithState) ToProtoCameraWithState() *protocol.CameraWithState {
 			Rssi:         c.Camera.RSSI,
 		},
 		Status: &protocol.CameraStatus{
-			LastSeen:    timestamppb.New(c.Status.LastSeen),
-			LastSynced:  timestamppb.New(c.Status.LastSynced),
-			IsPairing:   c.Status.IsPairing,
-			IsPaired:    c.Status.IsPaired,
-			IsManaged:   c.Status.IsManaged,
-			IsReachable: c.Status.IsReachable,
-			IsSynced:    c.Status.IsSynced,
-			IsSyncing:   c.Status.IsSyncing,
+			LastSeen:      timestamppb.New(c.Status.LastSeen),
+			LastSynced:    timestamppb.New(c.Status.LastSynced),
+			IsPairing:     c.Status.IsPairing,
+			IsPaired:      c.Status.IsPaired,
+			IsManaged:     c.Status.IsManaged,
+			IsReachable:   c.Status.IsReachable,
+			IsSynced:      c.Status.IsSynced,
+			IsSyncing:     c.Status.IsSyncing,
+			LastSyncError: c.Status.LastSyncError,
 		},
 		GroupId: c.GroupID,
 		Metadata: &protocol.CameraMetadata{
-			Id:              c.Metadata.ID,
-			FirmwareVersion: c.Metadata.FirmwareVersion,
-			Model:           c.Metadata.Model,
-			SerialNumber:    c.Metadata.SerialNumber,
-			BatteryLevel:    c.Metadata.BatteryLevel,
-			HardwareVersion: c.Metadata.HardwareVersion,
+			Id:               c.Metadata.ID,
+			FirmwareVersion:  c.Metadata.FirmwareVersion,
+			Model:            c.Metadata.Model,
+			SerialNumber:     c.Metadata.SerialNumber,
+			BatteryLevel:     c.Metadata.BatteryLevel,
+			HardwareVersion:  c.Metadata.HardwareVersion,
+			NumPhotos:        c.Metadata.NumPhotos,
+			NumVideos:        c.Metadata.NumVideos,
+			SdCardStatus:     c.Metadata.SDCardStatusCode,
+			RemainingSpaceKb: c.Metadata.RemainingSpaceKB,
 		},
 	}
 }
@@ -587,17 +623,18 @@ func (v *VideoFile) ToProtoVideoFile() *protocol.VideoFile {
 // ToProtoConfig converts a Config to protocol Config
 func (c *Config) ToProtoConfig() *protocol.Config {
 	return &protocol.Config{
-		PairModeEnabled:               c.PairModeEnabled,
-		SyncEnabled:                   c.SyncEnabled,
-		ScanIntervalSeconds:           c.ScanIntervalSeconds,
-		ConnectTimeoutSeconds:         c.ConnectTimeoutSeconds,
-		DaysThreshold:                 c.DaysThreshold,
-		DestinationFolder:             c.DestinationFolder,
-		InactivityTimeoutSeconds:      c.InactivityTimeoutSeconds,
-		InactivitySyncIntervalSeconds: c.InactivitySyncIntervalSeconds,
-		SetTimeEnabled:                c.SetTimeEnabled,
-		LogLevel:                      c.LogLevel,
-		LastUpdated:                   timestamppb.New(c.LastUpdated),
+		PairModeEnabled:            c.PairModeEnabled,
+		SyncEnabled:                c.SyncEnabled,
+		ScanIntervalSeconds:        c.ScanIntervalSeconds,
+		ConnectTimeoutSeconds:      c.ConnectTimeoutSeconds,
+		DaysThreshold:              c.DaysThreshold,
+		DestinationFolder:          c.DestinationFolder,
+		InactivityTimeoutSeconds:   c.InactivityTimeoutSeconds,
+		StatusCheckIntervalSeconds: c.StatusCheckIntervalSeconds,
+		CheckOnReturn:              c.CheckOnReturn,
+		SetTimeEnabled:             c.SetTimeEnabled,
+		LogLevel:                   c.LogLevel,
+		LastUpdated:                timestamppb.New(c.LastUpdated),
 	}
 }
 
@@ -608,17 +645,18 @@ func DefaultConfig() Config {
 		homeDir = "."
 	}
 	return Config{
-		PairModeEnabled:               false,
-		SyncEnabled:                   true,
-		ScanIntervalSeconds:           30,
-		ConnectTimeoutSeconds:         60,
-		DaysThreshold:                 1,
-		DestinationFolder:             filepath.Join(homeDir, "Videos", "dropz"),
-		InactivityTimeoutSeconds:      60,
-		InactivitySyncIntervalSeconds: 600,
-		SetTimeEnabled:                true,
-		LogLevel:                      "info",
-		LastUpdated:                   time.Now(),
+		PairModeEnabled:            false,
+		SyncEnabled:                true,
+		ScanIntervalSeconds:        30,
+		ConnectTimeoutSeconds:      60,
+		DaysThreshold:              1,
+		DestinationFolder:          filepath.Join(homeDir, "Videos", "dropz"),
+		InactivityTimeoutSeconds:   60,
+		StatusCheckIntervalSeconds: 300,
+		CheckOnReturn:              true,
+		SetTimeEnabled:             true,
+		LogLevel:                   "info",
+		LastUpdated:                time.Now(),
 	}
 }
 
@@ -649,19 +687,6 @@ func (db *Database) UpdateCameraByID(cameraID string, mutate func(*CameraWithSta
 	return fmt.Errorf("camera not found: %s", cameraID)
 }
 
-// GetCameraIdentifiers returns the DB key, BLE address, and name for a camera ID.
-func (db *Database) GetCameraIdentifiers(cameraID string) (dbKey, bleAddress, name string, found bool) {
-	db.mutex.RLock()
-	defer db.mutex.RUnlock()
-
-	for key, cs := range db.cameraStates {
-		if cs.Camera.ID == cameraID {
-			return key, cs.Camera.BLEAddress, cs.Camera.Name, true
-		}
-	}
-	return "", "", "", false
-}
-
 // MarkCamerasUnreachableBefore marks all cameras last seen before cutoff as unreachable.
 func (db *Database) MarkCamerasUnreachableBefore(cutoff time.Time) (bool, error) {
 	db.mutex.Lock()
@@ -680,75 +705,46 @@ func (db *Database) MarkCamerasUnreachableBefore(cutoff time.Time) (bool, error)
 	return false, nil
 }
 
-// updateCameraStatus is a helper that looks up a camera by key and applies a mutation.
-func (db *Database) updateCameraStatus(key string, mutate func(*CameraStatus) bool) error {
+// updateCameraStatusByID is like updateCameraStatus but looks up by Camera.ID (immune to re-keying).
+func (db *Database) updateCameraStatusByID(cameraID string, mutate func(*CameraStatus) bool) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
-	cameraState, exists := db.cameraStates[key]
-	if !exists {
-		return fmt.Errorf("camera with key %s not found", key)
+	for _, cs := range db.cameraStates {
+		if cs.Camera.ID == cameraID {
+			if mutate(&cs.Status) {
+				return db.saveToFile()
+			}
+			return nil
+		}
 	}
-
-	if mutate(&cameraState.Status) {
-		return db.saveToFile()
-	}
-	return nil
+	return fmt.Errorf("camera not found: %s", cameraID)
 }
 
-// UpdateCameraPairingStatus updates a camera's pairing status
-func (db *Database) UpdateCameraPairingStatus(key string, isPairing bool) error {
-	return db.updateCameraStatus(key, func(s *CameraStatus) bool {
+func (db *Database) UpdateCameraPairingStatusByID(cameraID string, isPairing bool) error {
+	return db.updateCameraStatusByID(cameraID, func(s *CameraStatus) bool {
 		s.IsPairing = isPairing
 		return true
 	})
 }
 
-// SetCameraPaired marks a camera as paired
-func (db *Database) SetCameraPaired(key string, isPaired bool) error {
-	return db.updateCameraStatus(key, func(s *CameraStatus) bool {
+func (db *Database) SetCameraPairedByID(cameraID string, isPaired bool) error {
+	return db.updateCameraStatusByID(cameraID, func(s *CameraStatus) bool {
 		s.IsPaired = isPaired
 		s.IsPairing = false
 		return true
 	})
 }
 
-// SetCameraMetadata stores hardware metadata for a camera
-func (db *Database) SetCameraMetadata(key string, metadata CameraMetadata) error {
-	db.mutex.Lock()
-	defer db.mutex.Unlock()
-	if state, exists := db.cameraStates[key]; exists {
-		state.Metadata = metadata
-		return db.saveToFile()
-	}
-	return fmt.Errorf("camera not found: %s", key)
-}
-
-// ToggleCameraManaged toggles a camera's managed status
-func (db *Database) ToggleCameraManaged(key string) error {
-	db.mutex.Lock()
-	defer db.mutex.Unlock()
-
-	cameraState, exists := db.cameraStates[key]
-	if !exists {
-		return fmt.Errorf("camera with key %s not found", key)
-	}
-
-	cameraState.Status.IsManaged = !cameraState.Status.IsManaged
-	return db.saveToFile()
-}
-
-// UpdateCameraSyncingStatus updates a camera's syncing status
-func (db *Database) UpdateCameraSyncingStatus(key string, isSyncing bool) error {
-	return db.updateCameraStatus(key, func(s *CameraStatus) bool {
+func (db *Database) UpdateCameraSyncingStatusByID(cameraID string, isSyncing bool) error {
+	return db.updateCameraStatusByID(cameraID, func(s *CameraStatus) bool {
 		s.IsSyncing = isSyncing
 		return true
 	})
 }
 
-// MarkCameraSynced marks a camera as synced and updates last_synced timestamp
-func (db *Database) MarkCameraSynced(key string) error {
-	return db.updateCameraStatus(key, func(s *CameraStatus) bool {
+func (db *Database) MarkCameraSyncedByID(cameraID string) error {
+	return db.updateCameraStatusByID(cameraID, func(s *CameraStatus) bool {
 		s.IsSynced = true
 		s.IsSyncing = false
 		s.LastSynced = time.Now()
@@ -756,9 +752,15 @@ func (db *Database) MarkCameraSynced(key string) error {
 	})
 }
 
-// ResetSyncStatus marks a camera as not synced (to trigger re-sync)
-func (db *Database) ResetSyncStatus(key string) error {
-	return db.updateCameraStatus(key, func(s *CameraStatus) bool {
+func (db *Database) SetLastSyncErrorByID(cameraID string, errMsg string) error {
+	return db.updateCameraStatusByID(cameraID, func(s *CameraStatus) bool {
+		s.LastSyncError = errMsg
+		return true
+	})
+}
+
+func (db *Database) ResetSyncStatusByID(cameraID string) error {
+	return db.updateCameraStatusByID(cameraID, func(s *CameraStatus) bool {
 		s.IsSynced = false
 		return true
 	})

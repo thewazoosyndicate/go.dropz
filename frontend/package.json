@@ -62,6 +62,10 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "resources/icon.png",
+        "to": "icon.png"
       }
     ],
     "mac": {
@@ -74,7 +78,7 @@
         "AppImage"
       ],
       "maintainer": "thibaut@dropz.cloud",
-      "icon": "resources/icon-square.png",
+      "icon": "resources/icons/png",
       "desktop": {
         "Icon": "dropz-electron",
         "Name": "Dropz",

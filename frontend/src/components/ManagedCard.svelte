@@ -18,11 +18,32 @@
     signalStrength >= 2 ? 'var(--warning-color)' : 'var(--danger-color)'
   );
 
+  let storageText = $derived(formatStorage(device.remainingSpaceKb));
+  let lastSyncedText = $derived(formatTimeAgo(device.lastSynced));
+
   let batteryLevel = $derived(Math.max(0, Math.min(100, device.batteryLevel ?? 0)));
   let batteryColor = $derived(
     batteryLevel < 20 ? 'var(--danger-color)' :
     batteryLevel < 50 ? 'var(--warning-color)' : 'var(--secondary-color)'
   );
+
+  function formatStorage(kb) {
+    if (!kb || kb <= 0) return null;
+    const gb = kb / (1024 * 1024);
+    return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(kb / 1024)} MB`;
+  }
+
+  function formatTimeAgo(date) {
+    if (!date || date.getTime() < 86400000) return null;
+    const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (seconds < 60) return 'just now';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  }
 
   function getStatusCode(d) {
     if (!d.isReachable) return 'unreachable';
@@ -55,6 +76,13 @@
     <div class="name-row">
       <span class="name">{displayName}</span>
       <span class="status-badge">{statusCode}</span>
+      {#if device.numPhotos > 0 || device.numVideos > 0}
+        <span class="media-counts">
+          {#if device.numPhotos > 0}<i class="fas fa-image"></i> {device.numPhotos}{/if}
+          {#if device.numPhotos > 0 && device.numVideos > 0} · {/if}
+          {#if device.numVideos > 0}<i class="fas fa-video"></i> {device.numVideos}{/if}
+        </span>
+      {/if}
     </div>
     {#if device.model}
       <span class="model">{device.model}</span>
@@ -71,6 +99,12 @@
           {/each}
         </div>
       </div>
+      {#if storageText}
+        <span class="storage"><i class="fas fa-sd-card"></i> {storageText}</span>
+      {/if}
+      {#if lastSyncedText}
+        <span class="last-synced"><i class="fas fa-sync"></i> {lastSyncedText}</span>
+      {/if}
       {#if device.batteryLevel != null}
         <div class="battery">
           <div class="battery-icon">
@@ -81,6 +115,12 @@
         </div>
       {/if}
     </div>
+
+    {#if device.lastSyncError && !device.isSyncing}
+      <div class="sync-error">
+        <i class="fas fa-exclamation-triangle"></i> {device.lastSyncError}
+      </div>
+    {/if}
 
     {#if device.isSyncing && syncEntry}
       <div class="sync-progress">
@@ -234,6 +274,26 @@
   .battery-text {
     font-size: 0.75rem;
     color: var(--text-secondary);
+  }
+
+  .storage, .last-synced {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+  }
+
+  .sync-error {
+    font-size: 0.7rem;
+    color: var(--danger-color);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .media-counts {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-left: auto;
+    flex-shrink: 0;
   }
 
   .sync-progress {

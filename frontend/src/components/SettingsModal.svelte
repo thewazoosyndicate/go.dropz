@@ -10,17 +10,19 @@
 
   // Non-linear slider stops
   const MEDIA_AGE_STOPS = [1,2,3,4,5,6,7,8,9,10,20,30,40,50,60,70,80,90,120,150,180,210,240,270,300,330,360];
-  const SYNC_DELAY_STOPS = [60,120,180,240,300,600,900,1200,1500,1800,2400,3000,3600];
+  const STATUS_CHECK_STOPS = [0,60,120,300,600,900,1800,2700,3600];
 
   function formatValue(value, setting) {
     if (setting === 'days_threshold') return value + 'd';
+    if (setting === 'status_check_interval_seconds' && value === 0) return 'Off';
+    if (value >= 3600) return (value / 3600) + 'h';
     if (value >= 120) return Math.round(value / 60) + 'min';
     return value + 's';
   }
 
   function sliderToValue(sliderVal, setting) {
-    if (setting === 'days_threshold') return MEDIA_AGE_STOPS[parseInt(sliderVal)] || 7;
-    if (setting === 'inactivity_sync_interval_seconds') return SYNC_DELAY_STOPS[parseInt(sliderVal)] || 600;
+    if (setting === 'days_threshold') return MEDIA_AGE_STOPS[parseInt(sliderVal)] ?? 7;
+    if (setting === 'status_check_interval_seconds') return STATUS_CHECK_STOPS[parseInt(sliderVal)] ?? 300;
     return parseInt(sliderVal);
   }
 
@@ -30,9 +32,9 @@
       if (idx === -1) idx = MEDIA_AGE_STOPS.findIndex(s => s >= value) || 0;
       return idx;
     }
-    if (setting === 'inactivity_sync_interval_seconds') {
-      let idx = SYNC_DELAY_STOPS.indexOf(value);
-      if (idx === -1) idx = SYNC_DELAY_STOPS.findIndex(s => s >= value) || 0;
+    if (setting === 'status_check_interval_seconds') {
+      let idx = STATUS_CHECK_STOPS.indexOf(value);
+      if (idx === -1) idx = STATUS_CHECK_STOPS.findIndex(s => s >= value) || 0;
       return idx;
     }
     return value;
@@ -128,14 +130,27 @@
           <div class="settings-section">
             <h3>Download</h3>
 
+            <div class="setting-item toggle-row">
+              <div>
+                <span class="setting-label">Check on Return</span>
+                <p class="setting-hint">Checks for new media when a camera reappears</p>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" checked={config.checkOnReturn}
+                       onchange={(e) => handleToggle(e, 'check_on_return')} />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
             <div class="setting-item slider-row">
               <div class="setting-label-row">
-                <span>Auto-Sync Delay</span>
-                <span class="setting-value">{formatValue(config.inactivitySyncIntervalSeconds, 'inactivity_sync_interval_seconds')}</span>
+                <span>Check Every</span>
+                <span class="setting-value">{formatValue(config.statusCheckIntervalSeconds, 'status_check_interval_seconds')}</span>
               </div>
-              <input type="range" min="0" max="{SYNC_DELAY_STOPS.length - 1}" step="1"
-                     value={valueToSlider(config.inactivitySyncIntervalSeconds, 'inactivity_sync_interval_seconds')}
-                     oninput={(e) => handleSlider(e, 'inactivity_sync_interval_seconds')} />
+              <p class="setting-hint">Periodically pings cameras to spot new media</p>
+              <input type="range" min="0" max="{STATUS_CHECK_STOPS.length - 1}" step="1"
+                     value={valueToSlider(config.statusCheckIntervalSeconds, 'status_check_interval_seconds')}
+                     oninput={(e) => handleSlider(e, 'status_check_interval_seconds')} />
             </div>
 
             <div class="setting-item slider-row">
@@ -269,6 +284,13 @@
   .setting-label {
     font-size: 0.85rem;
     color: var(--text-primary);
+  }
+
+  .setting-hint {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin: 2px 0 0 0;
+    line-height: 1.3;
   }
 
   .setting-label-row {

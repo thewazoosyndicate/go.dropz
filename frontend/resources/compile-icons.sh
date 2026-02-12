@@ -16,17 +16,17 @@ mkdir -p icons/hicolor
 mkdir -p icons.iconset
 
 # Create PNG files of different sizes
-magick -density 1000 -background none svg/icon.svg -resize 16x16 icons/png/16x16.png
-magick -density 1000 -background none svg/icon.svg -resize 32x32 icons/png/32x32.png
-magick -density 1000 -background none svg/icon.svg -resize 48x48 icons/png/48x48.png
-magick -density 1000 -background none svg/icon.svg -resize 64x64 icons/png/64x64.png
-magick -density 1000 -background none svg/icon.svg -resize 128x128 icons/png/128x128.png
-magick -density 1000 -background none svg/icon.svg -resize 256x256 icons/png/256x256.png
-magick -density 1000 -background none svg/icon.svg -resize 512x512 icons/png/512x512.png
-magick -density 1000 -background none svg/icon.svg -resize 1024x1024 icons/png/1024x1024.png
+magick -density 1000 -background '#000616' svg/icon.svg -flatten -resize 16x16 -gravity center -extent 16x16 icons/png/16x16.png
+magick -density 1000 -background '#000616' svg/icon.svg -flatten -resize 32x32 -gravity center -extent 32x32 icons/png/32x32.png
+magick -density 1000 -background '#000616' svg/icon.svg -flatten -resize 48x48 -gravity center -extent 48x48 icons/png/48x48.png
+magick -density 1000 -background '#000616' svg/icon.svg -flatten -resize 64x64 -gravity center -extent 64x64 icons/png/64x64.png
+magick -density 1000 -background '#000616' svg/icon.svg -flatten -resize 128x128 -gravity center -extent 128x128 icons/png/128x128.png
+magick -density 1000 -background '#000616' svg/icon.svg -flatten -resize 256x256 -gravity center -extent 256x256 icons/png/256x256.png
+magick -density 1000 -background '#000616' svg/icon.svg -flatten -resize 512x512 -gravity center -extent 512x512 icons/png/512x512.png
+magick -density 1000 -background '#000616' svg/icon.svg -flatten -resize 1024x1024 -gravity center -extent 1024x1024 icons/png/1024x1024.png
 
 # Create icon.png (512x512) in the resources directory for main use
-magick  -density 1000 -background none svg/icon.svg -resize 512x512 icon.png
+magick -density 1000 -background '#000616' svg/icon.svg -flatten -resize 512x512 -gravity center -extent 512x512 icon.png
 
 echo "PNG files created successfully"
 
@@ -66,7 +66,7 @@ else
         echo "ICNS file created using png2icns"
     else
         # Create a single-size ICNS as fallback (not ideal but better than nothing)
-        convert icons/png/512x512.png icon.icns
+        magick icons/png/512x512.png icon.icns
         echo "ICNS file created using ImageMagick (basic conversion)"
     fi
 fi
@@ -92,6 +92,6 @@ cp icons/png/512x512.png icons/hicolor/512x512/apps/dropz-electron.png
 echo "Linux hicolor structure created"
 
 # Create icon-square.png (512x512) - ensuring square dimensions
-magick -density 1000 -background none svg/icon.svg -resize 512x512 -gravity center -extent 512x512 icon-square.png
+magick -density 1000 -background '#000616' svg/icon.svg -flatten -resize 512x512 -gravity center -extent 512x512 icon-square.png
 
 echo "Square icon created for Linux"

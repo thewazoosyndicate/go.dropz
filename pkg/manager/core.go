@@ -3,7 +3,6 @@ package manager
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -31,8 +30,9 @@ type GoProManager struct {
 	wg     sync.WaitGroup
 	mutex  sync.RWMutex
 
-	// Immediate sync trigger channel
+	// Channels for the deviceManager select loop
 	immediateSyncTrigger chan struct{}
+	statusCheckRequest   chan string
 
 	// Component managers
 	syncCoordinator    *syncpkg.Coordinator
@@ -67,35 +67,28 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 
 	// Set up metadata update callback to update database whenever camera connects
 	bleManager.SetMetadataCallback(func(metadata ble.CameraMetadata) {
-		bleAddress := metadata.BLEAddress
-
-		// Find camera by BLE address (may be keyed by serial or BLE address)
-		dbKey := bleAddress
-		if cam, found := db.FindCameraByBLEAddress(bleAddress); found {
-			dbKey = cam.DBKey
+		cam, found := db.FindCameraByBLEAddress(metadata.BLEAddress)
+		if !found {
+			return
 		}
+		cameraID := cam.CameraState.Camera.ID
 
-		if metadata.WiFiSSID != "" && metadata.WiFiPassword != "" {
-			db.UpdateCamera(dbKey, func(cs *database.CameraWithState) {
+		db.UpdateCameraByID(cameraID, func(cs *database.CameraWithState) {
+			if metadata.WiFiSSID != "" && metadata.WiFiPassword != "" {
 				cs.Camera.WiFiSSID = metadata.WiFiSSID
 				cs.Camera.WiFiPassword = metadata.WiFiPassword
-			})
-		}
-
-		dbMetadata := database.CameraMetadata{
-			Model:           metadata.ModelName,
-			FirmwareVersion: metadata.FirmwareVersion,
-			SerialNumber:    metadata.SerialNumber,
-			BatteryLevel:    int32(metadata.BatteryLevel),
-		}
-
-		if err := db.SetCameraMetadata(dbKey, dbMetadata); err != nil {
-			log.Errorf("Failed to update camera metadata: %v", err)
-		}
+			}
+			cs.Metadata.Model = metadata.ModelName
+			cs.Metadata.FirmwareVersion = metadata.FirmwareVersion
+			cs.Metadata.SerialNumber = metadata.SerialNumber
+			if metadata.BatteryLevel > 0 {
+				cs.Metadata.BatteryLevel = int32(metadata.BatteryLevel)
+			}
+		})
 
 		// Re-key from BLE address to serial number once serial is known
-		if metadata.SerialNumber != "" && dbKey != metadata.SerialNumber {
-			if err := db.RekeyCamera(dbKey, metadata.SerialNumber); err != nil {
+		if metadata.SerialNumber != "" && cam.DBKey != metadata.SerialNumber {
+			if err := db.RekeyCamera(cam.DBKey, metadata.SerialNumber); err != nil {
 				log.Warnf("Failed to re-key camera to serial %s: %v", metadata.SerialNumber, err)
 			}
 		}
@@ -116,6 +109,7 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 		db:                   db,
 		log:                  log,
 		immediateSyncTrigger: make(chan struct{}, 1),
+		statusCheckRequest:   make(chan string, 8),
 	}
 
 	// Initialize component managers (coordinator gets notify/BLEOperation as method values)
@@ -123,57 +117,42 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 	manager.discoveryProcessor = discovery.NewProcessor(db, log)
 	manager.pairingManager = pairing.NewManager(db, bleManager, log, ctx)
 
-	// Handle real-time status push notifications from camera (battery, pairing state)
+	// Handle real-time status push notifications from camera (battery level)
 	bleManager.SetStatusCallback(func(bleAddress string, statusID byte, value []byte) {
 		if len(value) < 1 {
 			return
 		}
 
-		// Translate BLE address to DB key
-		dbKey := bleAddress
-		if cam, found := db.FindCameraByBLEAddress(bleAddress); found {
-			dbKey = cam.DBKey
+		cam, found := db.FindCameraByBLEAddress(bleAddress)
+		if !found {
+			return
 		}
 
 		switch statusID {
 		case ble.StatusBatteryPercentage:
-			if err := db.UpdateCamera(dbKey, func(cs *database.CameraWithState) {
+			if err := db.UpdateCameraByID(cam.CameraState.Camera.ID, func(cs *database.CameraWithState) {
 				cs.Metadata.BatteryLevel = int32(value[0])
 			}); err != nil {
 				log.Errorf("Failed to update battery from push notification: %v", err)
 			}
 			manager.notify()
-		case ble.StatusPairingState:
-			isPaired := int(value[0]) == ble.PairingCompleted
-			if err := db.SetCameraPaired(dbKey, isPaired); err != nil {
-				log.Errorf("Failed to update pairing state from push notification: %v", err)
-			}
-			manager.notify()
 		}
 	})
 
-	// Auto-queue cameras for sync when they reappear after being gone long enough
-	manager.discoveryProcessor.SetOnCameraReappeared(func(dbKey string, wasGoneFor time.Duration) {
-		config := db.GetConfig()
-		if !config.SyncEnabled {
+	// Trigger BLE status check when a managed camera reappears
+	manager.discoveryProcessor.SetOnCameraReappeared(func(cameraID string, wasGoneFor time.Duration) {
+		if !db.GetConfig().CheckOnReturn {
 			return
 		}
-		syncInterval := time.Duration(config.InactivitySyncIntervalSeconds) * time.Second
-		if wasGoneFor < syncInterval {
-			return
-		}
-		cam, ok := db.GetManagedCamera(dbKey)
+		cam, ok := db.GetManagedCameraByID(cameraID)
 		if !ok || cam.CameraState.Status.IsSyncing {
 			return
 		}
-		log.Infof("Auto-queuing %s for sync (was gone for %v)", cam.CameraState.Camera.Name, wasGoneFor)
-		db.AddSyncQueueEntry(&database.SyncQueueEntry{
-			CameraID:         cam.CameraState.Camera.ID,
-			QueuedAt:         time.Now(),
-			Priority:         syncpkg.SyncPriorityAuto,
-			CurrentOperation: "Waiting to start",
-		})
-		manager.notify()
+		log.Infof("Camera %s reappeared after %v, triggering status check", cam.CameraState.Camera.Name, wasGoneFor)
+		select {
+		case manager.statusCheckRequest <- cameraID:
+		default:
+		}
 	})
 
 	return manager, nil
@@ -198,15 +177,13 @@ func (m *GoProManager) notify() {
 
 // ManageCamera adds a camera to the managed camera pool
 func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, error) {
-	dbKey, _, name, found := m.db.GetCameraIdentifiers(cameraID)
+	cs, found := m.db.GetCameraByID(cameraID)
 	if !found {
 		return nil, fmt.Errorf("camera with ID %s not found", cameraID)
 	}
 
-	// Check if camera is already managed
-	cs, _ := m.db.GetCameraByID(cameraID)
 	if cs.Status.IsManaged {
-		managedCamera, _ := m.db.GetManagedCamera(dbKey)
+		managedCamera, _ := m.db.GetManagedCameraByID(cameraID)
 		return managedCamera, nil
 	}
 
@@ -218,27 +195,30 @@ func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, e
 	m.notify()
 
 	config := m.db.GetConfig()
-	if config.PairModeEnabled {
-		if !cs.Status.IsPaired {
-			m.log.Infof("Pair mode enabled, starting pairing for camera %s", name)
-			m.PairCamera(cameraID)
-		} else {
-			m.log.Infof("Camera %s is already paired", name)
+	if config.PairModeEnabled && !cs.Status.IsPaired {
+		m.log.Infof("Pair mode enabled, starting pairing for camera %s", cs.Camera.Name)
+		m.PairCamera(cameraID)
+	} else if cs.Status.IsReachable && cs.Status.IsPaired {
+		select {
+		case m.statusCheckRequest <- cameraID:
+		default:
 		}
 	}
 
-	managedCamera, _ := m.db.GetManagedCamera(dbKey)
+	managedCamera, _ := m.db.GetManagedCameraByID(cameraID)
 	return managedCamera, nil
 }
 
 // UnmanageCamera removes a camera from the managed pool
 func (m *GoProManager) UnmanageCamera(cameraID string) error {
-	dbKey, _, _, found := m.db.GetCameraIdentifiers(cameraID)
+	_, found := m.db.GetCameraByID(cameraID)
 	if !found {
 		return fmt.Errorf("camera with ID %s not found", cameraID)
 	}
 
-	m.db.ToggleCameraManaged(dbKey)
+	m.db.UpdateCameraByID(cameraID, func(cs *database.CameraWithState) {
+		cs.Status.IsManaged = false
+	})
 
 	m.log.Infof("Camera %s removed from managed pool", cameraID)
 	m.notify()
@@ -246,48 +226,32 @@ func (m *GoProManager) UnmanageCamera(cameraID string) error {
 	return nil
 }
 
-// BLEOperation executes a BLE operation with retry logic
-func (m *GoProManager) BLEOperation(ctx context.Context, operationName string, operation func() error) error {
-	m.log.Tracef("Starting BLE operation: %s", operationName)
-
-	// Execute the operation with retry logic for specific errors
+// BLEOperation executes a BLE operation with retry logic.
+// Set critical=true for operations that should retry on context.Canceled (sync, connect).
+func (m *GoProManager) BLEOperation(ctx context.Context, critical bool, operation func() error) error {
 	var opErr error
 	for opTry := 0; opTry < 3; opTry++ {
 		opErr = operation()
-
-		// If operation succeeded, return success
 		if opErr == nil {
 			return nil
 		}
 
-		// Check for context.Canceled which may happen when trying to scan after stopping
-		if opErr == context.Canceled {
-			m.log.Warnf("Context canceled during operation (likely due to scan being forcibly stopped)")
-
-			// For important operations, wait and retry
-			if strings.Contains(operationName, "Sync") || strings.HasPrefix(operationName, "Connect") ||
-				strings.Contains(operationName, "EnableWifi") {
-				m.log.Infof("Waiting 3 seconds before retrying critical operation attempt %d/3", opTry+1)
-				time.Sleep(3 * time.Second)
-				continue
-			}
-
-			// For non-critical operations, just return the error
+		if opErr == context.Canceled && critical {
+			m.log.Infof("Waiting 3 seconds before retrying critical operation attempt %d/3", opTry+1)
+			time.Sleep(3 * time.Second)
+			continue
+		} else if opErr == context.Canceled {
 			return opErr
 		}
 
 		if isTransientBLEError(opErr) {
-			m.log.Warnf("Transient BLE error detected during %s: %v", operationName, opErr)
-			m.log.Infof("Waiting %d seconds before retry attempt %d/3", (opTry+1)*3, opTry+1)
+			m.log.Warnf("Transient BLE error: %v, retrying in %ds", opErr, (opTry+1)*3)
 			time.Sleep(time.Duration(opTry+1) * 3 * time.Second)
 			continue
 		}
 
-		// For other errors, no retry, just return
 		return opErr
 	}
-
-	// If we get here, we've tried multiple times but still have an error
 	return opErr
 }
 
@@ -302,7 +266,20 @@ func (m *GoProManager) ResetTransientStates() {
 
 // PairCamera pairs with a GoPro camera using BLE
 func (m *GoProManager) PairCamera(cameraID string) (*database.ManagedCamera, error) {
-	return m.pairingManager.PairCamera(cameraID, m.BLEOperation, m.notifier)
+	result, err := m.pairingManager.PairCamera(cameraID, m.BLEOperation, m.notify)
+	if err != nil {
+		return result, err
+	}
+
+	// After pairing, run a status check to gather battery/media info and sleep the camera
+	if cs, ok := m.db.GetCameraByID(cameraID); ok && cs.Status.IsReachable {
+		select {
+		case m.statusCheckRequest <- cameraID:
+		default:
+		}
+	}
+
+	return result, nil
 }
 
 // ForceSync adds a camera to the sync queue for immediate synchronization
@@ -329,5 +306,5 @@ func (m *GoProManager) CancelSync(cameraID string) error {
 
 // GetVideosByCamera returns videos for a specific camera
 func (m *GoProManager) GetVideosByCamera(cameraID string, startDate, endDate time.Time, limit, offset int) ([]*database.VideoFile, int) {
-	return m.syncCoordinator.GetVideosByCamera(cameraID, startDate, endDate, limit, offset)
+	return m.db.GetVideosByCamera(cameraID, startDate, endDate, limit, offset)
 }

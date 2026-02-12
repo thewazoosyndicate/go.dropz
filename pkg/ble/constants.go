@@ -51,11 +51,11 @@ const (
 	AsyncStatusNotification = 0x93
 
 	// Status IDs
-	StatusBatteryPercentage = 70 // Internal Battery Percentage (OpenGoPro spec)
-	StatusPairingState      = 19
-
-	// Pairing States
-	PairingCompleted  = 4
+	StatusSDCardStatus      = 33
+	StatusNumTotalPhotos    = 38
+	StatusNumTotalVideos    = 39
+	StatusSDCardRemainingKB = 54
+	StatusBatteryPercentage = 70
 )
 
 const (

@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -76,98 +75,38 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 
 	m.log.Infof("Found %d media files (%d within last %d days)", len(mediaFiles), len(filteredMedia), daysInPast)
 
-	// Set up parallel download
-	var wg sync.WaitGroup
-	maxWorkers := 1
-	semaphore := make(chan struct{}, maxWorkers)
-	var mu sync.Mutex
-	downloadedFiles := make([]string, 0, len(filteredMedia))
+	var downloadedFiles []string
 	skippedCount := 0
 
-	// Track files currently being downloaded to prevent race conditions
-	downloadingFiles := make(map[string]bool)
-	var downloadMutex sync.Mutex
-
-	// Process each media file
 	for _, media := range filteredMedia {
 		select {
 		case <-ctx.Done():
-			// Wait for ongoing downloads to complete
-			wg.Wait()
 			return downloadedFiles, ctx.Err()
 		default:
-			// Continue processing
 		}
 
 		outputPath := filepath.Join(destDir, media.Name)
 
-		// Check if file already exists with correct size
-		exists, _ := m.fileExistsWithSize(outputPath, media.Size)
-		if exists {
-			mu.Lock()
+		if exists, _ := m.fileExistsWithSize(outputPath, media.Size); exists {
 			downloadedFiles = append(downloadedFiles, outputPath)
 			skippedCount++
-			mu.Unlock()
 			continue
 		}
 
-		downloadMutex.Lock()
-		if downloadingFiles[media.Name] {
-			downloadMutex.Unlock()
+		var dlErr error
+		if media.Size > 10*1024*1024 {
+			dlErr = m.downloadChunked(ctx, media.URL, outputPath, media.CreatedAt, media.Size)
+		} else {
+			dlErr = m.downloadFileWithResume(ctx, media.URL, outputPath, media.CreatedAt, media.Size)
+		}
+
+		if dlErr != nil {
+			m.log.Errorf("Failed to download %s: %v", media.Name, dlErr)
 			continue
 		}
-		downloadingFiles[media.Name] = true
-		downloadMutex.Unlock()
 
-		// File doesn't exist or has wrong size - proceed with download
-		// Acquire semaphore slot
-		semaphore <- struct{}{}
-		wg.Add(1)
-
-		// Launch download in goroutine
-		go func(media MediaFile, outputPath string) {
-			defer wg.Done()
-			defer func() { <-semaphore }()
-			defer func() {
-				// Remove from downloading files map when done
-				downloadMutex.Lock()
-				delete(downloadingFiles, media.Name)
-				downloadMutex.Unlock()
-			}()
-
-			// Double-check: verify file doesn't exist just before downloading
-			// This prevents race conditions where the file was created between
-			// the initial check and when this goroutine starts
-			existsDouble, _ := m.fileExistsWithSize(outputPath, media.Size)
-			if existsDouble {
-				mu.Lock()
-				downloadedFiles = append(downloadedFiles, outputPath)
-				skippedCount++
-				mu.Unlock()
-				return
-			}
-
-			// Download the file - use chunked download for large files
-			var err error
-			if media.Size > 10*1024*1024 { // 10MB threshold
-				err = m.downloadChunked(ctx, media.URL, outputPath, media.CreatedAt, media.Size)
-			} else {
-				err = m.downloadFileWithResume(ctx, media.URL, outputPath, media.CreatedAt, media.Size)
-			}
-
-			if err != nil {
-				m.log.Errorf("Failed to download %s: %v", media.Name, err)
-				return
-			}
-
-			mu.Lock()
-			downloadedFiles = append(downloadedFiles, outputPath)
-			mu.Unlock()
-		}(media, outputPath)
+		downloadedFiles = append(downloadedFiles, outputPath)
 	}
-
-	// Wait for all downloads to complete
-	wg.Wait()
 
 	actualDownloads := len(downloadedFiles) - skippedCount
 	m.log.Infof("Download complete: %d downloaded, %d skipped", actualDownloads, skippedCount)
@@ -560,18 +499,11 @@ func (m *WiFiManager) downloadChunkOnce(ctx context.Context, url, chunkPath stri
 }
 
 // downloadChunked downloads large files using chunked approach
-// This function assumes the caller has already checked if the file exists
 func (m *WiFiManager) downloadChunked(ctx context.Context, url, outputPath string, createdAt time.Time, totalSize int64) error {
-	// Skip if file already exists with correct size
-	exists, err := m.fileExistsWithSize(outputPath, totalSize)
-	if err != nil {
-		m.log.Warnf("Error checking file existence for %s: %v", filepath.Base(outputPath), err)
-	}
-	if exists {
-		return nil // already downloaded
+	if exists, _ := m.fileExistsWithSize(outputPath, totalSize); exists {
+		return nil
 	}
 
-	// Only use chunked download for files larger than 10MB
 	if totalSize < 10*1024*1024 {
 		return m.downloadFileWithResume(ctx, url, outputPath, createdAt, totalSize)
 	}
@@ -582,22 +514,12 @@ func (m *WiFiManager) downloadChunked(ctx context.Context, url, outputPath strin
 	}
 	defer os.RemoveAll(tempDir)
 
-	// Determine optimal chunk size and count
-	chunkSize := int64(64 * 1024 * 1024) // 64MB chunks
+	chunkSize := int64(64 * 1024 * 1024)
 	chunkCount := (totalSize + chunkSize - 1) / chunkSize
 
 	m.log.Debugf("Downloading %s in %d chunks of size %d bytes", outputPath, chunkCount, chunkSize)
 
-	var wg sync.WaitGroup
-	errors := make(chan error, chunkCount)
-	maxConcurrent := 1
-	semaphore := make(chan struct{}, maxConcurrent)
-
-	// Download each chunk
 	for i := int64(0); i < chunkCount; i++ {
-		wg.Add(1)
-		semaphore <- struct{}{}
-
 		startOffset := i * chunkSize
 		endOffset := (i+1)*chunkSize - 1
 		if endOffset >= totalSize {
@@ -606,53 +528,24 @@ func (m *WiFiManager) downloadChunked(ctx context.Context, url, outputPath strin
 
 		chunkPath := filepath.Join(tempDir, fmt.Sprintf("chunk-%03d", i))
 
-		go func(i, startOffset, endOffset int64, chunkPath string) {
-			defer wg.Done()
-			defer func() { <-semaphore }()
+		// Skip if chunk already exists with the right size
+		expectedSize := endOffset - startOffset + 1
+		if fi, statErr := os.Stat(chunkPath); statErr == nil && fi.Size() == expectedSize {
+			continue
+		}
 
-			chunkSize := endOffset - startOffset + 1
-			m.log.Tracef("Downloading chunk %d/%d (%d bytes) to %s",
-				i+1, chunkCount, chunkSize, filepath.Base(chunkPath))
-
-			// Skip if chunk already exists and has the right size
-			expectedSize := endOffset - startOffset + 1
-			if fi, err := os.Stat(chunkPath); err == nil && fi.Size() == expectedSize {
-				m.log.Tracef("Chunk %d/%d already exists with right size, skipping", i+1, chunkCount)
-				return
-			}
-
-			err := m.downloadChunk(ctx, url, chunkPath, startOffset, endOffset)
-			if err != nil {
-				select {
-				case errors <- fmt.Errorf("chunk %d/%d failed: %v", i+1, chunkCount, err):
-				default:
-				}
-			} else {
-				m.log.Tracef("Successfully downloaded chunk %d/%d", i+1, chunkCount)
-			}
-		}(i, startOffset, endOffset, chunkPath)
+		if err := m.downloadChunk(ctx, url, chunkPath, startOffset, endOffset); err != nil {
+			return fmt.Errorf("chunk %d/%d failed: %v", i+1, chunkCount, err)
+		}
 	}
 
-	// Wait for all chunks to download
-	wg.Wait()
-
-	// Check for errors
-	select {
-	case err := <-errors:
-		return err
-	default:
-		// No errors
-	}
-
-	// Create the final file
 	finalFile, err := os.Create(outputPath)
 	if err != nil {
 		return fmt.Errorf("failed to create final file: %v", err)
 	}
 	defer finalFile.Close()
 
-	// Combine chunks
-	buffer := make([]byte, 1024*1024) // 1MB buffer
+	buffer := make([]byte, 1024*1024)
 	for i := int64(0); i < chunkCount; i++ {
 		chunkPath := filepath.Join(tempDir, fmt.Sprintf("chunk-%03d", i))
 
@@ -669,17 +562,12 @@ func (m *WiFiManager) downloadChunked(ctx context.Context, url, outputPath strin
 		}
 	}
 
-	// After combining all chunks, verify the final file size (silent check)
-	{
-		fi, err := os.Stat(outputPath)
-		if err != nil {
-			m.log.Warnf("Failed to stat combined file %s: %v", outputPath, err)
-		} else if fi.Size() != totalSize {
-			return fmt.Errorf("file size verification failed for %s: expected %d bytes, got %d bytes", outputPath, totalSize, fi.Size())
-		}
+	if fi, err := os.Stat(outputPath); err != nil {
+		m.log.Warnf("Failed to stat combined file %s: %v", outputPath, err)
+	} else if fi.Size() != totalSize {
+		return fmt.Errorf("file size verification failed for %s: expected %d bytes, got %d bytes", outputPath, totalSize, fi.Size())
 	}
 
-	// Set the file timestamps to match the creation time
 	if err := os.Chtimes(outputPath, createdAt, createdAt); err != nil {
 		m.log.Warnf("Failed to set file timestamps for %s: %v", outputPath, err)
 	}

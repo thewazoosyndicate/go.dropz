@@ -239,8 +239,11 @@ function updateAllSyncProgressBars() {
 
 function applySignalStrength(bars, rssi) {
   bars.forEach(bar => bar.classList.remove('filled'));
-  const normalizedRssi = Math.min(Math.max(rssi, -100), -30);
-  const strength = Math.floor(((normalizedRssi + 100) / 70) * 4);
+  let strength;
+  if (rssi >= -50) strength = 4;
+  else if (rssi >= -65) strength = 3;
+  else if (rssi >= -80) strength = 2;
+  else strength = 1;
   for (let i = 0; i < strength; i++) {
     if (bars[i]) bars[i].classList.add('filled');
   }

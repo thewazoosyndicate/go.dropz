@@ -151,6 +151,17 @@ func (m *Manager) ConnectingDone() <-chan struct{} {
 	return m.connectingDone
 }
 
+// signalConnectingDone closes the connectingDone channel so the scanner can
+// resume. Idempotent — safe to call multiple times or from defer.
+func (m *Manager) signalConnectingDone() {
+	m.mutex.Lock()
+	if m.connectingDone != nil {
+		close(m.connectingDone)
+		m.connectingDone = nil
+	}
+	m.mutex.Unlock()
+}
+
 // connectBase establishes a BLE connection, discovers services/characteristics,
 // and polls until the camera is ready. Shared by Connect and ConnectForPairing.
 func (m *Manager) connectBase(macAddress string) (hwInfo *HardwareInfo, err error) {
@@ -169,18 +180,12 @@ func (m *Manager) connectBase(macAddress string) (hwInfo *HardwareInfo, err erro
 
 	connectStart := time.Now()
 
-	// Signal scanner to wait until connection is complete before restarting
+	// Signal scanner to wait until GATT discovery is complete before restarting.
+	// The defer is a safety net — we signal explicitly after characteristic discovery.
 	m.mutex.Lock()
 	m.connectingDone = make(chan struct{})
 	m.mutex.Unlock()
-	defer func() {
-		m.mutex.Lock()
-		if m.connectingDone != nil {
-			close(m.connectingDone)
-			m.connectingDone = nil
-		}
-		m.mutex.Unlock()
-	}()
+	defer m.signalConnectingDone()
 
 	// Always stop scanning before GATT operations — don't trust isScanning flag
 	// since the background scanner may have restarted it.
@@ -321,6 +326,9 @@ func (m *Manager) connectBase(macAddress string) (hwInfo *HardwareInfo, err erro
 	m.mutex.RUnlock()
 	m.log.Debugf("Characteristic discovery complete: %d chars cached, elapsed=%v", charCount, time.Since(connectStart))
 
+	// GATT discovery done — scanning can safely resume while we do read/write ops
+	m.signalConnectingDone()
+
 	// Poll GetHardwareInfo until camera is ready
 	for attempt := 1; attempt <= 10; attempt++ {
 		hwInfo, err = m.GetHardwareInfo(macAddress)
@@ -456,18 +464,12 @@ func (m *Manager) ConnectForPairing(macAddress string) (err error) {
 
 	connectStart := time.Now()
 
-	// Signal scanner to wait until connection is complete
+	// Signal scanner to wait until GATT discovery is complete before restarting.
+	// The defer is a safety net — we signal explicitly after characteristic discovery.
 	m.mutex.Lock()
 	m.connectingDone = make(chan struct{})
 	m.mutex.Unlock()
-	defer func() {
-		m.mutex.Lock()
-		if m.connectingDone != nil {
-			close(m.connectingDone)
-			m.connectingDone = nil
-		}
-		m.mutex.Unlock()
-	}()
+	defer m.signalConnectingDone()
 
 	// Always stop scanning before GATT operations — don't trust isScanning flag
 	// since the background scanner may have restarted it.
@@ -598,6 +600,9 @@ func (m *Manager) ConnectForPairing(macAddress string) (err error) {
 	}
 
 	m.log.Debugf("Pairing characteristic discovery complete, elapsed=%v", time.Since(connectStart))
+
+	// GATT discovery done — scanning can safely resume while we do read/write ops
+	m.signalConnectingDone()
 
 	// Fire-and-forget — camera never responds to 0x03
 	go func() {

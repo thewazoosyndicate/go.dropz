@@ -38,4 +38,10 @@ export const proto = {
   UpdateSettingRequest: configProto.UpdateSettingRequest,
   ResetSettingRequest: configProto.ResetSettingRequest,
   GetVideosRequest: videoProto.GetVideosRequest,
+  GetGroupsRequest: goProProto.GetGroupsRequest,
+  CreateGroupRequest: goProProto.CreateGroupRequest,
+  UpdateGroupRequest: goProProto.UpdateGroupRequest,
+  DeleteGroupRequest: goProProto.DeleteGroupRequest,
+  LoadGroupRequest: goProProto.LoadGroupRequest,
+  SaveManagedAsGroupRequest: goProProto.SaveManagedAsGroupRequest,
 };

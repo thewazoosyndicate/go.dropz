@@ -249,6 +249,28 @@ function deserialize_dropz_Group(buffer_arg) {
   return gopro_pb.Group.deserializeBinary(new Uint8Array(buffer_arg));
 }
 
+function serialize_dropz_LoadGroupRequest(arg) {
+  if (!(arg instanceof gopro_pb.LoadGroupRequest)) {
+    throw new Error('Expected argument of type dropz.LoadGroupRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_LoadGroupRequest(buffer_arg) {
+  return gopro_pb.LoadGroupRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_LoadGroupResponse(arg) {
+  if (!(arg instanceof gopro_pb.LoadGroupResponse)) {
+    throw new Error('Expected argument of type dropz.LoadGroupResponse');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_LoadGroupResponse(buffer_arg) {
+  return gopro_pb.LoadGroupResponse.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
 function serialize_dropz_ManageCameraRequest(arg) {
   if (!(arg instanceof gopro_pb.ManageCameraRequest)) {
     throw new Error('Expected argument of type dropz.ManageCameraRequest');
@@ -313,6 +335,17 @@ function serialize_dropz_ResetSettingRequest(arg) {
 
 function deserialize_dropz_ResetSettingRequest(buffer_arg) {
   return config_pb.ResetSettingRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_SaveManagedAsGroupRequest(arg) {
+  if (!(arg instanceof gopro_pb.SaveManagedAsGroupRequest)) {
+    throw new Error('Expected argument of type dropz.SaveManagedAsGroupRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_SaveManagedAsGroupRequest(buffer_arg) {
+  return gopro_pb.SaveManagedAsGroupRequest.deserializeBinary(new Uint8Array(buffer_arg));
 }
 
 function serialize_dropz_UnmanageCameraRequest(arg) {
@@ -553,6 +586,28 @@ getGroups: {
     requestDeserialize: deserialize_dropz_DeleteGroupRequest,
     responseSerialize: serialize_dropz_OperationResponse,
     responseDeserialize: deserialize_dropz_OperationResponse,
+  },
+  loadGroup: {
+    path: '/dropz.DropzService/LoadGroup',
+    requestStream: false,
+    responseStream: false,
+    requestType: gopro_pb.LoadGroupRequest,
+    responseType: gopro_pb.LoadGroupResponse,
+    requestSerialize: serialize_dropz_LoadGroupRequest,
+    requestDeserialize: deserialize_dropz_LoadGroupRequest,
+    responseSerialize: serialize_dropz_LoadGroupResponse,
+    responseDeserialize: deserialize_dropz_LoadGroupResponse,
+  },
+  saveManagedAsGroup: {
+    path: '/dropz.DropzService/SaveManagedAsGroup',
+    requestStream: false,
+    responseStream: false,
+    requestType: gopro_pb.SaveManagedAsGroupRequest,
+    responseType: gopro_pb.Group,
+    requestSerialize: serialize_dropz_SaveManagedAsGroupRequest,
+    requestDeserialize: deserialize_dropz_SaveManagedAsGroupRequest,
+    responseSerialize: serialize_dropz_Group,
+    responseDeserialize: deserialize_dropz_Group,
   },
   // Video management
 getVideos: {

@@ -27,6 +27,8 @@ type Manager interface {
 	CreateGroup(name string, cameraIDs []string) (*database.Group, error)
 	UpdateGroup(groupID, name string, cameraIDs []string) (*database.Group, error)
 	DeleteGroup(groupID string) error
+	LoadGroup(groupID string) error
+	SaveManagedAsGroup(name string) (*database.Group, error)
 	// Config
 	GetConfig() database.Config
 	UpdateConfig(config database.Config) error
@@ -526,6 +528,40 @@ func (s *DropzServer) DeleteGroup(ctx context.Context, req *protocol.DeleteGroup
 		Success: true,
 		Message: fmt.Sprintf("Group %s deleted successfully", req.GroupId),
 	}, nil
+}
+
+// LoadGroup implements the LoadGroup RPC method
+func (s *DropzServer) LoadGroup(ctx context.Context, req *protocol.LoadGroupRequest) (*protocol.LoadGroupResponse, error) {
+	if s.ctx.Err() != nil {
+		return &protocol.LoadGroupResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
+	}
+
+	err := s.manager.LoadGroup(req.GroupId)
+	if err != nil {
+		return &protocol.LoadGroupResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	s.NotifyUpdate()
+
+	return &protocol.LoadGroupResponse{
+		Success: true,
+		Message: fmt.Sprintf("Group %s loaded successfully", req.GroupId),
+	}, nil
+}
+
+// SaveManagedAsGroup implements the SaveManagedAsGroup RPC method
+func (s *DropzServer) SaveManagedAsGroup(ctx context.Context, req *protocol.SaveManagedAsGroupRequest) (*protocol.Group, error) {
+	if s.ctx.Err() != nil {
+		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
+	}
+
+	group, err := s.manager.SaveManagedAsGroup(req.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	s.NotifyUpdate()
+	return group.ToProtoGroup(), nil
 }
 
 // GetVideos implements the GetVideos RPC method

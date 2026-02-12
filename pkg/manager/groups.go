@@ -99,6 +99,44 @@ func (m *GoProManager) DeleteGroup(groupID string) error {
 	return nil
 }
 
+// LoadGroup replaces the current managed set with the group's cameras
+func (m *GoProManager) LoadGroup(groupID string) error {
+	group, exists := m.db.GetGroup(groupID)
+	if !exists {
+		return fmt.Errorf("group with ID %s not found", groupID)
+	}
+
+	groupCameras := make(map[string]bool, len(group.CameraIDs))
+	for _, id := range group.CameraIDs {
+		groupCameras[id] = true
+	}
+
+	for _, cam := range m.db.GetAllCameras() {
+		id := cam.Camera.ID
+		inGroup := groupCameras[id]
+
+		if inGroup && !cam.Status.IsManaged {
+			m.ManageCamera(id)
+		} else if !inGroup && cam.Status.IsManaged {
+			m.UnmanageCamera(id)
+		}
+	}
+
+	m.log.Infof("Loaded group %s (%d cameras)", group.Name, len(group.CameraIDs))
+	m.notify()
+	return nil
+}
+
+// SaveManagedAsGroup snapshots the current managed cameras as a new group
+func (m *GoProManager) SaveManagedAsGroup(name string) (*database.Group, error) {
+	managed := m.db.GetCamerasForManagedPool()
+	ids := make([]string, len(managed))
+	for i, cam := range managed {
+		ids[i] = cam.CameraState.Camera.ID
+	}
+	return m.CreateGroup(name, ids)
+}
+
 func (m *GoProManager) validateCamerasExist(cameraIDs []string) error {
 	for _, cameraID := range cameraIDs {
 		if _, found := m.db.GetCameraByID(cameraID); !found {

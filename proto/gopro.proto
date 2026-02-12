@@ -197,4 +197,17 @@ message UpdateGroupRequest {
 
 message DeleteGroupRequest {
   string group_id = 1;
-} 
+}
+
+message LoadGroupRequest {
+  string group_id = 1;
+}
+
+message LoadGroupResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message SaveManagedAsGroupRequest {
+  string name = 1;
+}

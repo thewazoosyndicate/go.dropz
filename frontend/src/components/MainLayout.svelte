@@ -2,16 +2,22 @@
   import ManagedPanel from './ManagedPanel.svelte';
   import DiscoveredPanel from './DiscoveredPanel.svelte';
   import VideoLibrary from './VideoLibrary.svelte';
-  import { loadVideos } from '../lib/grpc/actions.js';
+  import GroupsPanel from './GroupsPanel.svelte';
+  import { loadVideos, loadGroups } from '../lib/grpc/actions.js';
 
   let activeTab = $state('cameras');
   let videosLoaded = false;
+  let groupsLoaded = false;
 
   function switchTab(tab) {
     activeTab = tab;
     if (tab === 'library' && !videosLoaded) {
       videosLoaded = true;
       loadVideos();
+    }
+    if (tab === 'groups' && !groupsLoaded) {
+      groupsLoaded = true;
+      loadGroups();
     }
   }
 </script>
@@ -22,6 +28,9 @@
   </button>
   <button class="tab" class:active={activeTab === 'library'} onclick={() => switchTab('library')}>
     <i class="fas fa-photo-film"></i> Library
+  </button>
+  <button class="tab" class:active={activeTab === 'groups'} onclick={() => switchTab('groups')}>
+    <i class="fas fa-layer-group"></i> Groups
   </button>
 </div>
 
@@ -34,9 +43,13 @@
       <DiscoveredPanel />
     </div>
   </main>
-{:else}
+{:else if activeTab === 'library'}
   <main class="main-layout library-layout">
     <VideoLibrary />
+  </main>
+{:else}
+  <main class="main-layout library-layout">
+    <GroupsPanel />
   </main>
 {/if}
 

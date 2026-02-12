@@ -4,6 +4,10 @@
   "description": "Electron frontend for Dropz",
   "main": "src/main.js",
   "homepage": "https://dropz.cloud",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thewazoosyndicate/go.dropz.git"
+  },
   "author": {
     "name": "Dropz",
     "email": "thibaut@dropz.cloud"

@@ -34,6 +34,8 @@ const (
 	DropzService_CreateGroup_FullMethodName            = "/dropz.DropzService/CreateGroup"
 	DropzService_UpdateGroup_FullMethodName            = "/dropz.DropzService/UpdateGroup"
 	DropzService_DeleteGroup_FullMethodName            = "/dropz.DropzService/DeleteGroup"
+	DropzService_LoadGroup_FullMethodName              = "/dropz.DropzService/LoadGroup"
+	DropzService_SaveManagedAsGroup_FullMethodName     = "/dropz.DropzService/SaveManagedAsGroup"
 	DropzService_GetVideos_FullMethodName              = "/dropz.DropzService/GetVideos"
 	DropzService_GetConfig_FullMethodName              = "/dropz.DropzService/GetConfig"
 	DropzService_UpdateConfig_FullMethodName           = "/dropz.DropzService/UpdateConfig"
@@ -68,6 +70,8 @@ type DropzServiceClient interface {
 	CreateGroup(ctx context.Context, in *CreateGroupRequest, opts ...grpc.CallOption) (*Group, error)
 	UpdateGroup(ctx context.Context, in *UpdateGroupRequest, opts ...grpc.CallOption) (*Group, error)
 	DeleteGroup(ctx context.Context, in *DeleteGroupRequest, opts ...grpc.CallOption) (*OperationResponse, error)
+	LoadGroup(ctx context.Context, in *LoadGroupRequest, opts ...grpc.CallOption) (*LoadGroupResponse, error)
+	SaveManagedAsGroup(ctx context.Context, in *SaveManagedAsGroupRequest, opts ...grpc.CallOption) (*Group, error)
 	// Video management
 	GetVideos(ctx context.Context, in *GetVideosRequest, opts ...grpc.CallOption) (*GetVideosResponse, error)
 	// Configuration & Settings
@@ -263,6 +267,26 @@ func (c *dropzServiceClient) DeleteGroup(ctx context.Context, in *DeleteGroupReq
 	return out, nil
 }
 
+func (c *dropzServiceClient) LoadGroup(ctx context.Context, in *LoadGroupRequest, opts ...grpc.CallOption) (*LoadGroupResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LoadGroupResponse)
+	err := c.cc.Invoke(ctx, DropzService_LoadGroup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dropzServiceClient) SaveManagedAsGroup(ctx context.Context, in *SaveManagedAsGroupRequest, opts ...grpc.CallOption) (*Group, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Group)
+	err := c.cc.Invoke(ctx, DropzService_SaveManagedAsGroup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *dropzServiceClient) GetVideos(ctx context.Context, in *GetVideosRequest, opts ...grpc.CallOption) (*GetVideosResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetVideosResponse)
@@ -349,6 +373,8 @@ type DropzServiceServer interface {
 	CreateGroup(context.Context, *CreateGroupRequest) (*Group, error)
 	UpdateGroup(context.Context, *UpdateGroupRequest) (*Group, error)
 	DeleteGroup(context.Context, *DeleteGroupRequest) (*OperationResponse, error)
+	LoadGroup(context.Context, *LoadGroupRequest) (*LoadGroupResponse, error)
+	SaveManagedAsGroup(context.Context, *SaveManagedAsGroupRequest) (*Group, error)
 	// Video management
 	GetVideos(context.Context, *GetVideosRequest) (*GetVideosResponse, error)
 	// Configuration & Settings
@@ -411,6 +437,12 @@ func (UnimplementedDropzServiceServer) UpdateGroup(context.Context, *UpdateGroup
 }
 func (UnimplementedDropzServiceServer) DeleteGroup(context.Context, *DeleteGroupRequest) (*OperationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteGroup not implemented")
+}
+func (UnimplementedDropzServiceServer) LoadGroup(context.Context, *LoadGroupRequest) (*LoadGroupResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LoadGroup not implemented")
+}
+func (UnimplementedDropzServiceServer) SaveManagedAsGroup(context.Context, *SaveManagedAsGroupRequest) (*Group, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SaveManagedAsGroup not implemented")
 }
 func (UnimplementedDropzServiceServer) GetVideos(context.Context, *GetVideosRequest) (*GetVideosResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetVideos not implemented")
@@ -700,6 +732,42 @@ func _DropzService_DeleteGroup_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DropzService_LoadGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LoadGroupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).LoadGroup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_LoadGroup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).LoadGroup(ctx, req.(*LoadGroupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DropzService_SaveManagedAsGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SaveManagedAsGroupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).SaveManagedAsGroup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_SaveManagedAsGroup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).SaveManagedAsGroup(ctx, req.(*SaveManagedAsGroupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _DropzService_GetVideos_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetVideosRequest)
 	if err := dec(in); err != nil {
@@ -862,6 +930,14 @@ var DropzService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteGroup",
 			Handler:    _DropzService_DeleteGroup_Handler,
+		},
+		{
+			MethodName: "LoadGroup",
+			Handler:    _DropzService_LoadGroup_Handler,
+		},
+		{
+			MethodName: "SaveManagedAsGroup",
+			Handler:    _DropzService_SaveManagedAsGroup_Handler,
 		},
 		{
 			MethodName: "GetVideos",

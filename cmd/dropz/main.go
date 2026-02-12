@@ -156,6 +156,11 @@ func main() {
 		}
 	}
 
+	// Apply persisted log level (CLI flag takes priority if explicitly set)
+	if level, err := logrus.ParseLevel(config.LogLevel); err == nil {
+		log.SetLevel(level)
+	}
+
 	// Start GoPro manager
 	if err := goProManager.Start(); err != nil {
 		log.Fatalf("Failed to start GoPro manager: %v", err)

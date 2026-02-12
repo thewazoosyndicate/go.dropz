@@ -1747,6 +1747,146 @@ func (x *DeleteGroupRequest) GetGroupId() string {
 	return ""
 }
 
+type LoadGroupRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	GroupId       string                 `protobuf:"bytes,1,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LoadGroupRequest) Reset() {
+	*x = LoadGroupRequest{}
+	mi := &file_gopro_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LoadGroupRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LoadGroupRequest) ProtoMessage() {}
+
+func (x *LoadGroupRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gopro_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LoadGroupRequest.ProtoReflect.Descriptor instead.
+func (*LoadGroupRequest) Descriptor() ([]byte, []int) {
+	return file_gopro_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *LoadGroupRequest) GetGroupId() string {
+	if x != nil {
+		return x.GroupId
+	}
+	return ""
+}
+
+type LoadGroupResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LoadGroupResponse) Reset() {
+	*x = LoadGroupResponse{}
+	mi := &file_gopro_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LoadGroupResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LoadGroupResponse) ProtoMessage() {}
+
+func (x *LoadGroupResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gopro_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LoadGroupResponse.ProtoReflect.Descriptor instead.
+func (*LoadGroupResponse) Descriptor() ([]byte, []int) {
+	return file_gopro_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *LoadGroupResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *LoadGroupResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+type SaveManagedAsGroupRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SaveManagedAsGroupRequest) Reset() {
+	*x = SaveManagedAsGroupRequest{}
+	mi := &file_gopro_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SaveManagedAsGroupRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SaveManagedAsGroupRequest) ProtoMessage() {}
+
+func (x *SaveManagedAsGroupRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gopro_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SaveManagedAsGroupRequest.ProtoReflect.Descriptor instead.
+func (*SaveManagedAsGroupRequest) Descriptor() ([]byte, []int) {
+	return file_gopro_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *SaveManagedAsGroupRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
 var File_gopro_proto protoreflect.FileDescriptor
 
 const file_gopro_proto_rawDesc = "" +
@@ -1879,7 +2019,14 @@ const file_gopro_proto_rawDesc = "" +
 	"\n" +
 	"camera_ids\x18\x03 \x03(\tR\tcameraIds\"/\n" +
 	"\x12DeleteGroupRequest\x12\x19\n" +
-	"\bgroup_id\x18\x01 \x01(\tR\agroupIdB%Z#github.com/dropz/dropz/pkg/protocolb\x06proto3"
+	"\bgroup_id\x18\x01 \x01(\tR\agroupId\"-\n" +
+	"\x10LoadGroupRequest\x12\x19\n" +
+	"\bgroup_id\x18\x01 \x01(\tR\agroupId\"G\n" +
+	"\x11LoadGroupResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"/\n" +
+	"\x19SaveManagedAsGroupRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04nameB%Z#github.com/dropz/dropz/pkg/protocolb\x06proto3"
 
 var (
 	file_gopro_proto_rawDescOnce sync.Once
@@ -1893,7 +2040,7 @@ func file_gopro_proto_rawDescGZIP() []byte {
 	return file_gopro_proto_rawDescData
 }
 
-var file_gopro_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_gopro_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_gopro_proto_goTypes = []any{
 	(*Camera)(nil),                       // 0: dropz.Camera
 	(*CameraStatus)(nil),                 // 1: dropz.CameraStatus
@@ -1924,19 +2071,22 @@ var file_gopro_proto_goTypes = []any{
 	(*CreateGroupRequest)(nil),           // 26: dropz.CreateGroupRequest
 	(*UpdateGroupRequest)(nil),           // 27: dropz.UpdateGroupRequest
 	(*DeleteGroupRequest)(nil),           // 28: dropz.DeleteGroupRequest
-	(*timestamppb.Timestamp)(nil),        // 29: google.protobuf.Timestamp
+	(*LoadGroupRequest)(nil),             // 29: dropz.LoadGroupRequest
+	(*LoadGroupResponse)(nil),            // 30: dropz.LoadGroupResponse
+	(*SaveManagedAsGroupRequest)(nil),    // 31: dropz.SaveManagedAsGroupRequest
+	(*timestamppb.Timestamp)(nil),        // 32: google.protobuf.Timestamp
 }
 var file_gopro_proto_depIdxs = []int32{
-	29, // 0: dropz.CameraStatus.last_seen:type_name -> google.protobuf.Timestamp
-	29, // 1: dropz.CameraStatus.last_synced:type_name -> google.protobuf.Timestamp
+	32, // 0: dropz.CameraStatus.last_seen:type_name -> google.protobuf.Timestamp
+	32, // 1: dropz.CameraStatus.last_synced:type_name -> google.protobuf.Timestamp
 	0,  // 2: dropz.CameraWithState.camera:type_name -> dropz.Camera
 	1,  // 3: dropz.CameraWithState.status:type_name -> dropz.CameraStatus
 	2,  // 4: dropz.CameraWithState.metadata:type_name -> dropz.CameraMetadata
 	3,  // 5: dropz.DiscoveredCamera.camera_state:type_name -> dropz.CameraWithState
 	3,  // 6: dropz.ManagedCamera.camera_state:type_name -> dropz.CameraWithState
-	29, // 7: dropz.SyncQueueEntry.queued_at:type_name -> google.protobuf.Timestamp
-	29, // 8: dropz.Group.created_at:type_name -> google.protobuf.Timestamp
-	29, // 9: dropz.Group.updated_at:type_name -> google.protobuf.Timestamp
+	32, // 7: dropz.SyncQueueEntry.queued_at:type_name -> google.protobuf.Timestamp
+	32, // 8: dropz.Group.created_at:type_name -> google.protobuf.Timestamp
+	32, // 9: dropz.Group.updated_at:type_name -> google.protobuf.Timestamp
 	4,  // 10: dropz.GetDiscoveredCamerasResponse.cameras:type_name -> dropz.DiscoveredCamera
 	5,  // 11: dropz.GetManagedCamerasResponse.cameras:type_name -> dropz.ManagedCamera
 	6,  // 12: dropz.GetSyncQueueResponse.queue:type_name -> dropz.SyncQueueEntry
@@ -1963,7 +2113,7 @@ func file_gopro_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gopro_proto_rawDesc), len(file_gopro_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   29,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

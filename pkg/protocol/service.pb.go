@@ -24,7 +24,7 @@ var File_service_proto protoreflect.FileDescriptor
 
 const file_service_proto_rawDesc = "" +
 	"\n" +
-	"\rservice.proto\x12\x05dropz\x1a\vgopro.proto\x1a\vvideo.proto\x1a\fconfig.proto\x1a\fcommon.proto2\xf4\v\n" +
+	"\rservice.proto\x12\x05dropz\x1a\vgopro.proto\x1a\vvideo.proto\x1a\fconfig.proto\x1a\fcommon.proto2\xfa\f\n" +
 	"\fDropzService\x12_\n" +
 	"\x14GetDiscoveredCameras\x12\".dropz.GetDiscoveredCamerasRequest\x1a#.dropz.GetDiscoveredCamerasResponse\x12c\n" +
 	"\x16WatchDiscoveredCameras\x12\".dropz.GetDiscoveredCamerasRequest\x1a#.dropz.GetDiscoveredCamerasResponse0\x01\x12V\n" +
@@ -43,6 +43,8 @@ const file_service_proto_rawDesc = "" +
 	"\vCreateGroup\x12\x19.dropz.CreateGroupRequest\x1a\f.dropz.Group\x126\n" +
 	"\vUpdateGroup\x12\x19.dropz.UpdateGroupRequest\x1a\f.dropz.Group\x12B\n" +
 	"\vDeleteGroup\x12\x19.dropz.DeleteGroupRequest\x1a\x18.dropz.OperationResponse\x12>\n" +
+	"\tLoadGroup\x12\x17.dropz.LoadGroupRequest\x1a\x18.dropz.LoadGroupResponse\x12D\n" +
+	"\x12SaveManagedAsGroup\x12 .dropz.SaveManagedAsGroupRequest\x1a\f.dropz.Group\x12>\n" +
 	"\tGetVideos\x12\x17.dropz.GetVideosRequest\x1a\x18.dropz.GetVideosResponse\x12>\n" +
 	"\tGetConfig\x12\x17.dropz.GetConfigRequest\x1a\x18.dropz.GetConfigResponse\x12G\n" +
 	"\fUpdateConfig\x12\x1a.dropz.UpdateConfigRequest\x1a\x1b.dropz.UpdateConfigResponse\x12A\n" +
@@ -64,28 +66,31 @@ var file_service_proto_goTypes = []any{
 	(*CreateGroupRequest)(nil),           // 9: dropz.CreateGroupRequest
 	(*UpdateGroupRequest)(nil),           // 10: dropz.UpdateGroupRequest
 	(*DeleteGroupRequest)(nil),           // 11: dropz.DeleteGroupRequest
-	(*GetVideosRequest)(nil),             // 12: dropz.GetVideosRequest
-	(*GetConfigRequest)(nil),             // 13: dropz.GetConfigRequest
-	(*UpdateConfigRequest)(nil),          // 14: dropz.UpdateConfigRequest
-	(*GetSettingRequest)(nil),            // 15: dropz.GetSettingRequest
-	(*UpdateSettingRequest)(nil),         // 16: dropz.UpdateSettingRequest
-	(*ResetSettingRequest)(nil),          // 17: dropz.ResetSettingRequest
-	(*GetDiscoveredCamerasResponse)(nil), // 18: dropz.GetDiscoveredCamerasResponse
-	(*GetManagedCamerasResponse)(nil),    // 19: dropz.GetManagedCamerasResponse
-	(*ManageCameraResponse)(nil),         // 20: dropz.ManageCameraResponse
-	(*UnmanageCameraResponse)(nil),       // 21: dropz.UnmanageCameraResponse
-	(*PairCameraResponse)(nil),           // 22: dropz.PairCameraResponse
-	(*GetSyncQueueResponse)(nil),         // 23: dropz.GetSyncQueueResponse
-	(*ForceSyncResponse)(nil),            // 24: dropz.ForceSyncResponse
-	(*CancelSyncResponse)(nil),           // 25: dropz.CancelSyncResponse
-	(*GetGroupsResponse)(nil),            // 26: dropz.GetGroupsResponse
-	(*Group)(nil),                        // 27: dropz.Group
-	(*OperationResponse)(nil),            // 28: dropz.OperationResponse
-	(*GetVideosResponse)(nil),            // 29: dropz.GetVideosResponse
-	(*GetConfigResponse)(nil),            // 30: dropz.GetConfigResponse
-	(*UpdateConfigResponse)(nil),         // 31: dropz.UpdateConfigResponse
-	(*GetSettingResponse)(nil),           // 32: dropz.GetSettingResponse
-	(*Config)(nil),                       // 33: dropz.Config
+	(*LoadGroupRequest)(nil),             // 12: dropz.LoadGroupRequest
+	(*SaveManagedAsGroupRequest)(nil),    // 13: dropz.SaveManagedAsGroupRequest
+	(*GetVideosRequest)(nil),             // 14: dropz.GetVideosRequest
+	(*GetConfigRequest)(nil),             // 15: dropz.GetConfigRequest
+	(*UpdateConfigRequest)(nil),          // 16: dropz.UpdateConfigRequest
+	(*GetSettingRequest)(nil),            // 17: dropz.GetSettingRequest
+	(*UpdateSettingRequest)(nil),         // 18: dropz.UpdateSettingRequest
+	(*ResetSettingRequest)(nil),          // 19: dropz.ResetSettingRequest
+	(*GetDiscoveredCamerasResponse)(nil), // 20: dropz.GetDiscoveredCamerasResponse
+	(*GetManagedCamerasResponse)(nil),    // 21: dropz.GetManagedCamerasResponse
+	(*ManageCameraResponse)(nil),         // 22: dropz.ManageCameraResponse
+	(*UnmanageCameraResponse)(nil),       // 23: dropz.UnmanageCameraResponse
+	(*PairCameraResponse)(nil),           // 24: dropz.PairCameraResponse
+	(*GetSyncQueueResponse)(nil),         // 25: dropz.GetSyncQueueResponse
+	(*ForceSyncResponse)(nil),            // 26: dropz.ForceSyncResponse
+	(*CancelSyncResponse)(nil),           // 27: dropz.CancelSyncResponse
+	(*GetGroupsResponse)(nil),            // 28: dropz.GetGroupsResponse
+	(*Group)(nil),                        // 29: dropz.Group
+	(*OperationResponse)(nil),            // 30: dropz.OperationResponse
+	(*LoadGroupResponse)(nil),            // 31: dropz.LoadGroupResponse
+	(*GetVideosResponse)(nil),            // 32: dropz.GetVideosResponse
+	(*GetConfigResponse)(nil),            // 33: dropz.GetConfigResponse
+	(*UpdateConfigResponse)(nil),         // 34: dropz.UpdateConfigResponse
+	(*GetSettingResponse)(nil),           // 35: dropz.GetSettingResponse
+	(*Config)(nil),                       // 36: dropz.Config
 }
 var file_service_proto_depIdxs = []int32{
 	0,  // 0: dropz.DropzService.GetDiscoveredCameras:input_type -> dropz.GetDiscoveredCamerasRequest
@@ -103,35 +108,39 @@ var file_service_proto_depIdxs = []int32{
 	9,  // 12: dropz.DropzService.CreateGroup:input_type -> dropz.CreateGroupRequest
 	10, // 13: dropz.DropzService.UpdateGroup:input_type -> dropz.UpdateGroupRequest
 	11, // 14: dropz.DropzService.DeleteGroup:input_type -> dropz.DeleteGroupRequest
-	12, // 15: dropz.DropzService.GetVideos:input_type -> dropz.GetVideosRequest
-	13, // 16: dropz.DropzService.GetConfig:input_type -> dropz.GetConfigRequest
-	14, // 17: dropz.DropzService.UpdateConfig:input_type -> dropz.UpdateConfigRequest
-	15, // 18: dropz.DropzService.GetSetting:input_type -> dropz.GetSettingRequest
-	16, // 19: dropz.DropzService.UpdateSetting:input_type -> dropz.UpdateSettingRequest
-	17, // 20: dropz.DropzService.ResetSetting:input_type -> dropz.ResetSettingRequest
-	18, // 21: dropz.DropzService.GetDiscoveredCameras:output_type -> dropz.GetDiscoveredCamerasResponse
-	18, // 22: dropz.DropzService.WatchDiscoveredCameras:output_type -> dropz.GetDiscoveredCamerasResponse
-	19, // 23: dropz.DropzService.GetManagedCameras:output_type -> dropz.GetManagedCamerasResponse
-	19, // 24: dropz.DropzService.WatchManagedCameras:output_type -> dropz.GetManagedCamerasResponse
-	20, // 25: dropz.DropzService.ManageCamera:output_type -> dropz.ManageCameraResponse
-	21, // 26: dropz.DropzService.UnmanageCamera:output_type -> dropz.UnmanageCameraResponse
-	22, // 27: dropz.DropzService.PairCamera:output_type -> dropz.PairCameraResponse
-	23, // 28: dropz.DropzService.GetSyncQueue:output_type -> dropz.GetSyncQueueResponse
-	23, // 29: dropz.DropzService.WatchSyncQueue:output_type -> dropz.GetSyncQueueResponse
-	24, // 30: dropz.DropzService.ForceSync:output_type -> dropz.ForceSyncResponse
-	25, // 31: dropz.DropzService.CancelSync:output_type -> dropz.CancelSyncResponse
-	26, // 32: dropz.DropzService.GetGroups:output_type -> dropz.GetGroupsResponse
-	27, // 33: dropz.DropzService.CreateGroup:output_type -> dropz.Group
-	27, // 34: dropz.DropzService.UpdateGroup:output_type -> dropz.Group
-	28, // 35: dropz.DropzService.DeleteGroup:output_type -> dropz.OperationResponse
-	29, // 36: dropz.DropzService.GetVideos:output_type -> dropz.GetVideosResponse
-	30, // 37: dropz.DropzService.GetConfig:output_type -> dropz.GetConfigResponse
-	31, // 38: dropz.DropzService.UpdateConfig:output_type -> dropz.UpdateConfigResponse
-	32, // 39: dropz.DropzService.GetSetting:output_type -> dropz.GetSettingResponse
-	33, // 40: dropz.DropzService.UpdateSetting:output_type -> dropz.Config
-	33, // 41: dropz.DropzService.ResetSetting:output_type -> dropz.Config
-	21, // [21:42] is the sub-list for method output_type
-	0,  // [0:21] is the sub-list for method input_type
+	12, // 15: dropz.DropzService.LoadGroup:input_type -> dropz.LoadGroupRequest
+	13, // 16: dropz.DropzService.SaveManagedAsGroup:input_type -> dropz.SaveManagedAsGroupRequest
+	14, // 17: dropz.DropzService.GetVideos:input_type -> dropz.GetVideosRequest
+	15, // 18: dropz.DropzService.GetConfig:input_type -> dropz.GetConfigRequest
+	16, // 19: dropz.DropzService.UpdateConfig:input_type -> dropz.UpdateConfigRequest
+	17, // 20: dropz.DropzService.GetSetting:input_type -> dropz.GetSettingRequest
+	18, // 21: dropz.DropzService.UpdateSetting:input_type -> dropz.UpdateSettingRequest
+	19, // 22: dropz.DropzService.ResetSetting:input_type -> dropz.ResetSettingRequest
+	20, // 23: dropz.DropzService.GetDiscoveredCameras:output_type -> dropz.GetDiscoveredCamerasResponse
+	20, // 24: dropz.DropzService.WatchDiscoveredCameras:output_type -> dropz.GetDiscoveredCamerasResponse
+	21, // 25: dropz.DropzService.GetManagedCameras:output_type -> dropz.GetManagedCamerasResponse
+	21, // 26: dropz.DropzService.WatchManagedCameras:output_type -> dropz.GetManagedCamerasResponse
+	22, // 27: dropz.DropzService.ManageCamera:output_type -> dropz.ManageCameraResponse
+	23, // 28: dropz.DropzService.UnmanageCamera:output_type -> dropz.UnmanageCameraResponse
+	24, // 29: dropz.DropzService.PairCamera:output_type -> dropz.PairCameraResponse
+	25, // 30: dropz.DropzService.GetSyncQueue:output_type -> dropz.GetSyncQueueResponse
+	25, // 31: dropz.DropzService.WatchSyncQueue:output_type -> dropz.GetSyncQueueResponse
+	26, // 32: dropz.DropzService.ForceSync:output_type -> dropz.ForceSyncResponse
+	27, // 33: dropz.DropzService.CancelSync:output_type -> dropz.CancelSyncResponse
+	28, // 34: dropz.DropzService.GetGroups:output_type -> dropz.GetGroupsResponse
+	29, // 35: dropz.DropzService.CreateGroup:output_type -> dropz.Group
+	29, // 36: dropz.DropzService.UpdateGroup:output_type -> dropz.Group
+	30, // 37: dropz.DropzService.DeleteGroup:output_type -> dropz.OperationResponse
+	31, // 38: dropz.DropzService.LoadGroup:output_type -> dropz.LoadGroupResponse
+	29, // 39: dropz.DropzService.SaveManagedAsGroup:output_type -> dropz.Group
+	32, // 40: dropz.DropzService.GetVideos:output_type -> dropz.GetVideosResponse
+	33, // 41: dropz.DropzService.GetConfig:output_type -> dropz.GetConfigResponse
+	34, // 42: dropz.DropzService.UpdateConfig:output_type -> dropz.UpdateConfigResponse
+	35, // 43: dropz.DropzService.GetSetting:output_type -> dropz.GetSettingResponse
+	36, // 44: dropz.DropzService.UpdateSetting:output_type -> dropz.Config
+	36, // 45: dropz.DropzService.ResetSetting:output_type -> dropz.Config
+	23, // [23:46] is the sub-list for method output_type
+	0,  // [0:23] is the sub-list for method input_type
 	0,  // [0:0] is the sub-list for extension type_name
 	0,  // [0:0] is the sub-list for extension extendee
 	0,  // [0:0] is the sub-list for field type_name

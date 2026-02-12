@@ -33,8 +33,15 @@ jobs:
       - name: Build frontend
         run: cd frontend && npx vite build
 
-      - name: Build DMG
-        run: cd frontend && npx electron-builder --mac dmg
+      - name: Build Electron app
+        run: cd frontend && npx electron-builder --mac --dir
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Ad-hoc sign and build DMG
+        run: |
+          codesign --force --deep -s - frontend/dist/mac-arm64/Dropz.app
+          cd frontend && npx electron-builder --mac dmg --prepackaged dist/mac-arm64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

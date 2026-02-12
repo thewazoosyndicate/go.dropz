@@ -5,6 +5,8 @@ import { updateDevice, setPairingInProgress, getAllDevices } from '../stores/dev
 import { addOrUpdateSyncEntry, removeSyncEntry } from '../stores/sync.svelte.js';
 import { setAppConfig, setAutoPair, setAutoSync, getAppConfig, updateConfigField } from '../stores/config.svelte.js';
 import { addToast, addLog } from '../stores/ui.svelte.js';
+import { setVideos, setLoading } from '../stores/videos.svelte.js';
+import { setGroups, addOrUpdateGroup, removeGroup as removeGroupFromStore } from '../stores/groups.svelte.js';
 
 function getDisplayName(device) {
   if (device.wifiSsid?.trim()) return device.wifiSsid.substring(0, 12);
@@ -266,5 +268,117 @@ export function resetAllSettings() {
     });
 
     addToast('Settings reset to defaults', 'success');
+  });
+}
+
+export function loadVideos(cameraId = '', limit = 200, offset = 0) {
+  setLoading(true);
+  const client = getClient();
+  const request = new proto.GetVideosRequest();
+  request.setCameraId(cameraId);
+  request.setLimit(limit);
+  request.setOffset(offset);
+
+  client.getVideos(request, (error, response) => {
+    setLoading(false);
+    if (error) {
+      console.error('Error loading videos:', error.message);
+      return;
+    }
+
+    const videos = response.getVideosList().map(v => ({
+      id: v.getId(),
+      name: v.getName(),
+      path: v.getPath(),
+      sizeBytes: v.getSizeBytes(),
+      createdAt: v.getCreatedAt()?.toDate(),
+      cameraId: v.getCameraId(),
+      mimeType: v.getMimeType(),
+    }));
+
+    setVideos(videos, response.getTotalCount());
+  });
+}
+
+function processGroup(g) {
+  return {
+    id: g.getId(),
+    name: g.getName(),
+    cameraIds: g.getCameraIdsList(),
+    createdAt: g.getCreatedAt()?.toDate(),
+    updatedAt: g.getUpdatedAt()?.toDate(),
+  };
+}
+
+export function loadGroups() {
+  const client = getClient();
+  const request = new proto.GetGroupsRequest();
+
+  client.getGroups(request, (error, response) => {
+    if (error) {
+      console.error('Error loading groups:', error.message);
+      return;
+    }
+    setGroups(response.getGroupsList().map(processGroup));
+  });
+}
+
+export function saveManagedAsGroup(name) {
+  const client = getClient();
+  const request = new proto.SaveManagedAsGroupRequest();
+  request.setName(name);
+
+  client.saveManagedAsGroup(request, (error, response) => {
+    if (error) {
+      addToast('Failed to save group', 'error');
+      return;
+    }
+    addOrUpdateGroup(processGroup(response));
+    addToast(`Group "${name}" saved`, 'success');
+  });
+}
+
+export function loadGroup(groupId) {
+  const client = getClient();
+  const request = new proto.LoadGroupRequest();
+  request.setGroupId(groupId);
+
+  client.loadGroup(request, (error, response) => {
+    if (error || !response.getSuccess()) {
+      addToast('Failed to load group', 'error');
+      return;
+    }
+    addToast('Group loaded', 'success');
+  });
+}
+
+export function deleteGroup(groupId) {
+  const client = getClient();
+  const request = new proto.DeleteGroupRequest();
+  request.setGroupId(groupId);
+
+  client.deleteGroup(request, (error, response) => {
+    if (error || !response.getSuccess()) {
+      addToast('Failed to delete group', 'error');
+      return;
+    }
+    removeGroupFromStore(groupId);
+    addToast('Group deleted', 'info');
+  });
+}
+
+export function renameGroup(groupId, name, cameraIds) {
+  const client = getClient();
+  const request = new proto.UpdateGroupRequest();
+  request.setGroupId(groupId);
+  request.setName(name);
+  request.setCameraIdsList(cameraIds);
+
+  client.updateGroup(request, (error, response) => {
+    if (error) {
+      addToast('Failed to rename group', 'error');
+      return;
+    }
+    addOrUpdateGroup(processGroup(response));
   });
 }

@@ -28,7 +28,12 @@
       result.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     } else {
       // Default: signal strength descending
-      result.sort((a, b) => (b.rssi || -100) - (a.rssi || -100));
+      const SORT_HYSTERESIS = 8;
+      result.sort((a, b) => {
+        const diff = (b.rssi || -100) - (a.rssi || -100);
+        if (Math.abs(diff) < SORT_HYSTERESIS) return 0;
+        return diff;
+      });
     }
     return result;
   });

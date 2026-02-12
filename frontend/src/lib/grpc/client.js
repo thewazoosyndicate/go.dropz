@@ -11,6 +11,7 @@ const grpc = appRequire('@grpc/grpc-js');
 const serviceGrpc = appRequire('./src/proto/service_grpc_pb');
 const goProProto = appRequire('./src/proto/gopro_pb');
 const configProto = appRequire('./src/proto/config_pb');
+const videoProto = appRequire('./src/proto/video_pb');
 
 let _client = null;
 
@@ -36,4 +37,11 @@ export const proto = {
   GetConfigRequest: configProto.GetConfigRequest,
   UpdateSettingRequest: configProto.UpdateSettingRequest,
   ResetSettingRequest: configProto.ResetSettingRequest,
+  GetVideosRequest: videoProto.GetVideosRequest,
+  GetGroupsRequest: goProProto.GetGroupsRequest,
+  CreateGroupRequest: goProProto.CreateGroupRequest,
+  UpdateGroupRequest: goProProto.UpdateGroupRequest,
+  DeleteGroupRequest: goProProto.DeleteGroupRequest,
+  LoadGroupRequest: goProProto.LoadGroupRequest,
+  SaveManagedAsGroupRequest: goProProto.SaveManagedAsGroupRequest,
 };

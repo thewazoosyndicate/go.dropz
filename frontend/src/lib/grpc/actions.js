@@ -5,6 +5,7 @@ import { updateDevice, setPairingInProgress, getAllDevices } from '../stores/dev
 import { addOrUpdateSyncEntry, removeSyncEntry } from '../stores/sync.svelte.js';
 import { setAppConfig, setAutoPair, setAutoSync, getAppConfig, updateConfigField } from '../stores/config.svelte.js';
 import { addToast, addLog } from '../stores/ui.svelte.js';
+import { setVideos, setLoading } from '../stores/videos.svelte.js';
 
 function getDisplayName(device) {
   if (device.wifiSsid?.trim()) return device.wifiSsid.substring(0, 12);
@@ -266,5 +267,34 @@ export function resetAllSettings() {
     });
 
     addToast('Settings reset to defaults', 'success');
+  });
+}
+
+export function loadVideos(cameraId = '', limit = 200, offset = 0) {
+  setLoading(true);
+  const client = getClient();
+  const request = new proto.GetVideosRequest();
+  request.setCameraId(cameraId);
+  request.setLimit(limit);
+  request.setOffset(offset);
+
+  client.getVideos(request, (error, response) => {
+    setLoading(false);
+    if (error) {
+      console.error('Error loading videos:', error.message);
+      return;
+    }
+
+    const videos = response.getVideosList().map(v => ({
+      id: v.getId(),
+      name: v.getName(),
+      path: v.getPath(),
+      sizeBytes: v.getSizeBytes(),
+      createdAt: v.getCreatedAt()?.toDate(),
+      cameraId: v.getCameraId(),
+      mimeType: v.getMimeType(),
+    }));
+
+    setVideos(videos, response.getTotalCount());
   });
 }

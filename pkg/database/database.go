@@ -123,7 +123,6 @@ type Database struct {
 	cameraStates map[string]*CameraWithState
 	SyncQueue    []*SyncQueueEntry `json:"sync_queue"`
 	Groups       []*Group          `json:"groups"`
-	Videos       []*VideoFile      `json:"videos"`
 	Config       Config            `json:"config"`
 	filePath     string
 	mutex        sync.RWMutex
@@ -134,7 +133,6 @@ type databaseJSON struct {
 	CameraStates map[string]*CameraWithState `json:"camera_states"`
 	SyncQueue    []*SyncQueueEntry           `json:"sync_queue"`
 	Groups       []*Group                    `json:"groups"`
-	Videos       []*VideoFile                `json:"videos"`
 	Config       Config                      `json:"config"`
 }
 
@@ -143,7 +141,6 @@ func (db *Database) MarshalJSON() ([]byte, error) {
 		CameraStates: db.cameraStates,
 		SyncQueue:    db.SyncQueue,
 		Groups:       db.Groups,
-		Videos:       db.Videos,
 		Config:       db.Config,
 	})
 }
@@ -156,7 +153,6 @@ func (db *Database) UnmarshalJSON(data []byte) error {
 	db.cameraStates = aux.CameraStates
 	db.SyncQueue = aux.SyncQueue
 	db.Groups = aux.Groups
-	db.Videos = aux.Videos
 	db.Config = aux.Config
 	return nil
 }
@@ -171,7 +167,6 @@ func GetDatabase() *Database {
 			cameraStates: make(map[string]*CameraWithState),
 			SyncQueue:    make([]*SyncQueueEntry, 0),
 			Groups:       make([]*Group, 0),
-			Videos:       make([]*VideoFile, 0),
 			Config:       DefaultConfig(),
 		}
 	})
@@ -470,45 +465,6 @@ func (db *Database) RemoveGroup(id string) error {
 	return fmt.Errorf("group with ID %s not found", id)
 }
 
-// AddVideo adds a video file
-func (db *Database) AddVideo(video *VideoFile) error {
-	db.mutex.Lock()
-	defer db.mutex.Unlock()
-
-	db.Videos = append(db.Videos, video)
-	return db.saveToFile()
-}
-
-// GetVideosByCamera returns videos for a specific camera with optional date filtering and pagination.
-func (db *Database) GetVideosByCamera(cameraID string, startDate, endDate time.Time, limit, offset int) ([]*VideoFile, int) {
-	db.mutex.RLock()
-	defer db.mutex.RUnlock()
-
-	var filtered []*VideoFile
-	for _, video := range db.Videos {
-		if video.CameraID != cameraID {
-			continue
-		}
-		if !startDate.IsZero() && video.CreatedAt.Before(startDate) {
-			continue
-		}
-		if !endDate.IsZero() && video.CreatedAt.After(endDate) {
-			continue
-		}
-		filtered = append(filtered, video)
-	}
-
-	totalCount := len(filtered)
-	if offset >= totalCount {
-		return []*VideoFile{}, totalCount
-	}
-	end := offset + limit
-	if end > totalCount {
-		end = totalCount
-	}
-	return filtered[offset:end], totalCount
-}
-
 // GetConfig returns the current configuration
 func (db *Database) GetConfig() Config {
 	db.mutex.RLock()
@@ -785,6 +741,19 @@ func (db *Database) ResetTransientStates() error {
 	}
 
 	return nil
+}
+
+// GetAllCameras returns all cameras (copies)
+func (db *Database) GetAllCameras() []*CameraWithState {
+	db.mutex.RLock()
+	defer db.mutex.RUnlock()
+
+	cameras := make([]*CameraWithState, 0, len(db.cameraStates))
+	for _, cs := range db.cameraStates {
+		csCopy := *cs
+		cameras = append(cameras, &csCopy)
+	}
+	return cameras
 }
 
 // GetCamerasForDiscoveredPool returns cameras that should appear in the Discovered pool

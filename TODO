@@ -1,0 +1,20 @@
+Biggest Gaps (ranked by impact)                                                                       
+                                                                                                        
+  1. Video Library / Media Management — Files get downloaded to disk but the app immediately "forgets"  
+  about them. db.AddVideo() is never called during sync, GetVideos always returns empty, and there's no
+  UI to browse/play downloaded content. This is the gap between "sync tool" and "media manager."
+  2. Group Management UI — Backend is 100% done (create, update, delete, assign cameras), proto is
+  complete, gRPC RPCs work — but zero frontend. All that infrastructure sits unused.
+  3. Photo Download — Status checks track NumPhotos but sync only downloads videos. No DownloadPhotos
+  logic exists.
+  4. Sync Visibility — Progress percent and current operation are tracked but the UI doesn't surface
+  file-by-file download status, ETAs, or queue position.
+
+  My Recommendation
+
+  Video metadata persistence + Video Library UI is the highest-impact next feature. It turns the app
+  from a "background sync daemon" into something you'd actually open and use daily. The backend pieces
+  mostly exist (VideoFile type, GetVideos RPC, AddVideo in DB) — they just need to be wired together,
+  and then a frontend view built.
+
+

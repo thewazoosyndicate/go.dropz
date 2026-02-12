@@ -2,16 +2,22 @@ package manager
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"mime"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/dropz/dropz/pkg/ble"
 	"github.com/dropz/dropz/pkg/database"
-	"github.com/sirupsen/logrus"
 	"github.com/dropz/dropz/pkg/manager/discovery"
 	"github.com/dropz/dropz/pkg/manager/pairing"
 	syncpkg "github.com/dropz/dropz/pkg/manager/sync"
+	"github.com/sirupsen/logrus"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -304,7 +310,95 @@ func (m *GoProManager) CancelSync(cameraID string) error {
 	return m.syncCoordinator.CancelSync(cameraID)
 }
 
-// GetVideosByCamera returns videos for a specific camera
+// GetVideosByCamera scans the destination folder for media files and maps them to cameras via WiFi SSID.
 func (m *GoProManager) GetVideosByCamera(cameraID string, startDate, endDate time.Time, limit, offset int) ([]*database.VideoFile, int) {
-	return m.db.GetVideosByCamera(cameraID, startDate, endDate, limit, offset)
+	config := m.db.GetConfig()
+	if config.DestinationFolder == "" {
+		return []*database.VideoFile{}, 0
+	}
+
+	// Build WiFi SSID → camera ID map
+	ssidToCamera := make(map[string]string)
+	for _, cam := range m.db.GetAllCameras() {
+		if cam.Camera.WiFiSSID != "" {
+			ssidToCamera[cam.Camera.WiFiSSID] = cam.Camera.ID
+		}
+	}
+
+	entries, err := os.ReadDir(config.DestinationFolder)
+	if err != nil {
+		m.log.Warnf("Cannot read destination folder %s: %v", config.DestinationFolder, err)
+		return []*database.VideoFile{}, 0
+	}
+
+	var allVideos []*database.VideoFile
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		ssid := entry.Name()
+		camID, known := ssidToCamera[ssid]
+		if !known {
+			continue
+		}
+		if cameraID != "" && camID != cameraID {
+			continue
+		}
+
+		subdir := filepath.Join(config.DestinationFolder, ssid)
+		files, err := os.ReadDir(subdir)
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if f.IsDir() {
+				continue
+			}
+			ext := strings.ToLower(filepath.Ext(f.Name()))
+			mimeType := mime.TypeByExtension(ext)
+			if !strings.HasPrefix(mimeType, "video/") && !strings.HasPrefix(mimeType, "image/") {
+				continue
+			}
+
+			fullPath := filepath.Join(subdir, f.Name())
+			info, err := f.Info()
+			if err != nil {
+				continue
+			}
+
+			mtime := info.ModTime()
+			if !startDate.IsZero() && mtime.Before(startDate) {
+				continue
+			}
+			if !endDate.IsZero() && mtime.After(endDate) {
+				continue
+			}
+
+			hash := sha256.Sum256([]byte(fullPath))
+			allVideos = append(allVideos, &database.VideoFile{
+				ID:        fmt.Sprintf("%x", hash[:8]),
+				Name:      f.Name(),
+				Path:      fullPath,
+				SizeBytes: info.Size(),
+				CreatedAt: mtime,
+				CameraID:  camID,
+				MimeType:  mimeType,
+			})
+		}
+	}
+
+	// Sort newest first
+	sort.Slice(allVideos, func(i, j int) bool {
+		return allVideos[i].CreatedAt.After(allVideos[j].CreatedAt)
+	})
+
+	totalCount := len(allVideos)
+	if offset >= totalCount {
+		return []*database.VideoFile{}, totalCount
+	}
+	end := offset + limit
+	if limit == 0 || end > totalCount {
+		end = totalCount
+	}
+	return allVideos[offset:end], totalCount
 }

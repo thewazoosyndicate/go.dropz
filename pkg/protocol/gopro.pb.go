@@ -126,6 +126,7 @@ type CameraStatus struct {
 	IsReachable   bool                   `protobuf:"varint,6,opt,name=is_reachable,json=isReachable,proto3" json:"is_reachable,omitempty"`
 	IsSynced      bool                   `protobuf:"varint,7,opt,name=is_synced,json=isSynced,proto3" json:"is_synced,omitempty"`
 	IsSyncing     bool                   `protobuf:"varint,8,opt,name=is_syncing,json=isSyncing,proto3" json:"is_syncing,omitempty"`
+	LastSyncError string                 `protobuf:"bytes,9,opt,name=last_sync_error,json=lastSyncError,proto3" json:"last_sync_error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -216,17 +217,28 @@ func (x *CameraStatus) GetIsSyncing() bool {
 	return false
 }
 
+func (x *CameraStatus) GetLastSyncError() string {
+	if x != nil {
+		return x.LastSyncError
+	}
+	return ""
+}
+
 // Additional technical metadata about a camera
 type CameraMetadata struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Id              string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // References the camera ID
-	FirmwareVersion string                 `protobuf:"bytes,2,opt,name=firmware_version,json=firmwareVersion,proto3" json:"firmware_version,omitempty"`
-	Model           string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
-	SerialNumber    string                 `protobuf:"bytes,4,opt,name=serial_number,json=serialNumber,proto3" json:"serial_number,omitempty"`
-	BatteryLevel    int32                  `protobuf:"varint,5,opt,name=battery_level,json=batteryLevel,proto3" json:"battery_level,omitempty"` // percentage
-	HardwareVersion string                 `protobuf:"bytes,7,opt,name=hardware_version,json=hardwareVersion,proto3" json:"hardware_version,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Id               string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // References the camera ID
+	FirmwareVersion  string                 `protobuf:"bytes,2,opt,name=firmware_version,json=firmwareVersion,proto3" json:"firmware_version,omitempty"`
+	Model            string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
+	SerialNumber     string                 `protobuf:"bytes,4,opt,name=serial_number,json=serialNumber,proto3" json:"serial_number,omitempty"`
+	BatteryLevel     int32                  `protobuf:"varint,5,opt,name=battery_level,json=batteryLevel,proto3" json:"battery_level,omitempty"` // percentage
+	HardwareVersion  string                 `protobuf:"bytes,7,opt,name=hardware_version,json=hardwareVersion,proto3" json:"hardware_version,omitempty"`
+	NumPhotos        int32                  `protobuf:"varint,8,opt,name=num_photos,json=numPhotos,proto3" json:"num_photos,omitempty"`
+	NumVideos        int32                  `protobuf:"varint,9,opt,name=num_videos,json=numVideos,proto3" json:"num_videos,omitempty"`
+	SdCardStatus     int32                  `protobuf:"varint,10,opt,name=sd_card_status,json=sdCardStatus,proto3" json:"sd_card_status,omitempty"`
+	RemainingSpaceKb int64                  `protobuf:"varint,11,opt,name=remaining_space_kb,json=remainingSpaceKb,proto3" json:"remaining_space_kb,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *CameraMetadata) Reset() {
@@ -299,6 +311,34 @@ func (x *CameraMetadata) GetHardwareVersion() string {
 		return x.HardwareVersion
 	}
 	return ""
+}
+
+func (x *CameraMetadata) GetNumPhotos() int32 {
+	if x != nil {
+		return x.NumPhotos
+	}
+	return 0
+}
+
+func (x *CameraMetadata) GetNumVideos() int32 {
+	if x != nil {
+		return x.NumVideos
+	}
+	return 0
+}
+
+func (x *CameraMetadata) GetSdCardStatus() int32 {
+	if x != nil {
+		return x.SdCardStatus
+	}
+	return 0
+}
+
+func (x *CameraMetadata) GetRemainingSpaceKb() int64 {
+	if x != nil {
+		return x.RemainingSpaceKb
+	}
+	return 0
 }
 
 // Complete camera with all its information
@@ -1720,7 +1760,7 @@ const file_gopro_proto_rawDesc = "" +
 	"bleAddress\x12\x1b\n" +
 	"\twifi_ssid\x18\x05 \x01(\tR\bwifiSsid\x12#\n" +
 	"\rwifi_password\x18\x06 \x01(\tR\fwifiPassword\x12\x12\n" +
-	"\x04rssi\x18\a \x01(\x05R\x04rssi\"\xbe\x02\n" +
+	"\x04rssi\x18\a \x01(\x05R\x04rssi\"\xe6\x02\n" +
 	"\fCameraStatus\x127\n" +
 	"\tlast_seen\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\x12;\n" +
 	"\vlast_synced\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
@@ -1733,14 +1773,22 @@ const file_gopro_proto_rawDesc = "" +
 	"\fis_reachable\x18\x06 \x01(\bR\visReachable\x12\x1b\n" +
 	"\tis_synced\x18\a \x01(\bR\bisSynced\x12\x1d\n" +
 	"\n" +
-	"is_syncing\x18\b \x01(\bR\tisSyncing\"\xd6\x01\n" +
+	"is_syncing\x18\b \x01(\bR\tisSyncing\x12&\n" +
+	"\x0flast_sync_error\x18\t \x01(\tR\rlastSyncError\"\xe8\x02\n" +
 	"\x0eCameraMetadata\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12)\n" +
 	"\x10firmware_version\x18\x02 \x01(\tR\x0ffirmwareVersion\x12\x14\n" +
 	"\x05model\x18\x03 \x01(\tR\x05model\x12#\n" +
 	"\rserial_number\x18\x04 \x01(\tR\fserialNumber\x12#\n" +
 	"\rbattery_level\x18\x05 \x01(\x05R\fbatteryLevel\x12)\n" +
-	"\x10hardware_version\x18\a \x01(\tR\x0fhardwareVersion\"\xb3\x01\n" +
+	"\x10hardware_version\x18\a \x01(\tR\x0fhardwareVersion\x12\x1d\n" +
+	"\n" +
+	"num_photos\x18\b \x01(\x05R\tnumPhotos\x12\x1d\n" +
+	"\n" +
+	"num_videos\x18\t \x01(\x05R\tnumVideos\x12$\n" +
+	"\x0esd_card_status\x18\n" +
+	" \x01(\x05R\fsdCardStatus\x12,\n" +
+	"\x12remaining_space_kb\x18\v \x01(\x03R\x10remainingSpaceKb\"\xb3\x01\n" +
 	"\x0fCameraWithState\x12%\n" +
 	"\x06camera\x18\x01 \x01(\v2\r.dropz.CameraR\x06camera\x12+\n" +
 	"\x06status\x18\x02 \x01(\v2\x13.dropz.CameraStatusR\x06status\x12\x19\n" +

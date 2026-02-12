@@ -1012,7 +1012,8 @@ proto.dropz.CameraStatus.toObject = function(includeInstance, msg) {
     isManaged: jspb.Message.getBooleanFieldWithDefault(msg, 5, false),
     isReachable: jspb.Message.getBooleanFieldWithDefault(msg, 6, false),
     isSynced: jspb.Message.getBooleanFieldWithDefault(msg, 7, false),
-    isSyncing: jspb.Message.getBooleanFieldWithDefault(msg, 8, false)
+    isSyncing: jspb.Message.getBooleanFieldWithDefault(msg, 8, false),
+    lastSyncError: jspb.Message.getFieldWithDefault(msg, 9, "")
   };
 
   if (includeInstance) {
@@ -1082,6 +1083,10 @@ proto.dropz.CameraStatus.deserializeBinaryFromReader = function(msg, reader) {
     case 8:
       var value = /** @type {boolean} */ (reader.readBool());
       msg.setIsSyncing(value);
+      break;
+    case 9:
+      var value = /** @type {string} */ (reader.readString());
+      msg.setLastSyncError(value);
       break;
     default:
       reader.skipField();
@@ -1167,6 +1172,13 @@ proto.dropz.CameraStatus.serializeBinaryToWriter = function(message, writer) {
   if (f) {
     writer.writeBool(
       8,
+      f
+    );
+  }
+  f = message.getLastSyncError();
+  if (f.length > 0) {
+    writer.writeString(
+      9,
       f
     );
   }
@@ -1355,6 +1367,24 @@ proto.dropz.CameraStatus.prototype.setIsSyncing = function(value) {
 };
 
 
+/**
+ * optional string last_sync_error = 9;
+ * @return {string}
+ */
+proto.dropz.CameraStatus.prototype.getLastSyncError = function() {
+  return /** @type {string} */ (jspb.Message.getFieldWithDefault(this, 9, ""));
+};
+
+
+/**
+ * @param {string} value
+ * @return {!proto.dropz.CameraStatus} returns this
+ */
+proto.dropz.CameraStatus.prototype.setLastSyncError = function(value) {
+  return jspb.Message.setProto3StringField(this, 9, value);
+};
+
+
 
 
 
@@ -1392,7 +1422,11 @@ proto.dropz.CameraMetadata.toObject = function(includeInstance, msg) {
     model: jspb.Message.getFieldWithDefault(msg, 3, ""),
     serialNumber: jspb.Message.getFieldWithDefault(msg, 4, ""),
     batteryLevel: jspb.Message.getFieldWithDefault(msg, 5, 0),
-    hardwareVersion: jspb.Message.getFieldWithDefault(msg, 7, "")
+    hardwareVersion: jspb.Message.getFieldWithDefault(msg, 7, ""),
+    numPhotos: jspb.Message.getFieldWithDefault(msg, 8, 0),
+    numVideos: jspb.Message.getFieldWithDefault(msg, 9, 0),
+    sdCardStatus: jspb.Message.getFieldWithDefault(msg, 10, 0),
+    remainingSpaceKb: jspb.Message.getFieldWithDefault(msg, 11, 0)
   };
 
   if (includeInstance) {
@@ -1452,6 +1486,22 @@ proto.dropz.CameraMetadata.deserializeBinaryFromReader = function(msg, reader) {
     case 7:
       var value = /** @type {string} */ (reader.readString());
       msg.setHardwareVersion(value);
+      break;
+    case 8:
+      var value = /** @type {number} */ (reader.readInt32());
+      msg.setNumPhotos(value);
+      break;
+    case 9:
+      var value = /** @type {number} */ (reader.readInt32());
+      msg.setNumVideos(value);
+      break;
+    case 10:
+      var value = /** @type {number} */ (reader.readInt32());
+      msg.setSdCardStatus(value);
+      break;
+    case 11:
+      var value = /** @type {number} */ (reader.readInt64());
+      msg.setRemainingSpaceKb(value);
       break;
     default:
       reader.skipField();
@@ -1521,6 +1571,34 @@ proto.dropz.CameraMetadata.serializeBinaryToWriter = function(message, writer) {
   if (f.length > 0) {
     writer.writeString(
       7,
+      f
+    );
+  }
+  f = message.getNumPhotos();
+  if (f !== 0) {
+    writer.writeInt32(
+      8,
+      f
+    );
+  }
+  f = message.getNumVideos();
+  if (f !== 0) {
+    writer.writeInt32(
+      9,
+      f
+    );
+  }
+  f = message.getSdCardStatus();
+  if (f !== 0) {
+    writer.writeInt32(
+      10,
+      f
+    );
+  }
+  f = message.getRemainingSpaceKb();
+  if (f !== 0) {
+    writer.writeInt64(
+      11,
       f
     );
   }
@@ -1632,6 +1710,78 @@ proto.dropz.CameraMetadata.prototype.getHardwareVersion = function() {
  */
 proto.dropz.CameraMetadata.prototype.setHardwareVersion = function(value) {
   return jspb.Message.setProto3StringField(this, 7, value);
+};
+
+
+/**
+ * optional int32 num_photos = 8;
+ * @return {number}
+ */
+proto.dropz.CameraMetadata.prototype.getNumPhotos = function() {
+  return /** @type {number} */ (jspb.Message.getFieldWithDefault(this, 8, 0));
+};
+
+
+/**
+ * @param {number} value
+ * @return {!proto.dropz.CameraMetadata} returns this
+ */
+proto.dropz.CameraMetadata.prototype.setNumPhotos = function(value) {
+  return jspb.Message.setProto3IntField(this, 8, value);
+};
+
+
+/**
+ * optional int32 num_videos = 9;
+ * @return {number}
+ */
+proto.dropz.CameraMetadata.prototype.getNumVideos = function() {
+  return /** @type {number} */ (jspb.Message.getFieldWithDefault(this, 9, 0));
+};
+
+
+/**
+ * @param {number} value
+ * @return {!proto.dropz.CameraMetadata} returns this
+ */
+proto.dropz.CameraMetadata.prototype.setNumVideos = function(value) {
+  return jspb.Message.setProto3IntField(this, 9, value);
+};
+
+
+/**
+ * optional int32 sd_card_status = 10;
+ * @return {number}
+ */
+proto.dropz.CameraMetadata.prototype.getSdCardStatus = function() {
+  return /** @type {number} */ (jspb.Message.getFieldWithDefault(this, 10, 0));
+};
+
+
+/**
+ * @param {number} value
+ * @return {!proto.dropz.CameraMetadata} returns this
+ */
+proto.dropz.CameraMetadata.prototype.setSdCardStatus = function(value) {
+  return jspb.Message.setProto3IntField(this, 10, value);
+};
+
+
+/**
+ * optional int64 remaining_space_kb = 11;
+ * @return {number}
+ */
+proto.dropz.CameraMetadata.prototype.getRemainingSpaceKb = function() {
+  return /** @type {number} */ (jspb.Message.getFieldWithDefault(this, 11, 0));
+};
+
+
+/**
+ * @param {number} value
+ * @return {!proto.dropz.CameraMetadata} returns this
+ */
+proto.dropz.CameraMetadata.prototype.setRemainingSpaceKb = function(value) {
+  return jspb.Message.setProto3IntField(this, 11, value);
 };
 
 

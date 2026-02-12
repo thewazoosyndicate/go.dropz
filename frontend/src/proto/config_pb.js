@@ -262,7 +262,8 @@ proto.dropz.Config.toObject = function(includeInstance, msg) {
     daysThreshold: jspb.Message.getFieldWithDefault(msg, 5, 0),
     destinationFolder: jspb.Message.getFieldWithDefault(msg, 6, ""),
     inactivityTimeoutSeconds: jspb.Message.getFieldWithDefault(msg, 7, 0),
-    inactivitySyncIntervalSeconds: jspb.Message.getFieldWithDefault(msg, 8, 0),
+    statusCheckIntervalSeconds: jspb.Message.getFieldWithDefault(msg, 12, 0),
+    checkOnReturn: jspb.Message.getBooleanFieldWithDefault(msg, 13, false),
     setTimeEnabled: jspb.Message.getBooleanFieldWithDefault(msg, 9, false),
     logLevel: jspb.Message.getFieldWithDefault(msg, 10, ""),
     lastUpdated: (f = msg.getLastUpdated()) && google_protobuf_timestamp_pb.Timestamp.toObject(includeInstance, f)
@@ -330,9 +331,13 @@ proto.dropz.Config.deserializeBinaryFromReader = function(msg, reader) {
       var value = /** @type {number} */ (reader.readInt32());
       msg.setInactivityTimeoutSeconds(value);
       break;
-    case 8:
+    case 12:
       var value = /** @type {number} */ (reader.readInt32());
-      msg.setInactivitySyncIntervalSeconds(value);
+      msg.setStatusCheckIntervalSeconds(value);
+      break;
+    case 13:
+      var value = /** @type {boolean} */ (reader.readBool());
+      msg.setCheckOnReturn(value);
       break;
     case 9:
       var value = /** @type {boolean} */ (reader.readBool());
@@ -425,10 +430,17 @@ proto.dropz.Config.serializeBinaryToWriter = function(message, writer) {
       f
     );
   }
-  f = message.getInactivitySyncIntervalSeconds();
+  f = message.getStatusCheckIntervalSeconds();
   if (f !== 0) {
     writer.writeInt32(
-      8,
+      12,
+      f
+    );
+  }
+  f = message.getCheckOnReturn();
+  if (f) {
+    writer.writeBool(
+      13,
       f
     );
   }
@@ -584,11 +596,11 @@ proto.dropz.Config.prototype.setInactivityTimeoutSeconds = function(value) {
 
 
 /**
- * optional int32 inactivity_sync_interval_seconds = 8;
+ * optional int32 status_check_interval_seconds = 12;
  * @return {number}
  */
-proto.dropz.Config.prototype.getInactivitySyncIntervalSeconds = function() {
-  return /** @type {number} */ (jspb.Message.getFieldWithDefault(this, 8, 0));
+proto.dropz.Config.prototype.getStatusCheckIntervalSeconds = function() {
+  return /** @type {number} */ (jspb.Message.getFieldWithDefault(this, 12, 0));
 };
 
 
@@ -596,8 +608,26 @@ proto.dropz.Config.prototype.getInactivitySyncIntervalSeconds = function() {
  * @param {number} value
  * @return {!proto.dropz.Config} returns this
  */
-proto.dropz.Config.prototype.setInactivitySyncIntervalSeconds = function(value) {
-  return jspb.Message.setProto3IntField(this, 8, value);
+proto.dropz.Config.prototype.setStatusCheckIntervalSeconds = function(value) {
+  return jspb.Message.setProto3IntField(this, 12, value);
+};
+
+
+/**
+ * optional bool check_on_return = 13;
+ * @return {boolean}
+ */
+proto.dropz.Config.prototype.getCheckOnReturn = function() {
+  return /** @type {boolean} */ (jspb.Message.getBooleanFieldWithDefault(this, 13, false));
+};
+
+
+/**
+ * @param {boolean} value
+ * @return {!proto.dropz.Config} returns this
+ */
+proto.dropz.Config.prototype.setCheckOnReturn = function(value) {
+  return jspb.Message.setProto3BooleanField(this, 13, value);
 };
 
 

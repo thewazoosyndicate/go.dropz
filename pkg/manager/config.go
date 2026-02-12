@@ -37,8 +37,10 @@ func (m *GoProManager) GetSetting(settingName string) (interface{}, error) {
 		return config.DestinationFolder, nil
 	case "inactivity_timeout_seconds":
 		return config.InactivityTimeoutSeconds, nil
-	case "inactivity_sync_interval_seconds":
-		return config.InactivitySyncIntervalSeconds, nil
+	case "status_check_interval_seconds":
+		return config.StatusCheckIntervalSeconds, nil
+	case "check_on_return":
+		return config.CheckOnReturn, nil
 	case "set_time_enabled":
 		return config.SetTimeEnabled, nil
 	case "log_level":
@@ -114,15 +116,22 @@ func (m *GoProManager) UpdateSetting(settingName string, value interface{}) (dat
 		}
 		config.InactivityTimeoutSeconds = intVal
 
-	case "inactivity_sync_interval_seconds":
-		intVal, err := toInt32(value, "inactivity_sync_interval_seconds")
+	case "status_check_interval_seconds":
+		intVal, err := toInt32(value, "status_check_interval_seconds")
 		if err != nil {
 			return config, err
 		}
-		if intVal < 60 || intVal > 3600 {
-			return config, fmt.Errorf("inactivity_sync_interval_seconds must be between 60 and 3600 seconds")
+		if intVal < 0 || intVal > 3600 {
+			return config, fmt.Errorf("status_check_interval_seconds must be between 0 and 3600 seconds")
 		}
-		config.InactivitySyncIntervalSeconds = intVal
+		config.StatusCheckIntervalSeconds = intVal
+
+	case "check_on_return":
+		boolVal, ok := value.(bool)
+		if !ok {
+			return config, fmt.Errorf("invalid value type for check_on_return: expected bool")
+		}
+		config.CheckOnReturn = boolVal
 
 	case "set_time_enabled":
 		boolVal, ok := value.(bool)
@@ -179,8 +188,10 @@ func (m *GoProManager) ResetSetting(settingName string) (database.Config, error)
 		config.DestinationFolder = defaults.DestinationFolder
 	case "inactivity_timeout_seconds":
 		config.InactivityTimeoutSeconds = defaults.InactivityTimeoutSeconds
-	case "inactivity_sync_interval_seconds":
-		config.InactivitySyncIntervalSeconds = defaults.InactivitySyncIntervalSeconds
+	case "status_check_interval_seconds":
+		config.StatusCheckIntervalSeconds = defaults.StatusCheckIntervalSeconds
+	case "check_on_return":
+		config.CheckOnReturn = defaults.CheckOnReturn
 	case "set_time_enabled":
 		config.SetTimeEnabled = defaults.SetTimeEnabled
 	case "log_level":

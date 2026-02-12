@@ -1,6 +1,7 @@
 <script>
   import { getLogs, getLogsExpanded, setLogsExpanded, clearLogs,
-           getShowBackendLogs, setShowBackendLogs, getLogLevel, setLogLevel } from '../lib/stores/ui.svelte.js';
+           getShowBackendLogs, setShowBackendLogs, getLogLevel } from '../lib/stores/ui.svelte.js';
+  import { updateSetting } from '../lib/grpc/actions.js';
 
   let expanded = $derived(getLogsExpanded());
   let showBackend = $derived(getShowBackendLogs());
@@ -35,7 +36,7 @@
   {#if expanded}
     <div class="drawer-header">
       <div class="drawer-controls">
-        <select class="level-select" value={level} onchange={(e) => setLogLevel(e.target.value)}>
+        <select class="level-select" value={level} onchange={(e) => updateSetting('log_level', e.target.value)}>
           <option value="trace">Trace</option>
           <option value="debug">Debug</option>
           <option value="info">Info</option>

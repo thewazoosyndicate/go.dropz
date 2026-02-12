@@ -31,10 +31,11 @@ type Config struct {
 	ScanIntervalSeconds   int32 `protobuf:"varint,3,opt,name=scan_interval_seconds,json=scanIntervalSeconds,proto3" json:"scan_interval_seconds,omitempty"`
 	ConnectTimeoutSeconds int32 `protobuf:"varint,4,opt,name=connect_timeout_seconds,json=connectTimeoutSeconds,proto3" json:"connect_timeout_seconds,omitempty"`
 	// Sync behavior settings
-	DaysThreshold                 int32  `protobuf:"varint,5,opt,name=days_threshold,json=daysThreshold,proto3" json:"days_threshold,omitempty"` // Only sync content newer than this many days
-	DestinationFolder             string `protobuf:"bytes,6,opt,name=destination_folder,json=destinationFolder,proto3" json:"destination_folder,omitempty"`
-	InactivityTimeoutSeconds      int32  `protobuf:"varint,7,opt,name=inactivity_timeout_seconds,json=inactivityTimeoutSeconds,proto3" json:"inactivity_timeout_seconds,omitempty"`
-	InactivitySyncIntervalSeconds int32  `protobuf:"varint,8,opt,name=inactivity_sync_interval_seconds,json=inactivitySyncIntervalSeconds,proto3" json:"inactivity_sync_interval_seconds,omitempty"` // Interval between sync attempts during inactivity
+	DaysThreshold              int32  `protobuf:"varint,5,opt,name=days_threshold,json=daysThreshold,proto3" json:"days_threshold,omitempty"` // Only sync content newer than this many days
+	DestinationFolder          string `protobuf:"bytes,6,opt,name=destination_folder,json=destinationFolder,proto3" json:"destination_folder,omitempty"`
+	InactivityTimeoutSeconds   int32  `protobuf:"varint,7,opt,name=inactivity_timeout_seconds,json=inactivityTimeoutSeconds,proto3" json:"inactivity_timeout_seconds,omitempty"`
+	StatusCheckIntervalSeconds int32  `protobuf:"varint,12,opt,name=status_check_interval_seconds,json=statusCheckIntervalSeconds,proto3" json:"status_check_interval_seconds,omitempty"` // Interval between BLE status checks (0 = off)
+	CheckOnReturn              bool   `protobuf:"varint,13,opt,name=check_on_return,json=checkOnReturn,proto3" json:"check_on_return,omitempty"`                                          // Check for new media when camera reappears
 	// Camera behavior settings
 	SetTimeEnabled bool `protobuf:"varint,9,opt,name=set_time_enabled,json=setTimeEnabled,proto3" json:"set_time_enabled,omitempty"` // Set camera time when connecting
 	// Additional settings
@@ -123,11 +124,18 @@ func (x *Config) GetInactivityTimeoutSeconds() int32 {
 	return 0
 }
 
-func (x *Config) GetInactivitySyncIntervalSeconds() int32 {
+func (x *Config) GetStatusCheckIntervalSeconds() int32 {
 	if x != nil {
-		return x.InactivitySyncIntervalSeconds
+		return x.StatusCheckIntervalSeconds
 	}
 	return 0
+}
+
+func (x *Config) GetCheckOnReturn() bool {
+	if x != nil {
+		return x.CheckOnReturn
+	}
+	return false
 }
 
 func (x *Config) GetSetTimeEnabled() bool {
@@ -639,7 +647,7 @@ var File_config_proto protoreflect.FileDescriptor
 
 const file_config_proto_rawDesc = "" +
 	"\n" +
-	"\fconfig.proto\x12\x05dropz\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa6\x04\n" +
+	"\fconfig.proto\x12\x05dropz\x1a\x1fgoogle/protobuf/timestamp.proto\"\xce\x04\n" +
 	"\x06Config\x12*\n" +
 	"\x11pair_mode_enabled\x18\x01 \x01(\bR\x0fpairModeEnabled\x12!\n" +
 	"\fsync_enabled\x18\x02 \x01(\bR\vsyncEnabled\x122\n" +
@@ -647,12 +655,13 @@ const file_config_proto_rawDesc = "" +
 	"\x17connect_timeout_seconds\x18\x04 \x01(\x05R\x15connectTimeoutSeconds\x12%\n" +
 	"\x0edays_threshold\x18\x05 \x01(\x05R\rdaysThreshold\x12-\n" +
 	"\x12destination_folder\x18\x06 \x01(\tR\x11destinationFolder\x12<\n" +
-	"\x1ainactivity_timeout_seconds\x18\a \x01(\x05R\x18inactivityTimeoutSeconds\x12G\n" +
-	" inactivity_sync_interval_seconds\x18\b \x01(\x05R\x1dinactivitySyncIntervalSeconds\x12(\n" +
+	"\x1ainactivity_timeout_seconds\x18\a \x01(\x05R\x18inactivityTimeoutSeconds\x12A\n" +
+	"\x1dstatus_check_interval_seconds\x18\f \x01(\x05R\x1astatusCheckIntervalSeconds\x12&\n" +
+	"\x0fcheck_on_return\x18\r \x01(\bR\rcheckOnReturn\x12(\n" +
 	"\x10set_time_enabled\x18\t \x01(\bR\x0esetTimeEnabled\x12\x1b\n" +
 	"\tlog_level\x18\n" +
 	" \x01(\tR\blogLevel\x12=\n" +
-	"\flast_updated\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\vlastUpdated\"\x12\n" +
+	"\flast_updated\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\vlastUpdatedJ\x04\b\b\x10\t\"\x12\n" +
 	"\x10GetConfigRequest\":\n" +
 	"\x11GetConfigResponse\x12%\n" +
 	"\x06config\x18\x01 \x01(\v2\r.dropz.ConfigR\x06config\"<\n" +

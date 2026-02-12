@@ -27,6 +27,7 @@ message CameraStatus {
   bool is_reachable = 6;
   bool is_synced = 7;
   bool is_syncing = 8;
+  string last_sync_error = 9;
 }
 
 // Additional technical metadata about a camera
@@ -37,6 +38,10 @@ message CameraMetadata {
   string serial_number = 4;
   int32 battery_level = 5;  // percentage
   string hardware_version = 7;
+  int32 num_photos = 8;
+  int32 num_videos = 9;
+  int32 sd_card_status = 10;
+  int64 remaining_space_kb = 11;
 }
 
 // Complete camera with all its information

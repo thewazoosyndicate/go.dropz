@@ -133,6 +133,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 800,
+    icon: path.join(process.resourcesPath, 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,

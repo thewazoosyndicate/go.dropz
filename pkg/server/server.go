@@ -228,10 +228,15 @@ func (s *DropzServer) forEachStream(heartbeat bool) {
 
 // NotifyUpdate notifies all connected clients of state changes
 func (s *DropzServer) NotifyUpdate() {
+	// Drain any pending signal, then send a fresh one.
+	// This ensures notifications are never dropped.
+	select {
+	case <-s.streamUpdateChannel:
+	default:
+	}
 	select {
 	case s.streamUpdateChannel <- struct{}{}:
 	default:
-		s.log.Debug("streamUpdateChannel is full, skipped sending notification")
 	}
 }
 
@@ -570,16 +575,17 @@ func (s *DropzServer) UpdateConfig(ctx context.Context, req *protocol.UpdateConf
 	}
 
 	dbConfig := database.Config{
-		SyncEnabled:                   req.Config.SyncEnabled,
-		ScanIntervalSeconds:           req.Config.ScanIntervalSeconds,
-		ConnectTimeoutSeconds:         req.Config.ConnectTimeoutSeconds,
-		DaysThreshold:                 req.Config.DaysThreshold,
-		DestinationFolder:             req.Config.DestinationFolder,
-		InactivityTimeoutSeconds:      req.Config.InactivityTimeoutSeconds,
-		InactivitySyncIntervalSeconds: req.Config.InactivitySyncIntervalSeconds,
-		SetTimeEnabled:                req.Config.SetTimeEnabled,
-		LogLevel:                      req.Config.LogLevel,
-		LastUpdated:                   req.Config.LastUpdated.AsTime(),
+		SyncEnabled:                req.Config.SyncEnabled,
+		ScanIntervalSeconds:        req.Config.ScanIntervalSeconds,
+		ConnectTimeoutSeconds:      req.Config.ConnectTimeoutSeconds,
+		DaysThreshold:              req.Config.DaysThreshold,
+		DestinationFolder:          req.Config.DestinationFolder,
+		InactivityTimeoutSeconds:   req.Config.InactivityTimeoutSeconds,
+		StatusCheckIntervalSeconds: req.Config.StatusCheckIntervalSeconds,
+		CheckOnReturn:              req.Config.CheckOnReturn,
+		SetTimeEnabled:             req.Config.SetTimeEnabled,
+		LogLevel:                   req.Config.LogLevel,
+		LastUpdated:                req.Config.LastUpdated.AsTime(),
 	}
 
 	err := s.manager.UpdateConfig(dbConfig)

@@ -182,27 +182,6 @@ func main() {
 		fmt.Println("✗ GetHardwareInfo TIMEOUT")
 	}
 	
-	// Test pairing state
-	fmt.Println("\n3c. Testing IsPaired...")
-	go func() {
-		isPaired, err := bleManager.IsPaired(foundDevice.BLEAddress)
-		if err != nil {
-			done <- err
-		} else {
-			fmt.Printf("✓ Device is paired: %v\n", isPaired)
-			done <- nil
-		}
-	}()
-	
-	select {
-	case err := <-done:
-		if err != nil {
-			fmt.Printf("✗ IsPaired failed: %v\n", err)
-		}
-	case <-time.After(10 * time.Second):
-		fmt.Println("✗ IsPaired TIMEOUT")
-	}
-
 	// Cleanup using BLE Manager
 	fmt.Println("\n4. Disconnecting using BLE Manager...")
 	disconnectErr := bleManager.Disconnect(foundDevice.BLEAddress)

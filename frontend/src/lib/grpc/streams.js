@@ -39,6 +39,10 @@ function processCamera(camera) {
       firmwareVersion: metadata ? metadata.getFirmwareVersion() : null,
       model: metadata ? metadata.getModel() : null,
       serialNumber: metadata ? metadata.getSerialNumber() : null,
+      numPhotos: metadata ? metadata.getNumPhotos() : null,
+      numVideos: metadata ? metadata.getNumVideos() : null,
+      remainingSpaceKb: metadata ? metadata.getRemainingSpaceKb() : null,
+      lastSyncError: status ? status.getLastSyncError() : null,
     };
   } catch (error) {
     console.error('Error processing camera:', error);

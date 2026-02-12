@@ -1,3 +1,5 @@
+import { setLogLevel } from './ui.svelte.js';
+
 // App configuration store
 let appConfig = $state(null);
 let autoPair = $state(false);
@@ -12,6 +14,7 @@ export function setAppConfig(config) {
   if (config) {
     autoPair = config.pairModeEnabled || false;
     autoSync = config.syncEnabled || false;
+    if (config.logLevel) setLogLevel(config.logLevel);
   }
 }
 
@@ -28,7 +31,8 @@ export function updateConfigField(key, value) {
     'days_threshold': 'daysThreshold',
     'destination_folder': 'destinationFolder',
     'inactivity_timeout_seconds': 'inactivityTimeoutSeconds',
-    'inactivity_sync_interval_seconds': 'inactivitySyncIntervalSeconds',
+    'status_check_interval_seconds': 'statusCheckIntervalSeconds',
+    'check_on_return': 'checkOnReturn',
     'set_time_enabled': 'setTimeEnabled',
     'log_level': 'logLevel'
   };
@@ -41,4 +45,5 @@ export function updateConfigField(key, value) {
   }
   if (key === 'pair_mode_enabled') autoPair = !!value;
   if (key === 'sync_enabled') autoSync = !!value;
+  if (key === 'log_level') setLogLevel(value);
 }

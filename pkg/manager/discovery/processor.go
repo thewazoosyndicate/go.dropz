@@ -14,7 +14,7 @@ import (
 type Processor struct {
 	db                 *database.Database
 	log                *logrus.Logger
-	onCameraReappeared func(dbKey string, wasGoneFor time.Duration)
+	onCameraReappeared func(cameraID string, wasGoneFor time.Duration)
 }
 
 // NewProcessor creates a new processor
@@ -26,7 +26,7 @@ func NewProcessor(db *database.Database, log *logrus.Logger) *Processor {
 }
 
 // SetOnCameraReappeared sets a callback invoked when a camera becomes reachable again
-func (p *Processor) SetOnCameraReappeared(fn func(dbKey string, wasGoneFor time.Duration)) {
+func (p *Processor) SetOnCameraReappeared(fn func(cameraID string, wasGoneFor time.Duration)) {
 	p.onCameraReappeared = fn
 }
 
@@ -88,9 +88,12 @@ func (p *Processor) createNewCamera(name, bleAddress string, rssi int32) {
 // updateExistingCamera atomically updates an existing camera entry in the database.
 func (p *Processor) updateExistingCamera(dbKey, bleAddress, name string, rssi int32) {
 	var wasGoneFor time.Duration
+	var cameraID string
 	wasUnreachable := false
 
 	err := p.db.UpdateCamera(dbKey, func(cs *database.CameraWithState) {
+		cameraID = cs.Camera.ID
+
 		// Update BLE address in case it changed (macOS assigns random UUIDs)
 		cs.Camera.BLEAddress = bleAddress
 
@@ -115,7 +118,7 @@ func (p *Processor) updateExistingCamera(dbKey, bleAddress, name string, rssi in
 	}
 
 	if wasUnreachable && p.onCameraReappeared != nil {
-		p.onCameraReappeared(dbKey, wasGoneFor)
+		p.onCameraReappeared(cameraID, wasGoneFor)
 	}
 }
 

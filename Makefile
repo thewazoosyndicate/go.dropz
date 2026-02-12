@@ -2,7 +2,7 @@ VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1
 BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -ldflags "-X main.appVersion=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
 
-.PHONY: all build build-darwin-universal clean proto test appimage dmg app frontend-deps
+.PHONY: all build build-darwin-universal clean proto test appimage dmg app frontend-deps frontend-build
 
 all: proto build
 
@@ -51,22 +51,26 @@ build-darwin-universal:
 	lipo -create bin/dropz-amd64 bin/dropz-arm64 -output bin/dropz
 	@rm bin/dropz-amd64 bin/dropz-arm64
 
-appimage: build
+appimage: build frontend-build
 	@echo "Building AppImage..."
-	cd frontend && npm run build -- --linux AppImage
+	cd frontend && npx electron-builder --linux AppImage
 	@echo "AppImage built: frontend/dist/Dropz-1.0.0.AppImage"
 
-dmg: build-darwin-universal
+dmg: build-darwin-universal frontend-build
 	@echo "Building macOS DMG..."
-	cd frontend && npm run build -- --mac dmg
+	cd frontend && npx electron-builder --mac dmg
 	@echo "DMG built in frontend/dist/"
 
-app: build
+app: build frontend-build
 	@echo "Building desktop app..."
-	cd frontend && npm run build
+	cd frontend && npx electron-builder
 
 frontend-deps:
 	cd frontend && npm install
+
+frontend-build:
+	@echo "Building Svelte frontend..."
+	cd frontend && npx vite build
 
 test:
 	@echo "Running tests..."

@@ -10,16 +10,22 @@
   },
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder",
+    "vite:build": "vite build",
+    "vite:dev": "vite dev",
+    "build": "vite build && electron-builder",
     "test-build": "./test-build.sh",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "cd .. && make build && cd frontend && npm start"
+    "dev": "cd .. && make build && cd frontend && vite build && npm start"
   },
   "license": "ISC",
   "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^6.2.4",
     "electron": "^25.0.0",
     "electron-builder": "^24.4.0",
-    "grpc-tools": "^1.13.0"
+    "grpc-tools": "^1.13.0",
+    "svelte": "^5.50.2",
+    "vite": "^7.3.1",
+    "vite-plugin-commonjs": "^0.10.4"
   },
   "localDependencies": {
     "font-awesome": "6.4.0"
@@ -34,7 +40,15 @@
     "appId": "com.dropz.app",
     "productName": "Dropz",
     "files": [
-      "src/**/*",
+      "src/main.js",
+      "src/preload.js",
+      "src/log-filters.js",
+      "src/fileLogger.js",
+      "src/proto/**/*",
+      "src/libs/**/*",
+      "src/icons/**/*",
+      "src/imgs/**/*",
+      "dist-svelte/**/*",
       "node_modules/**/*"
     ],
     "directories": {

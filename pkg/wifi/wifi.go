@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +16,19 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// Shared HTTP client for downloads — transport-level timeouts only,
+// no body-read timeout so large transfers aren't killed mid-stream.
+var downloadTransport = &http.Transport{
+	DialContext: (&net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ResponseHeaderTimeout: 15 * time.Second,
+}
+
+var downloadClient = &http.Client{Transport: downloadTransport}
+
 // GoPro HTTP API constants
 const (
 	GoProBaseURL = "http://10.5.5.9:8080"
@@ -23,7 +37,6 @@ const (
 	// Media endpoints
 	MediaListURL      = "/gopro/media/list"
 	MediaInfoURL      = "/gopro/media/info"
-	TurboTransferURL  = "/gopro/media/turbo_transfer"
 )
 
 // WiFiManager handles WiFi operations for GoPro devices
@@ -54,16 +67,6 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 		return nil, nil
 	}
 
-	if err := m.SetTurboTransfer(ctx, true); err != nil {
-		m.log.Warnf("Failed to enable turbo transfer: %v", err)
-	} else {
-		defer func() {
-			if err := m.SetTurboTransfer(ctx, false); err != nil {
-				m.log.Warnf("Failed to disable turbo transfer: %v", err)
-			}
-		}()
-	}
-
 	if daysInPast <= 0 {
 		daysInPast = 7
 	}
@@ -75,7 +78,7 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 
 	// Set up parallel download
 	var wg sync.WaitGroup
-	maxWorkers := 3 // Maximum concurrent downloads
+	maxWorkers := 1
 	semaphore := make(chan struct{}, maxWorkers)
 	var mu sync.Mutex
 	downloadedFiles := make([]string, 0, len(filteredMedia))
@@ -169,31 +172,6 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	actualDownloads := len(downloadedFiles) - skippedCount
 	m.log.Infof("Download complete: %d downloaded, %d skipped", actualDownloads, skippedCount)
 	return downloadedFiles, nil
-}
-
-// SetTurboTransfer enables or disables turbo transfer mode for faster media downloads
-func (m *WiFiManager) SetTurboTransfer(ctx context.Context, enabled bool) error {
-	p := "0"
-	if enabled {
-		p = "1"
-	}
-	url := fmt.Sprintf("%s%s?p=%s", GoProBaseURL, TurboTransferURL, p)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create turbo transfer request: %v", err)
-	}
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to set turbo transfer: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("turbo transfer request failed with status: %s", resp.Status)
-	}
-	return nil
 }
 
 // GoProMediaList represents the JSON response from the GoPro media list API
@@ -408,13 +386,7 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", startOffset))
 	}
 
-	// Create client with timeout
-	client := &http.Client{
-		Timeout: 60 * time.Second,
-	}
-
-	// Perform the request
-	resp, err := client.Do(req)
+	resp, err := downloadClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download file: %v", err)
 	}
@@ -565,13 +537,7 @@ func (m *WiFiManager) downloadChunkOnce(ctx context.Context, url, chunkPath stri
 	rangeHeader := fmt.Sprintf("bytes=%d-%d", resumeOffset, endOffset)
 	req.Header.Set("Range", rangeHeader)
 
-	// Create a client with timeout
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
-	// Perform the request
-	resp, err := client.Do(req)
+	resp, err := downloadClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download chunk: %v", err)
 	}
@@ -617,21 +583,14 @@ func (m *WiFiManager) downloadChunked(ctx context.Context, url, outputPath strin
 	defer os.RemoveAll(tempDir)
 
 	// Determine optimal chunk size and count
-	chunkSize := int64(8 * 1024 * 1024) // 8MB chunks
+	chunkSize := int64(64 * 1024 * 1024) // 64MB chunks
 	chunkCount := (totalSize + chunkSize - 1) / chunkSize
-
-	// Limit to a reasonable number of chunks
-	maxChunks := int64(10)
-	if chunkCount > maxChunks {
-		chunkSize = (totalSize + maxChunks - 1) / maxChunks
-		chunkCount = (totalSize + chunkSize - 1) / chunkSize
-	}
 
 	m.log.Debugf("Downloading %s in %d chunks of size %d bytes", outputPath, chunkCount, chunkSize)
 
 	var wg sync.WaitGroup
 	errors := make(chan error, chunkCount)
-	maxConcurrent := 3 // Maximum concurrent chunk downloads
+	maxConcurrent := 1
 	semaphore := make(chan struct{}, maxConcurrent)
 
 	// Download each chunk

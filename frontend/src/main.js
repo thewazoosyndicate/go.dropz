@@ -153,7 +153,14 @@ function createWindow() {
     });
   });
   
-  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  // Load Vite build output (Svelte app)
+  const distIndex = path.join(__dirname, '..', 'dist-svelte', 'index.html');
+  if (fs.existsSync(distIndex)) {
+    mainWindow.loadFile(distIndex);
+  } else {
+    // Fallback to legacy index.html for development without Vite build
+    mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  }
 
   // Re-send backend status after reload (Ctrl+R)
   mainWindow.webContents.on('did-finish-load', () => {

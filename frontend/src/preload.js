@@ -1,5 +1,6 @@
-// Preload script runs in the renderer process
-// We're not using contextIsolation, so we don't need to expose APIs here
-// This file is primarily a placeholder for future use if needed
+// Preload script — exposes app root path for Svelte's window.require() calls
+const path = require('path');
 
-console.log('Preload script loaded'); 
+// __dirname here is the directory of preload.js (frontend/src/)
+// Go up one level to get the frontend app root
+window.__appRoot = path.resolve(__dirname, '..');

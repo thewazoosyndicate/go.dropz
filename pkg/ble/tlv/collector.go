@@ -23,6 +23,13 @@ func (fc *FragmentCollector) Stop() {
 	close(fc.stopCh)
 }
 
+// Reset clears all pending fragments
+func (fc *FragmentCollector) Reset() {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	fc.fragments = make(map[byte]*MessageFragments)
+}
+
 // ProcessFragment processes a TLV packet fragment and returns a complete message if ready
 func (fc *FragmentCollector) ProcessFragment(data []byte) (*TLVMessage, error) {
 	header, err := ParseHeader(data)

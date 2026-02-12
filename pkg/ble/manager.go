@@ -458,6 +458,7 @@ func (m *Manager) DisconnectQuietly(macAddress string) error {
 	}
 
 	device.Disconnect()
+	m.tlvCollector.Reset()
 
 	m.mutex.Lock()
 	delete(m.connectedDevices, macAddress)
@@ -580,16 +581,20 @@ func (m *Manager) Disconnect(macAddress string) error {
 		return fmt.Errorf("device not connected: %s", macAddress)
 	}
 
-	// Send sleep command before disconnecting
-	m.Sleep(macAddress)
+	if err := m.Sleep(macAddress); err != nil {
+		m.log.Debugf("Sleep failed for %s: %v", macAddress, err)
+	} else {
+		m.log.Debugf("Sleep command succeeded for %s", macAddress)
+	}
 
 	device.Disconnect()
-	
+	m.tlvCollector.Reset()
+
 	m.mutex.Lock()
 	delete(m.connectedDevices, macAddress)
 	delete(m.characteristics, macAddress)
 	m.mutex.Unlock()
-	
+
 	return nil
 }
 
@@ -654,8 +659,14 @@ func (m *Manager) KeepAlive(macAddress string) error {
 
 // Sleep puts the device to sleep
 func (m *Manager) Sleep(macAddress string) error {
-	_, err := m.sendCommand(macAddress, CmdSleep, nil)
-	return err
+	resp, err := m.sendCommand(macAddress, CmdSleep, nil)
+	if err != nil {
+		return err
+	}
+	if resp.Status != 0 {
+		return fmt.Errorf("sleep command returned status %d", resp.Status)
+	}
+	return nil
 }
 
 // Private helper methods
@@ -671,7 +682,9 @@ func (m *Manager) addDiscoveredDevice(result bluetooth.ScanResult) {
 
 	// Check if device already exists
 	if existingDevice, exists := m.discoveredDevices[macAddress]; exists {
-		existingDevice.RSSI = rssi
+		// EMA smoothing to reduce RSSI jitter between advertisements
+		const emaAlpha = 0.15
+		existingDevice.RSSI = int32(emaAlpha*float64(rssi) + (1-emaAlpha)*float64(existingDevice.RSSI))
 		existingDevice.LastSeen = now
 		if existingDevice.Name == "" || existingDevice.Name != localName {
 			existingDevice.Name = localName

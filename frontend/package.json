@@ -1,6 +1,6 @@
 {
   "name": "dropz-electron",
-  "version": "1.0.0",
+  "version": "0.2.0",
   "description": "Electron frontend for Dropz",
   "main": "src/main.js",
   "homepage": "https://dropz.cloud",
@@ -41,6 +41,7 @@
     "google-protobuf": "^3.21.4"
   },
   "build": {
+    "publish": null,
     "appId": "com.dropz.app",
     "productName": "Dropz",
     "files": [

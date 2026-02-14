@@ -119,6 +119,21 @@ type Config struct {
 	LastUpdated                time.Time `json:"last_updated"`
 }
 
+// CameraSettingInfo holds a camera setting's current value and valid options.
+type CameraSettingInfo struct {
+	ID           int32
+	CurrentValue int32
+	ValidValues  []int32
+}
+
+func (s *CameraSettingInfo) ToProtoCameraSetting() *protocol.CameraSetting {
+	return &protocol.CameraSetting{
+		Id:           s.ID,
+		CurrentValue: s.CurrentValue,
+		ValidValues:  s.ValidValues,
+	}
+}
+
 // Database represents the in-memory database with JSON persistence
 type Database struct {
 	cameraStates map[string]*CameraWithState

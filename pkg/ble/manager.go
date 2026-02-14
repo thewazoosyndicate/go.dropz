@@ -301,6 +301,7 @@ func (m *Manager) discoverCharacteristics(macAddress string, services []bluetoot
 	}
 
 	m.signalConnectingDone()
+
 	m.log.Debugf("Characteristic discovery complete, elapsed=%v", time.Since(connectStart))
 }
 
@@ -438,6 +439,30 @@ func (m *Manager) ConnectForStatusCheck(macAddress string) error {
 	return nil
 }
 
+// ConnectForSettings establishes a BLE connection with both Query and Settings
+// characteristics. Used for setting read/write operations.
+func (m *Manager) ConnectForSettings(macAddress string) error {
+	services, connectStart, err := m.connectAndDiscover(macAddress, nil)
+	if err != nil {
+		return err
+	}
+	if services == nil {
+		return nil // already connected
+	}
+
+	m.discoverCharacteristics(macAddress, services, map[string]bool{
+		ServiceControl: true,
+	}, map[string]bool{
+		CharCommand: true, CharCommandResponse: true,
+		CharSettings: true, CharSettingsResponse: true,
+		CharQuery: true, CharQueryResponse: true,
+	}, map[string]bool{
+		CharCommandResponse: true, CharSettingsResponse: true, CharQueryResponse: true,
+	}, connectStart)
+
+	return nil
+}
+
 // QueryStatuses queries multiple status IDs in a single BLE request and returns parsed TLV results.
 func (m *Manager) QueryStatuses(macAddress string, statusIDs []byte) (map[byte][]byte, error) {
 	response, err := m.sendQuery(macAddress, QueryGetStatus, statusIDs)
@@ -458,7 +483,6 @@ func (m *Manager) DisconnectQuietly(macAddress string) error {
 	}
 
 	device.Disconnect()
-	m.tlvCollector.Reset()
 
 	m.mutex.Lock()
 	delete(m.connectedDevices, macAddress)
@@ -588,7 +612,6 @@ func (m *Manager) Disconnect(macAddress string) error {
 	}
 
 	device.Disconnect()
-	m.tlvCollector.Reset()
 
 	m.mutex.Lock()
 	delete(m.connectedDevices, macAddress)
@@ -736,6 +759,9 @@ func (m *Manager) sendMessage(macAddress string, charUUID string, id byte, data 
 	responseChan := m.responseTracker.RegisterCommand(id)
 	defer m.responseTracker.UnregisterCommand(id)
 
+	// Discard stale fragments for this command from previous attempts
+	m.tlvCollector.ResetCommand(id)
+
 	packets := tlv.SplitIntoPackets(buildPacket(id, data))
 
 	for i, pkt := range packets {
@@ -762,6 +788,42 @@ func (m *Manager) sendCommand(macAddress string, commandID byte, data []byte) (R
 
 func (m *Manager) sendQuery(macAddress string, queryID byte, data []byte) (Response, error) {
 	return m.sendMessage(macAddress, CharQuery, queryID, data, tlv.BuildQueryPacket)
+}
+
+func (m *Manager) sendSetting(macAddress string, settingID byte, data []byte) (Response, error) {
+	return m.sendMessage(macAddress, CharSettings, settingID, data, tlv.BuildCommandPacket)
+}
+
+// WriteSetting writes a single-byte value to a camera setting.
+// Wire format on 0x74: [SettingID][ValueLen=0x01][Value]
+func (m *Manager) WriteSetting(macAddress string, settingID, value byte) error {
+	resp, err := m.sendSetting(macAddress, settingID, []byte{0x01, value})
+	if err != nil {
+		return err
+	}
+	if resp.Status != 0 {
+		return fmt.Errorf("setting 0x%02X returned status %d", settingID, resp.Status)
+	}
+	return nil
+}
+
+// QuerySettingValues queries current values for the given setting IDs.
+func (m *Manager) QuerySettingValues(macAddress string, settingIDs []byte) (map[byte][]byte, error) {
+	response, err := m.sendQuery(macAddress, QueryGetSettingValues, settingIDs)
+	if err != nil {
+		return nil, err
+	}
+	return parseTLVPairs(response.Data), nil
+}
+
+// QuerySettingCapabilities queries valid values for the given setting IDs.
+// Each value in the returned map is a byte slice of valid option values.
+func (m *Manager) QuerySettingCapabilities(macAddress string, settingIDs []byte) (map[byte][]byte, error) {
+	response, err := m.sendQuery(macAddress, QueryGetSettingCapabilities, settingIDs)
+	if err != nil {
+		return nil, err
+	}
+	return parseTLVPairs(response.Data), nil
 }
 
 func (m *Manager) handleNotification(macAddress string, data []byte) {

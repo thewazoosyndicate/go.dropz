@@ -29,3 +29,5 @@ var config_pb = require('./config_pb.js');
 goog.object.extend(proto, config_pb);
 var common_pb = require('./common_pb.js');
 goog.object.extend(proto, common_pb);
+var camera_settings_pb = require('./camera_settings_pb.js');
+goog.object.extend(proto, camera_settings_pb);

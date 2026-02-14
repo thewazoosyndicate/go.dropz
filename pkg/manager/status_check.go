@@ -126,10 +126,18 @@ func (m *GoProManager) processStatusResults(cs *database.CameraWithState, status
 		if newBattery > 0 {
 			cs.Metadata.BatteryLevel = newBattery
 		}
-		cs.Metadata.NumPhotos = newPhotos
-		cs.Metadata.NumVideos = newVideos
-		cs.Metadata.SDCardStatusCode = newSDStatus
-		cs.Metadata.RemainingSpaceKB = newRemainingKB
+		if newPhotos >= 0 {
+			cs.Metadata.NumPhotos = newPhotos
+		}
+		if newVideos >= 0 {
+			cs.Metadata.NumVideos = newVideos
+		}
+		if newSDStatus != 255 {
+			cs.Metadata.SDCardStatusCode = newSDStatus
+		}
+		if newRemainingKB > 0 {
+			cs.Metadata.RemainingSpaceKB = newRemainingKB
+		}
 	})
 
 	m.log.Debugf("Status check %s: battery=%d%% photos=%d videos=%d sd=%d remaining=%dKB",

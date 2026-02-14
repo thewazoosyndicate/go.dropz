@@ -30,6 +30,13 @@ func (fc *FragmentCollector) Reset() {
 	fc.fragments = make(map[byte]*MessageFragments)
 }
 
+// ResetCommand clears pending fragments for a single command ID
+func (fc *FragmentCollector) ResetCommand(commandID byte) {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	delete(fc.fragments, commandID)
+}
+
 // ProcessFragment processes a TLV packet fragment and returns a complete message if ready
 func (fc *FragmentCollector) ProcessFragment(data []byte) (*TLVMessage, error) {
 	header, err := ParseHeader(data)

@@ -29,6 +29,10 @@ type Manager interface {
 	DeleteGroup(groupID string) error
 	LoadGroup(groupID string) error
 	SaveManagedAsGroup(name string) (*database.Group, error)
+	// Camera settings (BLE)
+	GetCameraSettings(cameraID string) ([]database.CameraSettingInfo, error)
+	SetCameraSetting(cameraID string, settingID int32, value int32) error
+	SetGroupSetting(groupID string, settingID int32, value int32) (map[string]string, error)
 	// Config
 	GetConfig() database.Config
 	UpdateConfig(config database.Config) error
@@ -588,6 +592,55 @@ func (s *DropzServer) GetVideos(ctx context.Context, req *protocol.GetVideosRequ
 		Videos:     protoVideos,
 		TotalCount: int32(totalCount),
 	}, nil
+}
+
+// GetCameraSettings implements the GetCameraSettings RPC method
+func (s *DropzServer) GetCameraSettings(ctx context.Context, req *protocol.GetCameraSettingsRequest) (*protocol.GetCameraSettingsResponse, error) {
+	if s.ctx.Err() != nil {
+		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
+	}
+
+	settings, err := s.manager.GetCameraSettings(req.CameraId)
+	if err != nil {
+		return nil, err
+	}
+
+	protoSettings := make([]*protocol.CameraSetting, len(settings))
+	for i, s := range settings {
+		protoSettings[i] = s.ToProtoCameraSetting()
+	}
+	return &protocol.GetCameraSettingsResponse{Settings: protoSettings}, nil
+}
+
+// SetCameraSetting implements the SetCameraSetting RPC method
+func (s *DropzServer) SetCameraSetting(ctx context.Context, req *protocol.SetCameraSettingRequest) (*protocol.OperationResponse, error) {
+	if s.ctx.Err() != nil {
+		return &protocol.OperationResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
+	}
+
+	err := s.manager.SetCameraSetting(req.CameraId, req.SettingId, req.Value)
+	if err != nil {
+		return &protocol.OperationResponse{Success: false, Message: err.Error()}, nil
+	}
+
+	return &protocol.OperationResponse{
+		Success: true,
+		Message: fmt.Sprintf("Setting %d updated on camera %s", req.SettingId, req.CameraId),
+	}, nil
+}
+
+// SetGroupSetting implements the SetGroupSetting RPC method
+func (s *DropzServer) SetGroupSetting(ctx context.Context, req *protocol.SetGroupSettingRequest) (*protocol.SetGroupSettingResponse, error) {
+	if s.ctx.Err() != nil {
+		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
+	}
+
+	results, err := s.manager.SetGroupSetting(req.GroupId, req.SettingId, req.Value)
+	if err != nil {
+		return nil, err
+	}
+
+	return &protocol.SetGroupSettingResponse{CameraResults: results}, nil
 }
 
 // GetConfig implements the GetConfig RPC method

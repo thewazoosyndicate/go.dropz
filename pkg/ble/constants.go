@@ -43,8 +43,10 @@ const (
 	CmdRegisterClient = 0x6B
 
 	// Query IDs
-	QueryGetStatus               = 0x13
-	QueryRegisterStatusUpdates   = 0x53
+	QueryGetSettingValues       = 0x12
+	QueryGetStatus              = 0x13
+	QueryGetSettingCapabilities = 0x32
+	QueryRegisterStatusUpdates  = 0x53
 	QueryUnregisterStatusUpdates = 0x73
 
 	// Async notification IDs (unsolicited push from camera)
@@ -56,6 +58,22 @@ const (
 	StatusNumTotalVideos    = 39
 	StatusSDCardRemainingKB = 54
 	StatusBatteryPercentage = 70
+
+	// Setting IDs (OpenGoPro spec — actual support determined at runtime via query 0x32)
+	SettingVideoResolution  = 2
+	SettingFPS              = 3
+	SettingAutoPowerDown    = 59
+	SettingGPS              = 83
+	SettingVideoAspectRatio = 108
+	SettingVideoDigitalLens = 121
+	SettingPhotoDigitalLens = 122
+	SettingPhotoOutput      = 125
+	SettingMediaFormat      = 128
+	SettingAntiFlicker      = 134
+	SettingHypersmooth      = 135
+	SettingVideoBitRate     = 182
+	SettingBitDepth         = 183
+	SettingVideoProfile     = 184
 )
 
 const (

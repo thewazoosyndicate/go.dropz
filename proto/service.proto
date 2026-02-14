@@ -7,6 +7,7 @@ import "gopro.proto";
 import "video.proto";
 import "config.proto";
 import "common.proto";
+import "camera_settings.proto";
 
 // Service definition for communication between frontend and backend
 service DropzService {
@@ -40,10 +41,15 @@ service DropzService {
   // Video management
   rpc GetVideos(GetVideosRequest) returns (GetVideosResponse);
   
+  // Camera settings (BLE)
+  rpc GetCameraSettings(GetCameraSettingsRequest) returns (GetCameraSettingsResponse);
+  rpc SetCameraSetting(SetCameraSettingRequest) returns (OperationResponse);
+  rpc SetGroupSetting(SetGroupSettingRequest) returns (SetGroupSettingResponse);
+
   // Configuration & Settings
   rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
   rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse);
   rpc GetSetting(GetSettingRequest) returns (GetSettingResponse);
   rpc UpdateSetting(UpdateSettingRequest) returns (Config);
   rpc ResetSetting(ResetSettingRequest) returns (Config);
-  } 
+  }

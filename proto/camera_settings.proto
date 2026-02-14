@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package dropz;
+option go_package = "github.com/dropz/dropz/pkg/protocol";
+
+message CameraSetting {
+  int32 id = 1;
+  int32 current_value = 2;
+  repeated int32 valid_values = 3;
+}
+
+message GetCameraSettingsRequest {
+  string camera_id = 1;
+}
+
+message GetCameraSettingsResponse {
+  repeated CameraSetting settings = 1;
+}
+
+message SetCameraSettingRequest {
+  string camera_id = 1;
+  int32 setting_id = 2;
+  int32 value = 3;
+}
+
+message SetGroupSettingRequest {
+  string group_id = 1;
+  int32 setting_id = 2;
+  int32 value = 3;
+}
+
+message SetGroupSettingResponse {
+  map<string, string> camera_results = 1;
+}

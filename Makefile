@@ -24,11 +24,13 @@ proto:
 		--go_opt=Mconfig.proto=github.com/dropz/dropz/pkg/protocol \
 		--go_opt=Mvideo.proto=github.com/dropz/dropz/pkg/protocol \
 		--go_opt=Mcommon.proto=github.com/dropz/dropz/pkg/protocol \
+		--go_opt=Mcamera_settings.proto=github.com/dropz/dropz/pkg/protocol \
 		--go-grpc_opt=Mservice.proto=github.com/dropz/dropz/pkg/protocol \
 		--go-grpc_opt=Mgopro.proto=github.com/dropz/dropz/pkg/protocol \
 		--go-grpc_opt=Mconfig.proto=github.com/dropz/dropz/pkg/protocol \
 		--go-grpc_opt=Mvideo.proto=github.com/dropz/dropz/pkg/protocol \
 		--go-grpc_opt=Mcommon.proto=github.com/dropz/dropz/pkg/protocol \
+		--go-grpc_opt=Mcamera_settings.proto=github.com/dropz/dropz/pkg/protocol \
 		proto/*.proto
 	@if [ -f proto/*_grpc.pb.go ] || [ -f proto/*.pb.go ]; then \
 		mv proto/*.pb.go pkg/protocol/ 2>/dev/null || true; \

@@ -37,6 +37,9 @@ const (
 	DropzService_LoadGroup_FullMethodName              = "/dropz.DropzService/LoadGroup"
 	DropzService_SaveManagedAsGroup_FullMethodName     = "/dropz.DropzService/SaveManagedAsGroup"
 	DropzService_GetVideos_FullMethodName              = "/dropz.DropzService/GetVideos"
+	DropzService_GetCameraSettings_FullMethodName      = "/dropz.DropzService/GetCameraSettings"
+	DropzService_SetCameraSetting_FullMethodName       = "/dropz.DropzService/SetCameraSetting"
+	DropzService_SetGroupSetting_FullMethodName        = "/dropz.DropzService/SetGroupSetting"
 	DropzService_GetConfig_FullMethodName              = "/dropz.DropzService/GetConfig"
 	DropzService_UpdateConfig_FullMethodName           = "/dropz.DropzService/UpdateConfig"
 	DropzService_GetSetting_FullMethodName             = "/dropz.DropzService/GetSetting"
@@ -74,6 +77,10 @@ type DropzServiceClient interface {
 	SaveManagedAsGroup(ctx context.Context, in *SaveManagedAsGroupRequest, opts ...grpc.CallOption) (*Group, error)
 	// Video management
 	GetVideos(ctx context.Context, in *GetVideosRequest, opts ...grpc.CallOption) (*GetVideosResponse, error)
+	// Camera settings (BLE)
+	GetCameraSettings(ctx context.Context, in *GetCameraSettingsRequest, opts ...grpc.CallOption) (*GetCameraSettingsResponse, error)
+	SetCameraSetting(ctx context.Context, in *SetCameraSettingRequest, opts ...grpc.CallOption) (*OperationResponse, error)
+	SetGroupSetting(ctx context.Context, in *SetGroupSettingRequest, opts ...grpc.CallOption) (*SetGroupSettingResponse, error)
 	// Configuration & Settings
 	GetConfig(ctx context.Context, in *GetConfigRequest, opts ...grpc.CallOption) (*GetConfigResponse, error)
 	UpdateConfig(ctx context.Context, in *UpdateConfigRequest, opts ...grpc.CallOption) (*UpdateConfigResponse, error)
@@ -297,6 +304,36 @@ func (c *dropzServiceClient) GetVideos(ctx context.Context, in *GetVideosRequest
 	return out, nil
 }
 
+func (c *dropzServiceClient) GetCameraSettings(ctx context.Context, in *GetCameraSettingsRequest, opts ...grpc.CallOption) (*GetCameraSettingsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetCameraSettingsResponse)
+	err := c.cc.Invoke(ctx, DropzService_GetCameraSettings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dropzServiceClient) SetCameraSetting(ctx context.Context, in *SetCameraSettingRequest, opts ...grpc.CallOption) (*OperationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OperationResponse)
+	err := c.cc.Invoke(ctx, DropzService_SetCameraSetting_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dropzServiceClient) SetGroupSetting(ctx context.Context, in *SetGroupSettingRequest, opts ...grpc.CallOption) (*SetGroupSettingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetGroupSettingResponse)
+	err := c.cc.Invoke(ctx, DropzService_SetGroupSetting_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *dropzServiceClient) GetConfig(ctx context.Context, in *GetConfigRequest, opts ...grpc.CallOption) (*GetConfigResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetConfigResponse)
@@ -377,6 +414,10 @@ type DropzServiceServer interface {
 	SaveManagedAsGroup(context.Context, *SaveManagedAsGroupRequest) (*Group, error)
 	// Video management
 	GetVideos(context.Context, *GetVideosRequest) (*GetVideosResponse, error)
+	// Camera settings (BLE)
+	GetCameraSettings(context.Context, *GetCameraSettingsRequest) (*GetCameraSettingsResponse, error)
+	SetCameraSetting(context.Context, *SetCameraSettingRequest) (*OperationResponse, error)
+	SetGroupSetting(context.Context, *SetGroupSettingRequest) (*SetGroupSettingResponse, error)
 	// Configuration & Settings
 	GetConfig(context.Context, *GetConfigRequest) (*GetConfigResponse, error)
 	UpdateConfig(context.Context, *UpdateConfigRequest) (*UpdateConfigResponse, error)
@@ -446,6 +487,15 @@ func (UnimplementedDropzServiceServer) SaveManagedAsGroup(context.Context, *Save
 }
 func (UnimplementedDropzServiceServer) GetVideos(context.Context, *GetVideosRequest) (*GetVideosResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetVideos not implemented")
+}
+func (UnimplementedDropzServiceServer) GetCameraSettings(context.Context, *GetCameraSettingsRequest) (*GetCameraSettingsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetCameraSettings not implemented")
+}
+func (UnimplementedDropzServiceServer) SetCameraSetting(context.Context, *SetCameraSettingRequest) (*OperationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetCameraSetting not implemented")
+}
+func (UnimplementedDropzServiceServer) SetGroupSetting(context.Context, *SetGroupSettingRequest) (*SetGroupSettingResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetGroupSetting not implemented")
 }
 func (UnimplementedDropzServiceServer) GetConfig(context.Context, *GetConfigRequest) (*GetConfigResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetConfig not implemented")
@@ -786,6 +836,60 @@ func _DropzService_GetVideos_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DropzService_GetCameraSettings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCameraSettingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).GetCameraSettings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_GetCameraSettings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).GetCameraSettings(ctx, req.(*GetCameraSettingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DropzService_SetCameraSetting_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetCameraSettingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).SetCameraSetting(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_SetCameraSetting_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).SetCameraSetting(ctx, req.(*SetCameraSettingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DropzService_SetGroupSetting_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetGroupSettingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).SetGroupSetting(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_SetGroupSetting_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).SetGroupSetting(ctx, req.(*SetGroupSettingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _DropzService_GetConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetConfigRequest)
 	if err := dec(in); err != nil {
@@ -942,6 +1046,18 @@ var DropzService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetVideos",
 			Handler:    _DropzService_GetVideos_Handler,
+		},
+		{
+			MethodName: "GetCameraSettings",
+			Handler:    _DropzService_GetCameraSettings_Handler,
+		},
+		{
+			MethodName: "SetCameraSetting",
+			Handler:    _DropzService_SetCameraSetting_Handler,
+		},
+		{
+			MethodName: "SetGroupSetting",
+			Handler:    _DropzService_SetGroupSetting_Handler,
 		},
 		{
 			MethodName: "GetConfig",

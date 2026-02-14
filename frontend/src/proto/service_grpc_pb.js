@@ -6,6 +6,7 @@ var gopro_pb = require('./gopro_pb.js');
 var video_pb = require('./video_pb.js');
 var config_pb = require('./config_pb.js');
 var common_pb = require('./common_pb.js');
+var camera_settings_pb = require('./camera_settings_pb.js');
 
 function serialize_dropz_CancelSyncRequest(arg) {
   if (!(arg instanceof gopro_pb.CancelSyncRequest)) {
@@ -82,6 +83,28 @@ function serialize_dropz_ForceSyncResponse(arg) {
 
 function deserialize_dropz_ForceSyncResponse(buffer_arg) {
   return gopro_pb.ForceSyncResponse.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_GetCameraSettingsRequest(arg) {
+  if (!(arg instanceof camera_settings_pb.GetCameraSettingsRequest)) {
+    throw new Error('Expected argument of type dropz.GetCameraSettingsRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_GetCameraSettingsRequest(buffer_arg) {
+  return camera_settings_pb.GetCameraSettingsRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_GetCameraSettingsResponse(arg) {
+  if (!(arg instanceof camera_settings_pb.GetCameraSettingsResponse)) {
+    throw new Error('Expected argument of type dropz.GetCameraSettingsResponse');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_GetCameraSettingsResponse(buffer_arg) {
+  return camera_settings_pb.GetCameraSettingsResponse.deserializeBinary(new Uint8Array(buffer_arg));
 }
 
 function serialize_dropz_GetConfigRequest(arg) {
@@ -346,6 +369,39 @@ function serialize_dropz_SaveManagedAsGroupRequest(arg) {
 
 function deserialize_dropz_SaveManagedAsGroupRequest(buffer_arg) {
   return gopro_pb.SaveManagedAsGroupRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_SetCameraSettingRequest(arg) {
+  if (!(arg instanceof camera_settings_pb.SetCameraSettingRequest)) {
+    throw new Error('Expected argument of type dropz.SetCameraSettingRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_SetCameraSettingRequest(buffer_arg) {
+  return camera_settings_pb.SetCameraSettingRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_SetGroupSettingRequest(arg) {
+  if (!(arg instanceof camera_settings_pb.SetGroupSettingRequest)) {
+    throw new Error('Expected argument of type dropz.SetGroupSettingRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_SetGroupSettingRequest(buffer_arg) {
+  return camera_settings_pb.SetGroupSettingRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_SetGroupSettingResponse(arg) {
+  if (!(arg instanceof camera_settings_pb.SetGroupSettingResponse)) {
+    throw new Error('Expected argument of type dropz.SetGroupSettingResponse');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_SetGroupSettingResponse(buffer_arg) {
+  return camera_settings_pb.SetGroupSettingResponse.deserializeBinary(new Uint8Array(buffer_arg));
 }
 
 function serialize_dropz_UnmanageCameraRequest(arg) {
@@ -620,6 +676,40 @@ getVideos: {
     requestDeserialize: deserialize_dropz_GetVideosRequest,
     responseSerialize: serialize_dropz_GetVideosResponse,
     responseDeserialize: deserialize_dropz_GetVideosResponse,
+  },
+  // Camera settings (BLE)
+getCameraSettings: {
+    path: '/dropz.DropzService/GetCameraSettings',
+    requestStream: false,
+    responseStream: false,
+    requestType: camera_settings_pb.GetCameraSettingsRequest,
+    responseType: camera_settings_pb.GetCameraSettingsResponse,
+    requestSerialize: serialize_dropz_GetCameraSettingsRequest,
+    requestDeserialize: deserialize_dropz_GetCameraSettingsRequest,
+    responseSerialize: serialize_dropz_GetCameraSettingsResponse,
+    responseDeserialize: deserialize_dropz_GetCameraSettingsResponse,
+  },
+  setCameraSetting: {
+    path: '/dropz.DropzService/SetCameraSetting',
+    requestStream: false,
+    responseStream: false,
+    requestType: camera_settings_pb.SetCameraSettingRequest,
+    responseType: common_pb.OperationResponse,
+    requestSerialize: serialize_dropz_SetCameraSettingRequest,
+    requestDeserialize: deserialize_dropz_SetCameraSettingRequest,
+    responseSerialize: serialize_dropz_OperationResponse,
+    responseDeserialize: deserialize_dropz_OperationResponse,
+  },
+  setGroupSetting: {
+    path: '/dropz.DropzService/SetGroupSetting',
+    requestStream: false,
+    responseStream: false,
+    requestType: camera_settings_pb.SetGroupSettingRequest,
+    responseType: camera_settings_pb.SetGroupSettingResponse,
+    requestSerialize: serialize_dropz_SetGroupSettingRequest,
+    requestDeserialize: deserialize_dropz_SetGroupSettingRequest,
+    responseSerialize: serialize_dropz_SetGroupSettingResponse,
+    responseDeserialize: deserialize_dropz_SetGroupSettingResponse,
   },
   // Configuration & Settings
 getConfig: {

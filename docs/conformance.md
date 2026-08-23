@@ -160,3 +160,14 @@ Validated so far:
   grouped media expansion (needs burst/timelapse content on the card),
   HERO13+ (reconnect-to-sleep quirk, model id heuristic),
   schema 3 serial assembly (needs a newer camera), macOS paths.
+- 2026-08-24, HERO11 Black, Linux, MT7925 host NIC, camera at arm's
+  length from the laptop (-27 dBm): downloads capped at 0.6 MB/s in
+  every configuration. `validate -wifi -speed` matrix (20s samples):
+  BLE held or dropped, 1 stream or 4 parallel range chunks, turbo off
+  or on, 5GHz or 2.4GHz, host powersave and PCIe runtime PM off: all
+  0.5-0.6 MB/s. Cause visible in `iw station dump`: the camera never
+  transmits above MCS 0-1 while the laptop's uplink runs MCS 9; same
+  laptop decodes HE-MCS 4-6 from a home AP at -65 dBm. Points at
+  camera-to-host rate adaptation failing at very hot signal levels;
+  retest with 2-3m separation before blaming software. curl reproduces
+  the cap, so the Go transfer path is not the bottleneck.

@@ -135,6 +135,14 @@ Run 2 then 3 on: HERO12 and HERO13+ on Linux; any camera on macOS 15
 (after `make wifi-helper`). Non-zero exit means a failed check.
 
 Validated so far:
-- 2026-08-23, HERO11 Black, Linux, full app flow works end to end.
-  Still open: HERO13+ (reconnect-to-sleep quirk, model id heuristic),
+- 2026-08-23, HERO11 Black (fw H22.01.02.32.00), Linux, full app flow
+  works end to end; `ble-probe validate` 6/6: connect+readiness,
+  keep-alive success on GP-0075 (144ms), statuses 8/10/33/70,
+  AP ready via status 69 in 682ms.
+- Observed: this HERO11's schema 2 id_hash is the reversed BLE MAC,
+  not serial chars. Confirms never fabricating serials from schema 2;
+  service data tail matched the GATT serial's last 4 ("8614").
+  Model 58 in the advertisement matched GATT model and the C347 prefix.
+  Still open: -wifi and -sleep probe runs, pair on an unbonded client,
+  HERO13+ (reconnect-to-sleep quirk, model id heuristic),
   schema 3 serial assembly (needs a newer camera), macOS paths.

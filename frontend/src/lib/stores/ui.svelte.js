@@ -4,6 +4,8 @@ let logsExpanded = $state(false);
 let settingsOpen = $state(false);
 // {type: 'camera'|'group', id, name, referenceCameraId} or null
 let cameraSettingsTarget = $state(null);
+// {source: 'local'|cameraId} or null; consumed once by the library view
+let libraryTarget = $state(null);
 let searchQuery = $state('');
 let sortBy = $state('signal');
 let toasts = $state([]);
@@ -17,6 +19,9 @@ export function getSettingsOpen() { return settingsOpen; }
 export function getCameraSettingsTarget() { return cameraSettingsTarget; }
 export function openCameraSettings(target) { cameraSettingsTarget = target; }
 export function closeCameraSettings() { cameraSettingsTarget = null; }
+export function getLibraryTarget() { return libraryTarget; }
+export function openLibrary(source = 'local') { libraryTarget = { source }; }
+export function clearLibraryTarget() { libraryTarget = null; }
 export function getSearchQuery() { return searchQuery; }
 export function getSortBy() { return sortBy; }
 export function getToasts() { return toasts; }

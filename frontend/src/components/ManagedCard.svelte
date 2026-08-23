@@ -1,7 +1,7 @@
 <script>
   import { addToSyncQueue, cancelSync, toggleDeviceManaged } from '../lib/grpc/actions.js';
   import { getSyncQueue } from '../lib/stores/sync.svelte.js';
-  import { openCameraSettings } from '../lib/stores/ui.svelte.js';
+  import { openCameraSettings, openLibrary } from '../lib/stores/ui.svelte.js';
 
   let { device } = $props();
 
@@ -69,6 +69,10 @@
 
   function handleUnmanage() {
     toggleDeviceManaged(device.macAddress, false);
+  }
+
+  function handleBrowse() {
+    openLibrary(device.id);
   }
 
   function handleSettings() {
@@ -149,6 +153,10 @@
   <div class="card-actions">
     <button class="btn {isInSyncQueue ? 'btn-danger' : 'btn-sync'}" onclick={handleSync}>
       {isInSyncQueue ? 'Cancel' : 'Sync'}
+    </button>
+    <button class="btn btn-outline" onclick={handleBrowse} disabled={!device.id}
+            title="Browse media" aria-label="Browse media">
+      <i class="fas fa-photo-film"></i>
     </button>
     <button class="btn btn-outline" onclick={handleSettings} disabled={device.isSyncing}
             title="Camera settings" aria-label="Camera settings">

@@ -4,10 +4,16 @@
   import VideoLibrary from './VideoLibrary.svelte';
   import GroupsPanel from './GroupsPanel.svelte';
   import { loadVideos, loadGroups } from '../lib/grpc/actions.js';
+  import { getLibraryTarget } from '../lib/stores/ui.svelte.js';
 
   let activeTab = $state('cameras');
   let videosLoaded = false;
   let groupsLoaded = false;
+
+  // Card shortcuts land on the library tab; VideoLibrary consumes the target
+  $effect(() => {
+    if (getLibraryTarget()) switchTab('library');
+  });
 
   function switchTab(tab) {
     activeTab = tab;

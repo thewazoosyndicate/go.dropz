@@ -4,6 +4,7 @@
   import { getVideos, getTotalCount, getLoading } from '../lib/stores/videos.svelte.js';
   import { getManagedDevices, getAllDevices } from '../lib/stores/devices.svelte.js';
   import { loadVideos } from '../lib/grpc/actions.js';
+  import { getLibraryTarget, clearLibraryTarget } from '../lib/stores/ui.svelte.js';
 
   let videos = $derived(getVideos());
   let totalCount = $derived(getTotalCount());
@@ -18,6 +19,14 @@
       .map(d => ({ id: d.id, name: d.wifiSsid?.trim()?.substring(0, 12) || d.name || 'Unknown' }))
       .sort((a, b) => a.name.localeCompare(b.name))
   );
+
+  $effect(() => {
+    const target = getLibraryTarget();
+    if (target) {
+      source = target.source;
+      clearLibraryTarget();
+    }
+  });
 
   // A camera leaving the managed pool drops the tab back to local
   $effect(() => {

@@ -2026,7 +2026,7 @@ const file_gopro_proto_rawDesc = "" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"/\n" +
 	"\x19SaveManagedAsGroupRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04nameB%Z#github.com/dropz/dropz/pkg/protocolb\x06proto3"
+	"\x04name\x18\x01 \x01(\tR\x04nameB%Z#github.com/dropz/dropz/internal/protocolb\x06proto3"
 
 var (
 	file_gopro_proto_rawDescOnce sync.Once

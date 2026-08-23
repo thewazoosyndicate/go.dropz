@@ -19,10 +19,10 @@ const (
 
 // HardwareInfo contains information from GetHardwareInfo command
 type HardwareInfo struct {
-	ModelNumber      int
-	ModelName        string
-	FirmwareVersion  string
-	SerialNumber     string
+	ModelNumber     int
+	ModelName       string
+	FirmwareVersion string
+	SerialNumber    string
 	APSSID          string
 	MACAddress      string
 }
@@ -39,7 +39,7 @@ func (m *Manager) SetAPControl(macAddress string, mode WiFiAPMode) error {
 	// Send the command with length-prefixed mode parameter
 	response, err := m.sendCommand(macAddress, CmdSetAPControl, []byte{0x01, byte(mode)})
 	if err != nil {
-		return fmt.Errorf("failed to send AP control command: %v", err)
+		return fmt.Errorf("failed to send AP control command: %w", err)
 	}
 
 	// Check response status (0x00 = success)
@@ -59,13 +59,13 @@ func (m *Manager) SetAPControl(macAddress string, mode WiFiAPMode) error {
 func (m *Manager) GetHardwareInfo(macAddress string) (*HardwareInfo, error) {
 	response, err := m.sendCommand(macAddress, CmdGetHardwareInfo, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get hardware info: %v", err)
+		return nil, fmt.Errorf("failed to get hardware info: %w", err)
 	}
 
 	// Parse the response
 	info, err := parseHardwareInfo(response.Data, m.log)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse hardware info: %v", err)
+		return nil, fmt.Errorf("failed to parse hardware info: %w", err)
 	}
 
 	return info, nil
@@ -89,7 +89,7 @@ func parseHardwareInfo(data []byte, log *logrus.Logger) (*HardwareInfo, error) {
 		buf = buf[1:]
 
 		if len(buf) < length {
-			return nil, fmt.Errorf("%s truncated: expected %d bytes, have %d", 
+			return nil, fmt.Errorf("%s truncated: expected %d bytes, have %d",
 				fieldName, length, len(buf))
 		}
 
@@ -162,7 +162,7 @@ func parseHardwareInfo(data []byte, log *logrus.Logger) (*HardwareInfo, error) {
 func (m *Manager) SetThirdPartyClient(macAddress string) error {
 	_, err := m.sendCommand(macAddress, CmdRegisterClient, nil)
 	if err != nil {
-		return fmt.Errorf("failed to set third party client: %v", err)
+		return fmt.Errorf("failed to set third party client: %w", err)
 	}
 
 	return nil
@@ -195,7 +195,7 @@ func (m *Manager) SetLocalDateTime(macAddress string, t time.Time) error {
 
 	response, err := m.sendCommand(macAddress, CmdSetLocalDateTime, params)
 	if err != nil {
-		return fmt.Errorf("failed to set local date/time: %v", err)
+		return fmt.Errorf("failed to set local date/time: %w", err)
 	}
 
 	if response.Status == 0x02 {
@@ -212,7 +212,7 @@ func (m *Manager) SetLocalDateTime(macAddress string, t time.Time) error {
 		}
 		response, err = m.sendCommand(macAddress, CmdSetDateTime, params)
 		if err != nil {
-			return fmt.Errorf("failed to set date/time: %v", err)
+			return fmt.Errorf("failed to set date/time: %w", err)
 		}
 	}
 
@@ -223,4 +223,3 @@ func (m *Manager) SetLocalDateTime(macAddress string, t time.Time) error {
 	m.log.Infof("Camera date/time set to %s", t.Format(time.RFC3339))
 	return nil
 }
-

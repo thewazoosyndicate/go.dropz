@@ -687,7 +687,7 @@ const file_config_proto_rawDesc = "" +
 	"\fstring_value\x18\x04 \x01(\tH\x00R\vstringValueB\a\n" +
 	"\x05value\"8\n" +
 	"\x13ResetSettingRequest\x12!\n" +
-	"\fsetting_name\x18\x01 \x01(\tR\vsettingNameB%Z#github.com/dropz/dropz/pkg/protocolb\x06proto3"
+	"\fsetting_name\x18\x01 \x01(\tR\vsettingNameB%Z#github.com/dropz/dropz/internal/protocolb\x06proto3"
 
 var (
 	file_config_proto_rawDescOnce sync.Once

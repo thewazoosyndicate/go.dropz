@@ -13,26 +13,26 @@ build:
 
 proto:
 	@echo "Generating protobuf code..."
-	@mkdir -p pkg/protocol
+	@mkdir -p internal/protocol
 	go get -u google.golang.org/protobuf/cmd/protoc-gen-go
 	go get -u google.golang.org/grpc/cmd/protoc-gen-go-grpc
 	protoc -I=proto -I=include -I=/usr/local/include -I=/usr/include \
-        --go_out=pkg/protocol/ --go_opt=paths=source_relative \
-		--go-grpc_out=pkg/protocol/ --go-grpc_opt=paths=source_relative \
-		--go_opt=Mservice.proto=github.com/dropz/dropz/pkg/protocol \
-		--go_opt=Mgopro.proto=github.com/dropz/dropz/pkg/protocol \
-		--go_opt=Mconfig.proto=github.com/dropz/dropz/pkg/protocol \
-		--go_opt=Mvideo.proto=github.com/dropz/dropz/pkg/protocol \
-		--go_opt=Mcommon.proto=github.com/dropz/dropz/pkg/protocol \
-		--go-grpc_opt=Mservice.proto=github.com/dropz/dropz/pkg/protocol \
-		--go-grpc_opt=Mgopro.proto=github.com/dropz/dropz/pkg/protocol \
-		--go-grpc_opt=Mconfig.proto=github.com/dropz/dropz/pkg/protocol \
-		--go-grpc_opt=Mvideo.proto=github.com/dropz/dropz/pkg/protocol \
-		--go-grpc_opt=Mcommon.proto=github.com/dropz/dropz/pkg/protocol \
+        --go_out=internal/protocol/ --go_opt=paths=source_relative \
+		--go-grpc_out=internal/protocol/ --go-grpc_opt=paths=source_relative \
+		--go_opt=Mservice.proto=github.com/dropz/dropz/internal/protocol \
+		--go_opt=Mgopro.proto=github.com/dropz/dropz/internal/protocol \
+		--go_opt=Mconfig.proto=github.com/dropz/dropz/internal/protocol \
+		--go_opt=Mvideo.proto=github.com/dropz/dropz/internal/protocol \
+		--go_opt=Mcommon.proto=github.com/dropz/dropz/internal/protocol \
+		--go-grpc_opt=Mservice.proto=github.com/dropz/dropz/internal/protocol \
+		--go-grpc_opt=Mgopro.proto=github.com/dropz/dropz/internal/protocol \
+		--go-grpc_opt=Mconfig.proto=github.com/dropz/dropz/internal/protocol \
+		--go-grpc_opt=Mvideo.proto=github.com/dropz/dropz/internal/protocol \
+		--go-grpc_opt=Mcommon.proto=github.com/dropz/dropz/internal/protocol \
 		proto/*.proto
 	@if [ -f proto/*_grpc.pb.go ] || [ -f proto/*.pb.go ]; then \
-		mv proto/*.pb.go pkg/protocol/ 2>/dev/null || true; \
-		mv proto/*_grpc.pb.go pkg/protocol/ 2>/dev/null || true; \
+		mv proto/*.pb.go internal/protocol/ 2>/dev/null || true; \
+		mv proto/*_grpc.pb.go internal/protocol/ 2>/dev/null || true; \
 	fi
 	@rm -rf github.com
 	@echo "Generating JavaScript protobuf code..."
@@ -79,7 +79,7 @@ test:
 clean:
 	@echo "Cleaning up..."
 	rm -rf bin/
-	rm -f pkg/protocol/*.pb.go
+	rm -f internal/protocol/*.pb.go
 	rm -f frontend/src/proto/*_pb.js
 	rm -f frontend/src/proto/*_grpc_pb.js
 

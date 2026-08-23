@@ -4,13 +4,15 @@ import (
 	"encoding/binary"
 	"time"
 
-	"github.com/dropz/dropz/pkg/ble"
-	"github.com/dropz/dropz/pkg/database"
-	syncpkg "github.com/dropz/dropz/pkg/manager/sync"
+	"github.com/dropz/dropz/internal/ble"
+	syncpkg "github.com/dropz/dropz/internal/manager/sync"
+	"github.com/dropz/dropz/internal/model"
 )
 
-// checkCameraStatuses queries BLE statuses for all managed cameras.
-func (m *GoProManager) checkCameraStatuses() {
+// enqueueStatusChecks queues BLE status checks for all eligible managed cameras.
+// The statusCheckWorker drains the queue; a full channel drops the request,
+// which is fine because the next tick re-enqueues.
+func (m *GoProManager) enqueueStatusChecks() {
 	config := m.db.GetConfig()
 	if !config.SyncEnabled {
 		return
@@ -25,7 +27,10 @@ func (m *GoProManager) checkCameraStatuses() {
 		if m.ble.IsConnected(cs.Camera.BLEAddress) {
 			continue
 		}
-		m.checkSingleCameraStatusByID(cs.Camera.ID)
+		select {
+		case m.statusCheckRequest <- cs.Camera.ID:
+		default:
+		}
 	}
 }
 
@@ -97,7 +102,7 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 }
 
 // processStatusResults compares old vs new counts and queues sync if new media detected.
-func (m *GoProManager) processStatusResults(cs *database.CameraWithState, statuses map[byte][]byte) bool {
+func (m *GoProManager) processStatusResults(cs *model.CameraWithState, statuses map[byte][]byte) bool {
 	oldPhotos := cs.Metadata.NumPhotos
 	oldVideos := cs.Metadata.NumVideos
 	oldRemainingKB := cs.Metadata.RemainingSpaceKB
@@ -122,14 +127,25 @@ func (m *GoProManager) processStatusResults(cs *database.CameraWithState, status
 		newRemainingKB = parseInt64Status(v)
 	}
 
-	m.db.UpdateCameraByID(cs.Camera.ID, func(cs *database.CameraWithState) {
+	m.db.UpdateCameraByID(cs.Camera.ID, func(cs *model.CameraWithState) {
 		if newBattery > 0 {
 			cs.Metadata.BatteryLevel = newBattery
 		}
-		cs.Metadata.NumPhotos = newPhotos
-		cs.Metadata.NumVideos = newVideos
-		cs.Metadata.SDCardStatusCode = newSDStatus
-		cs.Metadata.RemainingSpaceKB = newRemainingKB
+		// HERO13+ returns 0xFFFFFFFF (-1 as int32) and 0xFF (255) as sentinel
+		// values after sleep/wake when the camera can't read the SD card yet.
+		// Only overwrite stored values when the camera returns valid data.
+		if newPhotos >= 0 {
+			cs.Metadata.NumPhotos = newPhotos
+		}
+		if newVideos >= 0 {
+			cs.Metadata.NumVideos = newVideos
+		}
+		if newSDStatus != 255 {
+			cs.Metadata.SDCardStatusCode = newSDStatus
+		}
+		if newRemainingKB > 0 || newSDStatus == 0 {
+			cs.Metadata.RemainingSpaceKB = newRemainingKB
+		}
 	})
 
 	m.log.Debugf("Status check %s: battery=%d%% photos=%d videos=%d sd=%d remaining=%dKB",
@@ -148,7 +164,7 @@ func (m *GoProManager) processStatusResults(cs *database.CameraWithState, status
 	m.log.Infof("New media detected on %s (photos: %d→%d, videos: %d→%d), queuing sync",
 		cs.Camera.Name, oldPhotos, newPhotos, oldVideos, newVideos)
 
-	m.db.AddSyncQueueEntry(&database.SyncQueueEntry{
+	m.db.AddSyncQueueEntry(&model.SyncQueueEntry{
 		CameraID:         cs.Camera.ID,
 		QueuedAt:         time.Now(),
 		Priority:         syncpkg.SyncPriorityAuto,

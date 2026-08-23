@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dropz/dropz/pkg/ble"
+	"github.com/dropz/dropz/internal/ble"
 	"github.com/sirupsen/logrus"
 	"tinygo.org/x/bluetooth"
 )
@@ -27,7 +27,7 @@ func main() {
 
 	// Create BLE Manager
 	bleManager := ble.NewManager(adapter, log)
-	
+
 	// Set up metadata callback to verify it gets invoked
 	bleManager.SetMetadataCallback(func(metadata ble.CameraMetadata) {
 		fmt.Println("\n=== METADATA CALLBACK INVOKED ===")
@@ -40,7 +40,7 @@ func main() {
 		fmt.Printf("✓ WiFi Password: %s\n", metadata.WiFiPassword)
 		fmt.Println("=================================")
 	})
-	
+
 	fmt.Println("✓ BLE Manager created with metadata callback")
 	defer bleManager.Stop()
 
@@ -58,7 +58,7 @@ func main() {
 		defer mu.Unlock()
 		if foundDevice == nil {
 			foundDevice = &device
-			fmt.Printf("✓ Found GoPro: %s (%s) RSSI: %d\n", 
+			fmt.Printf("✓ Found GoPro: %s (%s) RSSI: %d\n",
 				device.Name, device.BLEAddress, device.RSSI)
 			cancel() // Stop scanning
 		}
@@ -80,18 +80,18 @@ func main() {
 
 	// DEBUGGING: Use full Connect() but with detailed timeout tracking
 	fmt.Printf("\n1. Connecting to %s with timeout monitoring...\n", foundDevice.Name)
-	
+
 	// Create a channel to track Connect() progress
 	connectDone := make(chan error, 1)
 	connectStart := time.Now()
-	
+
 	// Run Connect() in background with progress monitoring
 	go func() {
 		fmt.Println("\n1a. Starting BLE Manager Connect() operation...")
 		err := bleManager.Connect(foundDevice.BLEAddress)
 		connectDone <- err
 	}()
-	
+
 	// Monitor with timeout
 	select {
 	case err := <-connectDone:
@@ -108,20 +108,20 @@ func main() {
 		fmt.Printf("   Last log was at: %v\n", time.Since(connectStart))
 		return
 	}
-	
+
 	fmt.Println("\n--- Connect() completed successfully, now testing individual operations ---")
 
 	// Step 2: Test WiFi credentials (should work since Connect() succeeded)
 	fmt.Println("\n2. Testing WiFi credentials access...")
 	done := make(chan error, 1)
 	var ssid, password string
-	
+
 	go func() {
 		var err error
 		ssid, password, err = bleManager.GetWifiCredentials(foundDevice.BLEAddress)
 		done <- err
 	}()
-	
+
 	select {
 	case err := <-done:
 		if err != nil {
@@ -138,7 +138,7 @@ func main() {
 
 	// Test additional operations
 	fmt.Println("\n3. Testing additional operations...")
-	
+
 	// Test battery level
 	fmt.Println("\n3a. Testing GetBatteryLevel...")
 	go func() {
@@ -150,7 +150,7 @@ func main() {
 			done <- nil
 		}
 	}()
-	
+
 	select {
 	case err := <-done:
 		if err != nil {
@@ -159,7 +159,7 @@ func main() {
 	case <-time.After(10 * time.Second):
 		fmt.Println("✗ GetBatteryLevel TIMEOUT")
 	}
-	
+
 	// Test hardware info
 	fmt.Println("\n3b. Testing GetHardwareInfo...")
 	go func() {
@@ -172,7 +172,7 @@ func main() {
 			done <- nil
 		}
 	}()
-	
+
 	select {
 	case err := <-done:
 		if err != nil {
@@ -181,7 +181,7 @@ func main() {
 	case <-time.After(10 * time.Second):
 		fmt.Println("✗ GetHardwareInfo TIMEOUT")
 	}
-	
+
 	// Cleanup using BLE Manager
 	fmt.Println("\n4. Disconnecting using BLE Manager...")
 	disconnectErr := bleManager.Disconnect(foundDevice.BLEAddress)
@@ -190,7 +190,7 @@ func main() {
 	} else {
 		fmt.Println("✓ Disconnected successfully")
 	}
-	
+
 	fmt.Println("\n=== Test Complete ===")
 }
 

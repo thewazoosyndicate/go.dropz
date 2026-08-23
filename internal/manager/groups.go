@@ -4,17 +4,17 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dropz/dropz/pkg/database"
+	"github.com/dropz/dropz/internal/model"
 	"github.com/google/uuid"
 )
 
 // CreateGroup creates a new group with the specified cameras
-func (m *GoProManager) CreateGroup(name string, cameraIDs []string) (*database.Group, error) {
+func (m *GoProManager) CreateGroup(name string, cameraIDs []string) (*model.Group, error) {
 	if err := m.validateCamerasExist(cameraIDs); err != nil {
 		return nil, err
 	}
 
-	group := &database.Group{
+	group := &model.Group{
 		ID:        uuid.New().String(),
 		Name:      name,
 		CameraIDs: cameraIDs,
@@ -23,11 +23,7 @@ func (m *GoProManager) CreateGroup(name string, cameraIDs []string) (*database.G
 	}
 
 	if err := m.db.AddOrUpdateGroup(group); err != nil {
-		return nil, fmt.Errorf("failed to create group: %v", err)
-	}
-
-	for _, cameraID := range cameraIDs {
-		m.setCameraGroup(cameraID, group.ID)
+		return nil, fmt.Errorf("failed to create group: %w", err)
 	}
 
 	m.log.Infof("Created group %s with %d cameras", name, len(cameraIDs))
@@ -35,19 +31,14 @@ func (m *GoProManager) CreateGroup(name string, cameraIDs []string) (*database.G
 }
 
 // UpdateGroup updates an existing group
-func (m *GoProManager) UpdateGroup(groupID, name string, cameraIDs []string) (*database.Group, error) {
+func (m *GoProManager) UpdateGroup(groupID, name string, cameraIDs []string) (*model.Group, error) {
 	group, exists := m.db.GetGroup(groupID)
 	if !exists {
-		return nil, fmt.Errorf("group with ID %s not found", groupID)
+		return nil, fmt.Errorf("%w: %s", model.ErrGroupNotFound, groupID)
 	}
 
 	if err := m.validateCamerasExist(cameraIDs); err != nil {
 		return nil, err
-	}
-
-	oldCameraIDs := make(map[string]bool)
-	for _, id := range group.CameraIDs {
-		oldCameraIDs[id] = true
 	}
 
 	group.Name = name
@@ -55,25 +46,7 @@ func (m *GoProManager) UpdateGroup(groupID, name string, cameraIDs []string) (*d
 	group.UpdatedAt = time.Now()
 
 	if err := m.db.AddOrUpdateGroup(group); err != nil {
-		return nil, fmt.Errorf("failed to update group: %v", err)
-	}
-
-	// Add new cameras to group
-	for _, id := range cameraIDs {
-		if !oldCameraIDs[id] {
-			m.setCameraGroup(id, group.ID)
-		}
-	}
-
-	// Remove cameras no longer in group
-	newCameraIDs := make(map[string]bool)
-	for _, id := range cameraIDs {
-		newCameraIDs[id] = true
-	}
-	for id := range oldCameraIDs {
-		if !newCameraIDs[id] {
-			m.setCameraGroup(id, "")
-		}
+		return nil, fmt.Errorf("failed to update group: %w", err)
 	}
 
 	m.log.Infof("Updated group %s with %d cameras", name, len(cameraIDs))
@@ -84,15 +57,11 @@ func (m *GoProManager) UpdateGroup(groupID, name string, cameraIDs []string) (*d
 func (m *GoProManager) DeleteGroup(groupID string) error {
 	group, exists := m.db.GetGroup(groupID)
 	if !exists {
-		return fmt.Errorf("group with ID %s not found", groupID)
-	}
-
-	for _, cameraID := range group.CameraIDs {
-		m.setCameraGroup(cameraID, "")
+		return fmt.Errorf("%w: %s", model.ErrGroupNotFound, groupID)
 	}
 
 	if err := m.db.RemoveGroup(groupID); err != nil {
-		return fmt.Errorf("failed to delete group: %v", err)
+		return fmt.Errorf("failed to delete group: %w", err)
 	}
 
 	m.log.Infof("Deleted group %s", group.Name)
@@ -103,7 +72,7 @@ func (m *GoProManager) DeleteGroup(groupID string) error {
 func (m *GoProManager) LoadGroup(groupID string) error {
 	group, exists := m.db.GetGroup(groupID)
 	if !exists {
-		return fmt.Errorf("group with ID %s not found", groupID)
+		return fmt.Errorf("%w: %s", model.ErrGroupNotFound, groupID)
 	}
 
 	groupCameras := make(map[string]bool, len(group.CameraIDs))
@@ -128,7 +97,7 @@ func (m *GoProManager) LoadGroup(groupID string) error {
 }
 
 // SaveManagedAsGroup snapshots the current managed cameras as a new group
-func (m *GoProManager) SaveManagedAsGroup(name string) (*database.Group, error) {
+func (m *GoProManager) SaveManagedAsGroup(name string) (*model.Group, error) {
 	managed := m.db.GetCamerasForManagedPool()
 	ids := make([]string, len(managed))
 	for i, cam := range managed {
@@ -140,14 +109,8 @@ func (m *GoProManager) SaveManagedAsGroup(name string) (*database.Group, error) 
 func (m *GoProManager) validateCamerasExist(cameraIDs []string) error {
 	for _, cameraID := range cameraIDs {
 		if _, found := m.db.GetCameraByID(cameraID); !found {
-			return fmt.Errorf("camera %s not found", cameraID)
+			return fmt.Errorf("%w: %s", model.ErrCameraNotFound, cameraID)
 		}
 	}
 	return nil
-}
-
-func (m *GoProManager) setCameraGroup(cameraID, groupID string) {
-	m.db.UpdateCameraByID(cameraID, func(cs *database.CameraWithState) {
-		cs.GroupID = groupID
-	})
 }

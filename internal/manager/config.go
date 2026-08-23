@@ -4,214 +4,169 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dropz/dropz/pkg/database"
+	"github.com/dropz/dropz/internal/model"
 	"github.com/sirupsen/logrus"
 )
 
 // GetConfig returns the current configuration
-func (m *GoProManager) GetConfig() database.Config {
+func (m *GoProManager) GetConfig() model.Config {
 	return m.db.GetConfig()
 }
 
 // UpdateConfig updates the configuration
-func (m *GoProManager) UpdateConfig(config database.Config) error {
+func (m *GoProManager) UpdateConfig(config model.Config) error {
 	return m.db.UpdateConfig(config)
+}
+
+// setting describes one named config field: read, validate+write, and
+// copy-from-defaults all derive from a single field accessor, so adding a
+// setting is one table entry.
+type setting struct {
+	get  func(*model.Config) interface{}
+	set  func(c *model.Config, name string, value interface{}) error
+	copy func(dst, src *model.Config)
+}
+
+func boolSetting(field func(*model.Config) *bool) setting {
+	return setting{
+		get: func(c *model.Config) interface{} { return *field(c) },
+		set: func(c *model.Config, name string, value interface{}) error {
+			v, ok := value.(bool)
+			if !ok {
+				return fmt.Errorf("invalid value type for %s: expected bool", name)
+			}
+			*field(c) = v
+			return nil
+		},
+		copy: func(dst, src *model.Config) { *field(dst) = *field(src) },
+	}
+}
+
+// int32Setting validates min <= value <= max; max < 0 means no upper bound.
+func int32Setting(field func(*model.Config) *int32, min, max int32, unit string) setting {
+	return setting{
+		get: func(c *model.Config) interface{} { return *field(c) },
+		set: func(c *model.Config, name string, value interface{}) error {
+			v, err := toInt32(value, name)
+			if err != nil {
+				return err
+			}
+			if max >= 0 && (v < min || v > max) {
+				return fmt.Errorf("%s must be between %d and %d %s", name, min, max, unit)
+			}
+			if max < 0 && v < min {
+				return fmt.Errorf("%s must be at least %d %s", name, min, unit)
+			}
+			*field(c) = v
+			return nil
+		},
+		copy: func(dst, src *model.Config) { *field(dst) = *field(src) },
+	}
+}
+
+func stringSetting(field func(*model.Config) *string, validate func(string) error) setting {
+	return setting{
+		get: func(c *model.Config) interface{} { return *field(c) },
+		set: func(c *model.Config, name string, value interface{}) error {
+			v, ok := value.(string)
+			if !ok {
+				return fmt.Errorf("invalid value type for %s: expected string", name)
+			}
+			if validate != nil {
+				if err := validate(v); err != nil {
+					return err
+				}
+			}
+			*field(c) = v
+			return nil
+		},
+		copy: func(dst, src *model.Config) { *field(dst) = *field(src) },
+	}
+}
+
+func validateLogLevel(v string) error {
+	if _, err := logrus.ParseLevel(strings.ToLower(v)); err != nil {
+		return fmt.Errorf("invalid log_level: expected one of trace, debug, info, warn, error, fatal")
+	}
+	return nil
+}
+
+var settings = map[string]setting{
+	"pair_mode_enabled": boolSetting(func(c *model.Config) *bool { return &c.PairModeEnabled }),
+	"sync_enabled":      boolSetting(func(c *model.Config) *bool { return &c.SyncEnabled }),
+	"check_on_return":   boolSetting(func(c *model.Config) *bool { return &c.CheckOnReturn }),
+	"set_time_enabled":  boolSetting(func(c *model.Config) *bool { return &c.SetTimeEnabled }),
+
+	"scan_interval_seconds":         int32Setting(func(c *model.Config) *int32 { return &c.ScanIntervalSeconds }, 5, -1, "seconds"),
+	"connect_timeout_seconds":       int32Setting(func(c *model.Config) *int32 { return &c.ConnectTimeoutSeconds }, 5, 60, "seconds"),
+	"days_threshold":                int32Setting(func(c *model.Config) *int32 { return &c.DaysThreshold }, 1, -1, "day"),
+	"inactivity_timeout_seconds":    int32Setting(func(c *model.Config) *int32 { return &c.InactivityTimeoutSeconds }, 30, 3600, "seconds"),
+	"status_check_interval_seconds": int32Setting(func(c *model.Config) *int32 { return &c.StatusCheckIntervalSeconds }, 0, 3600, "seconds"),
+
+	"destination_folder": stringSetting(func(c *model.Config) *string { return &c.DestinationFolder }, nil),
+	"log_level":          stringSetting(func(c *model.Config) *string { return &c.LogLevel }, validateLogLevel),
+}
+
+// applyLogLevel applies the configured log level to the live logger.
+func (m *GoProManager) applyLogLevel(level string) {
+	if parsed, err := logrus.ParseLevel(level); err == nil {
+		m.log.SetLevel(parsed)
+	}
 }
 
 // GetSetting gets a specific setting value
 func (m *GoProManager) GetSetting(settingName string) (interface{}, error) {
-	config := m.db.GetConfig()
-
-	switch settingName {
-	case "pair_mode_enabled":
-		return config.PairModeEnabled, nil
-	case "sync_enabled":
-		return config.SyncEnabled, nil
-	case "scan_interval_seconds":
-		return config.ScanIntervalSeconds, nil
-	case "connect_timeout_seconds":
-		return config.ConnectTimeoutSeconds, nil
-	case "days_threshold":
-		return config.DaysThreshold, nil
-	case "destination_folder":
-		return config.DestinationFolder, nil
-	case "inactivity_timeout_seconds":
-		return config.InactivityTimeoutSeconds, nil
-	case "status_check_interval_seconds":
-		return config.StatusCheckIntervalSeconds, nil
-	case "check_on_return":
-		return config.CheckOnReturn, nil
-	case "set_time_enabled":
-		return config.SetTimeEnabled, nil
-	case "log_level":
-		return config.LogLevel, nil
-	default:
+	def, ok := settings[settingName]
+	if !ok {
 		return nil, fmt.Errorf("unknown setting: %s", settingName)
 	}
+	config := m.db.GetConfig()
+	return def.get(&config), nil
 }
 
 // UpdateSetting updates a specific setting with validation
-func (m *GoProManager) UpdateSetting(settingName string, value interface{}) (database.Config, error) {
+func (m *GoProManager) UpdateSetting(settingName string, value interface{}) (model.Config, error) {
 	config := m.db.GetConfig()
 
-	switch settingName {
-	case "pair_mode_enabled":
-		boolVal, ok := value.(bool)
-		if !ok {
-			return config, fmt.Errorf("invalid value type for pair_mode_enabled: expected bool")
-		}
-		config.PairModeEnabled = boolVal
-
-	case "sync_enabled":
-		boolVal, ok := value.(bool)
-		if !ok {
-			return config, fmt.Errorf("invalid value type for sync_enabled: expected bool")
-		}
-		config.SyncEnabled = boolVal
-
-	case "scan_interval_seconds":
-		intVal, err := toInt32(value, "scan_interval_seconds")
-		if err != nil {
-			return config, err
-		}
-		if intVal < 5 {
-			return config, fmt.Errorf("scan_interval_seconds must be at least 5 seconds")
-		}
-		config.ScanIntervalSeconds = intVal
-
-	case "connect_timeout_seconds":
-		intVal, err := toInt32(value, "connect_timeout_seconds")
-		if err != nil {
-			return config, err
-		}
-		if intVal < 5 || intVal > 60 {
-			return config, fmt.Errorf("connect_timeout_seconds must be between 5 and 60 seconds")
-		}
-		config.ConnectTimeoutSeconds = intVal
-
-	case "days_threshold":
-		intVal, err := toInt32(value, "days_threshold")
-		if err != nil {
-			return config, err
-		}
-		if intVal < 1 {
-			return config, fmt.Errorf("days_threshold must be at least 1 day")
-		}
-		config.DaysThreshold = intVal
-
-	case "destination_folder":
-		strVal, ok := value.(string)
-		if !ok {
-			return config, fmt.Errorf("invalid value type for destination_folder: expected string")
-		}
-		config.DestinationFolder = strVal
-
-	case "inactivity_timeout_seconds":
-		intVal, err := toInt32(value, "inactivity_timeout_seconds")
-		if err != nil {
-			return config, err
-		}
-		if intVal < 30 || intVal > 3600 {
-			return config, fmt.Errorf("inactivity_timeout_seconds must be between 30 and 3600 seconds")
-		}
-		config.InactivityTimeoutSeconds = intVal
-
-	case "status_check_interval_seconds":
-		intVal, err := toInt32(value, "status_check_interval_seconds")
-		if err != nil {
-			return config, err
-		}
-		if intVal < 0 || intVal > 3600 {
-			return config, fmt.Errorf("status_check_interval_seconds must be between 0 and 3600 seconds")
-		}
-		config.StatusCheckIntervalSeconds = intVal
-
-	case "check_on_return":
-		boolVal, ok := value.(bool)
-		if !ok {
-			return config, fmt.Errorf("invalid value type for check_on_return: expected bool")
-		}
-		config.CheckOnReturn = boolVal
-
-	case "set_time_enabled":
-		boolVal, ok := value.(bool)
-		if !ok {
-			return config, fmt.Errorf("invalid value type for set_time_enabled: expected bool")
-		}
-		config.SetTimeEnabled = boolVal
-
-	case "log_level":
-		strVal, ok := value.(string)
-		if !ok {
-			return config, fmt.Errorf("invalid value type for log_level: expected string")
-		}
-		validLevels := map[string]bool{
-			"trace": true, "debug": true, "info": true,
-			"warn": true, "error": true, "fatal": true,
-		}
-		if !validLevels[strings.ToLower(strVal)] {
-			return config, fmt.Errorf("invalid log_level: expected one of trace, debug, info, warn, error, fatal")
-		}
-		config.LogLevel = strVal
-		if level, err := logrus.ParseLevel(strVal); err == nil {
-			m.log.SetLevel(level)
-		}
-
-	default:
+	def, ok := settings[settingName]
+	if !ok {
 		return config, fmt.Errorf("unknown setting: %s", settingName)
+	}
+	if err := def.set(&config, settingName, value); err != nil {
+		return config, err
+	}
+	if settingName == "log_level" {
+		m.applyLogLevel(config.LogLevel)
 	}
 
 	if err := m.db.UpdateConfig(config); err != nil {
 		return config, fmt.Errorf("failed to update config: %w", err)
 	}
-
 	return config, nil
 }
 
-// ResetSetting resets a specific setting to its default value
-func (m *GoProManager) ResetSetting(settingName string) (database.Config, error) {
+// ResetSetting resets a specific setting (or "all") to its default value
+func (m *GoProManager) ResetSetting(settingName string) (model.Config, error) {
 	config := m.db.GetConfig()
-	defaults := database.DefaultConfig()
+	defaults := model.DefaultConfig()
 
-	switch settingName {
-	case "pair_mode_enabled":
-		config.PairModeEnabled = defaults.PairModeEnabled
-	case "sync_enabled":
-		config.SyncEnabled = defaults.SyncEnabled
-	case "scan_interval_seconds":
-		config.ScanIntervalSeconds = defaults.ScanIntervalSeconds
-	case "connect_timeout_seconds":
-		config.ConnectTimeoutSeconds = defaults.ConnectTimeoutSeconds
-	case "days_threshold":
-		config.DaysThreshold = defaults.DaysThreshold
-	case "destination_folder":
-		config.DestinationFolder = defaults.DestinationFolder
-	case "inactivity_timeout_seconds":
-		config.InactivityTimeoutSeconds = defaults.InactivityTimeoutSeconds
-	case "status_check_interval_seconds":
-		config.StatusCheckIntervalSeconds = defaults.StatusCheckIntervalSeconds
-	case "check_on_return":
-		config.CheckOnReturn = defaults.CheckOnReturn
-	case "set_time_enabled":
-		config.SetTimeEnabled = defaults.SetTimeEnabled
-	case "log_level":
-		config.LogLevel = defaults.LogLevel
-		if level, err := logrus.ParseLevel(defaults.LogLevel); err == nil {
-			m.log.SetLevel(level)
-		}
-	case "all":
+	if settingName == "all" {
 		config = defaults
-		if level, err := logrus.ParseLevel(defaults.LogLevel); err == nil {
-			m.log.SetLevel(level)
+		m.applyLogLevel(config.LogLevel)
+	} else {
+		def, ok := settings[settingName]
+		if !ok {
+			return config, fmt.Errorf("unknown setting: %s", settingName)
 		}
-	default:
-		return config, fmt.Errorf("unknown setting: %s", settingName)
+		def.copy(&config, &defaults)
+		if settingName == "log_level" {
+			m.applyLogLevel(config.LogLevel)
+		}
 	}
 
 	if err := m.db.UpdateConfig(config); err != nil {
 		return config, fmt.Errorf("failed to update config: %w", err)
 	}
-
 	return config, nil
 }
 

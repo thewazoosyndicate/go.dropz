@@ -32,7 +32,7 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 
 	if addOutput, addErr := addCmd.CombinedOutput(); addErr != nil {
 		m.log.Errorf("Failed to create connection profile: error=%v nmcli_output=%s", addErr, string(addOutput))
-		return fmt.Errorf("failed to create WiFi connection for %s: %v", ssid, addErr)
+		return fmt.Errorf("failed to create WiFi connection for %s: %w", ssid, addErr)
 	}
 
 	// Try to activate, retrying while the AP becomes visible
@@ -60,7 +60,7 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 	}
 
 	if lastErr != nil {
-		return fmt.Errorf("failed to activate WiFi connection %s after 10 attempts: %v", connName, lastErr)
+		return fmt.Errorf("failed to activate WiFi connection %s after 10 attempts: %w", connName, lastErr)
 	}
 
 	for i := 0; i < 10; i++ {
@@ -82,7 +82,7 @@ func (m *WiFiManager) Disconnect() error {
 	output, err := cmd.Output()
 	if err != nil {
 		m.log.Errorf("Failed to get active WiFi connections: error=%v", err)
-		return fmt.Errorf("failed to get active connections: %v", err)
+		return fmt.Errorf("failed to get active connections: %w", err)
 	}
 
 	lines := strings.Split(string(output), "\n")

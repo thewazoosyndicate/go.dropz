@@ -2,9 +2,9 @@ package tlv
 
 const (
 	// Packet size limits
-	MaxPacketSize     = 20    // BLE packet maximum size
-	MaxMessageLength  = 8191  // Maximum message length we can send (13-bit)
-	MaxReceiveLength  = 65535 // Maximum message length we can receive (16-bit)
+	MaxPacketSize    = 20    // BLE packet maximum size
+	MaxMessageLength = 8191  // Maximum message length we can send (13-bit)
+	MaxReceiveLength = 65535 // Maximum message length we can receive (16-bit)
 
 	// Header bit masks
 	ContinuationBit = 0x80 // Bit 7: Continuation packet indicator
@@ -19,6 +19,6 @@ const (
 	HeaderExtended16 = 0x40 // 10: Extended (16-bit length) - RECEIVE ONLY
 
 	// Fragment collection
-	DefaultTimeout = 10 * 1000 // 10 seconds in milliseconds
+	DefaultTimeout  = 10 * 1000 // 10 seconds in milliseconds
 	CleanupInterval = 30 * 1000 // 30 seconds cleanup interval
 )

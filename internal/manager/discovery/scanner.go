@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/dropz/dropz/pkg/ble"
+	"github.com/dropz/dropz/internal/ble"
 	"github.com/sirupsen/logrus"
 )
 

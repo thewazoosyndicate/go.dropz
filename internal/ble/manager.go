@@ -2,34 +2,51 @@ package ble
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/dropz/dropz/pkg/ble/tlv"
+	"github.com/dropz/dropz/internal/ble/tlv"
 	"github.com/sirupsen/logrus"
 	"tinygo.org/x/bluetooth"
 )
 
+// errAlreadyConnected signals a no-op connect; callers treat it as success.
+var errAlreadyConnected = errors.New("device already connected")
+
+const (
+	responseTimeout     = 5 * time.Second  // per-command TLV response wait
+	fragmentTimeout     = 10 * time.Second // stale multi-packet message cleanup
+	cameraReadyAttempts = 10               // GetHardwareInfo polls after connect
+	scanRetryBackoff    = 2 * time.Second  // wait after a failed adapter scan
+)
+
+// conn holds the per-device connection state. Each device gets its own
+// fragment collector and response tracker so concurrent traffic from two
+// cameras can never collide on command IDs.
+type conn struct {
+	device    *bluetooth.Device
+	chars     map[string]bluetooth.DeviceCharacteristic
+	collector *tlv.FragmentCollector
+	tracker   *tlv.ResponseTracker
+}
 
 // Manager provides a clean, simple BLE interface for GoPro devices
 // following the OpenGoPro BLE specification exactly
 type Manager struct {
-	adapter         *bluetooth.Adapter
-	discoveredDevices map[string]*Device    // discovered devices during scanning
-	connectedDevices  map[string]*bluetooth.Device // connected BLE devices
-	characteristics   map[string]map[string]bluetooth.DeviceCharacteristic // cached characteristics per device
-	mutex           sync.RWMutex
-	log             *logrus.Logger
-	isScanning      bool
-	scanDone        chan struct{}            // closed when StopScanning() is called
-	connectingDone  chan struct{}            // closed when connectBase() finishes, so scanner waits
-	discoveryCallback DeviceDiscoveryCallback // callback for live discovery updates
-	metadataCallback  MetadataUpdateFunc      // callback for metadata updates during connection
+	adapter           *bluetooth.Adapter
+	discoveredDevices map[string]*Device // discovered devices during scanning
+	conns             map[string]*conn   // active connections by MAC address
+	mutex             sync.RWMutex
+	log               *logrus.Logger
+	isScanning        bool
+	scanDone          chan struct{}                                        // closed when StopScanning() is called
+	connectingDone    chan struct{}                                        // closed when connect finishes, so scanner waits
+	discoveryCallback DeviceDiscoveryCallback                              // callback for live discovery updates
+	metadataCallback  MetadataUpdateFunc                                   // callback for metadata updates during connection
 	statusCallback    func(macAddress string, statusID byte, value []byte) // push notification callback
-	tlvCollector    *tlv.FragmentCollector
-	responseTracker *tlv.ResponseTracker
 }
 
 // parseTLVPairs parses a byte sequence of [ID][Length][Value...] triplets into a map.
@@ -53,18 +70,24 @@ func parseTLVPairs(data []byte) map[byte][]byte {
 
 // NewManager creates a new BLE manager
 func NewManager(adapter *bluetooth.Adapter, log *logrus.Logger) *Manager {
-	m := &Manager{
+	return &Manager{
 		adapter:           adapter,
 		discoveredDevices: make(map[string]*Device),
-		connectedDevices:  make(map[string]*bluetooth.Device),
-		characteristics:   make(map[string]map[string]bluetooth.DeviceCharacteristic),
+		conns:             make(map[string]*conn),
 		log:               log,
-		tlvCollector:      tlv.NewFragmentCollector(10 * time.Second),
-		responseTracker:   tlv.NewResponseTracker(),
 	}
+}
 
-	// Route async push notifications (0x93) to per-status callbacks
-	m.responseTracker.SetPushHandler(func(macAddress string, msg *tlv.TLVMessage) {
+// newConn creates the per-device connection state and wires push
+// notifications (0x93) through to the manager-level status callback.
+func (m *Manager) newConn(macAddress string, device *bluetooth.Device) *conn {
+	c := &conn{
+		device:    device,
+		chars:     make(map[string]bluetooth.DeviceCharacteristic),
+		collector: tlv.NewFragmentCollector(fragmentTimeout),
+		tracker:   tlv.NewResponseTracker(),
+	}
+	c.tracker.SetPushHandler(func(addr string, msg *tlv.TLVMessage) {
 		m.mutex.RLock()
 		cb := m.statusCallback
 		m.mutex.RUnlock()
@@ -75,11 +98,17 @@ func NewManager(adapter *bluetooth.Adapter, log *logrus.Logger) *Manager {
 			cb(macAddress, id, value)
 		}
 	})
-
-	return m
+	return c
 }
 
-// StartScanning scans for GoPro devices with optional live discovery callback
+// getConn returns the connection for a device, if any.
+func (m *Manager) getConn(macAddress string) *conn {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	return m.conns[macAddress]
+}
+
+// StartScanningWithCallback scans for GoPro devices with optional live discovery callback
 func (m *Manager) StartScanningWithCallback(ctx context.Context, callback DeviceDiscoveryCallback) error {
 	m.mutex.Lock()
 	if m.isScanning {
@@ -105,7 +134,7 @@ func (m *Manager) StartScanningWithCallback(ctx context.Context, callback Device
 			}
 			m.mutex.RUnlock()
 			// run scan session (blocks until StopScan or error)
-			_ = m.adapter.Scan(func(adapter *bluetooth.Adapter, result bluetooth.ScanResult) {
+			scanErr := m.adapter.Scan(func(adapter *bluetooth.Adapter, result bluetooth.ScanResult) {
 				// Primary: check for FEA6 service UUID per OpenGoPro spec
 				// Fallback: name-based check for older cameras that may not advertise the UUID
 				if result.HasServiceUUID(goProServiceUUID) ||
@@ -113,6 +142,11 @@ func (m *Manager) StartScanningWithCallback(ctx context.Context, callback Device
 					m.addDiscoveredDevice(result)
 				}
 			})
+			if scanErr != nil {
+				// Backoff so a dead adapter doesn't turn this into a spin loop
+				m.log.Warnf("BLE scan failed: %v", scanErr)
+				time.Sleep(scanRetryBackoff)
+			}
 			// loop to restart scanning if still enabled
 		}
 		m.log.Info("Stopped BLE scanning")
@@ -146,7 +180,7 @@ func (m *Manager) ScanDone() <-chan struct{} {
 	return m.scanDone
 }
 
-// ConnectingDone returns a channel that is closed when connectBase() finishes.
+// ConnectingDone returns a channel that is closed when a connect attempt finishes.
 // The scanner should wait on this before restarting to avoid BlueZ conflicts.
 func (m *Manager) ConnectingDone() <-chan struct{} {
 	m.mutex.RLock()
@@ -168,19 +202,17 @@ func (m *Manager) signalConnectingDone() {
 // connectAndDiscover handles the shared BLE connect + service discovery retry loop.
 // preDiscoveryHook runs after adapter.Connect() but before DiscoverServices() on each attempt
 // (used by pairing to insert D-Bus bonding). Returns the discovered services.
-// On success, the device is stored in connectedDevices. On failure, cleanup is done.
+// On success, the connection is stored in conns. On failure, cleanup is done.
+// Returns errAlreadyConnected (a no-op for callers) when a connection exists.
 func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(string) error) ([]bluetooth.DeviceService, time.Time, error) {
 	if err := validateAddress(macAddress); err != nil {
-		return nil, time.Time{}, fmt.Errorf("invalid device address: %v", err)
+		return nil, time.Time{}, fmt.Errorf("invalid device address: %w", err)
 	}
 
-	m.mutex.RLock()
-	if _, exists := m.connectedDevices[macAddress]; exists {
-		m.mutex.RUnlock()
+	if m.getConn(macAddress) != nil {
 		m.log.Debugf("Device %s already connected", macAddress)
-		return nil, time.Time{}, nil
+		return nil, time.Time{}, errAlreadyConnected
 	}
-	m.mutex.RUnlock()
 
 	connectStart := time.Now()
 
@@ -215,9 +247,7 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 				device.Disconnect()
 				connected = false
 			}
-			m.mutex.Lock()
-			delete(m.connectedDevices, macAddress)
-			m.mutex.Unlock()
+			m.dropConn(macAddress)
 			time.Sleep(time.Duration(retry+1) * time.Second)
 		}
 
@@ -230,8 +260,9 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 		connected = true
 		m.log.Debugf("BLE connected (attempt %d), elapsed=%v", retry+1, time.Since(connectStart))
 
+		c := m.newConn(macAddress, &device)
 		m.mutex.Lock()
-		m.connectedDevices[macAddress] = &device
+		m.conns[macAddress] = c
 		m.mutex.Unlock()
 
 		if preDiscoveryHook != nil {
@@ -253,10 +284,10 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 	}
 
 	if len(services) == 0 {
-		m.mutex.Lock()
-		delete(m.connectedDevices, macAddress)
-		m.mutex.Unlock()
-		device.Disconnect()
+		m.dropConn(macAddress)
+		if connected {
+			device.Disconnect()
+		}
 		return nil, time.Time{}, fmt.Errorf("service discovery failed after %d retries", ServiceDiscoveryRetries)
 	}
 
@@ -266,9 +297,11 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 // discoverCharacteristics enumerates characteristics on the given services,
 // caching those in cacheChars and enabling notifications on notifyChars.
 func (m *Manager) discoverCharacteristics(macAddress string, services []bluetooth.DeviceService, serviceFilter map[string]bool, cacheChars map[string]bool, notifyChars map[string]bool, connectStart time.Time) {
-	m.mutex.Lock()
-	m.characteristics[macAddress] = make(map[string]bluetooth.DeviceCharacteristic)
-	m.mutex.Unlock()
+	c := m.getConn(macAddress)
+	if c == nil {
+		m.log.Warnf("Characteristic discovery skipped: %s not connected", macAddress)
+		return
+	}
 
 	for _, service := range services {
 		serviceUUID := service.UUID().String()
@@ -286,7 +319,7 @@ func (m *Manager) discoverCharacteristics(macAddress string, services []bluetoot
 		for _, char := range chars {
 			charUUID := char.UUID().String()
 			if cacheChars[charUUID] {
-				m.characteristics[macAddress][charUUID] = char
+				c.chars[charUUID] = char
 			}
 			if notifyChars[charUUID] {
 				notifErr := char.EnableNotifications(func(data []byte) {
@@ -304,15 +337,23 @@ func (m *Manager) discoverCharacteristics(macAddress string, services []bluetoot
 	m.log.Debugf("Characteristic discovery complete, elapsed=%v", time.Since(connectStart))
 }
 
+// dropConn removes connection state for a device and stops its collector.
+func (m *Manager) dropConn(macAddress string) *conn {
+	m.mutex.Lock()
+	c := m.conns[macAddress]
+	delete(m.conns, macAddress)
+	m.mutex.Unlock()
+
+	if c != nil {
+		c.collector.Stop()
+	}
+	return c
+}
+
 // cleanupOnError removes connection state for a device. Used as a deferred cleanup.
 func (m *Manager) cleanupOnError(macAddress string) {
-	m.mutex.Lock()
-	dev := m.connectedDevices[macAddress]
-	delete(m.characteristics, macAddress)
-	delete(m.connectedDevices, macAddress)
-	m.mutex.Unlock()
-	if dev != nil {
-		dev.Disconnect()
+	if c := m.dropConn(macAddress); c != nil {
+		c.device.Disconnect()
 	}
 }
 
@@ -320,11 +361,11 @@ func (m *Manager) cleanupOnError(macAddress string) {
 // and polls until the camera is ready.
 func (m *Manager) connectBase(macAddress string) (hwInfo *HardwareInfo, err error) {
 	services, connectStart, connErr := m.connectAndDiscover(macAddress, nil)
+	if errors.Is(connErr, errAlreadyConnected) {
+		return nil, nil
+	}
 	if connErr != nil {
 		return nil, connErr
-	}
-	if services == nil {
-		return nil, nil // already connected
 	}
 
 	defer func() {
@@ -347,13 +388,13 @@ func (m *Manager) connectBase(macAddress string) (hwInfo *HardwareInfo, err erro
 	}, connectStart)
 
 	// Poll GetHardwareInfo until camera is ready
-	for attempt := 1; attempt <= 10; attempt++ {
+	for attempt := 1; attempt <= cameraReadyAttempts; attempt++ {
 		hwInfo, err = m.GetHardwareInfo(macAddress)
 		if err == nil && hwInfo != nil {
 			break
 		}
-		if attempt == 10 {
-			err = fmt.Errorf("camera not ready after %d attempts: %v", attempt, err)
+		if attempt == cameraReadyAttempts {
+			err = fmt.Errorf("camera not ready after %d attempts: %w", attempt, err)
 			return nil, err
 		}
 		time.Sleep(time.Second)
@@ -419,11 +460,11 @@ func (m *Manager) finishConnection(macAddress string, hwInfo *HardwareInfo, ssid
 // SetThirdPartyClient, and SetLocalDateTime.
 func (m *Manager) ConnectForStatusCheck(macAddress string) error {
 	services, connectStart, err := m.connectAndDiscover(macAddress, nil)
+	if errors.Is(err, errAlreadyConnected) {
+		return nil
+	}
 	if err != nil {
 		return err
-	}
-	if services == nil {
-		return nil // already connected
 	}
 
 	m.discoverCharacteristics(macAddress, services, map[string]bool{
@@ -449,22 +490,11 @@ func (m *Manager) QueryStatuses(macAddress string, statusIDs []byte) (map[byte][
 
 // DisconnectQuietly closes the BLE connection without sending Sleep — camera stays awake.
 func (m *Manager) DisconnectQuietly(macAddress string) error {
-	m.mutex.RLock()
-	device := m.connectedDevices[macAddress]
-	m.mutex.RUnlock()
-
-	if device == nil {
+	c := m.dropConn(macAddress)
+	if c == nil {
 		return fmt.Errorf("device not connected: %s", macAddress)
 	}
-
-	device.Disconnect()
-	m.tlvCollector.Reset()
-
-	m.mutex.Lock()
-	delete(m.connectedDevices, macAddress)
-	delete(m.characteristics, macAddress)
-	m.mutex.Unlock()
-
+	c.device.Disconnect()
 	return nil
 }
 
@@ -485,7 +515,7 @@ func (m *Manager) Connect(macAddress string) (err error) {
 	}()
 
 	if err = m.SetAPControl(macAddress, WiFiAPModeEnable); err != nil {
-		return fmt.Errorf("failed to enable WiFi AP: %v", err)
+		return fmt.Errorf("failed to enable WiFi AP: %w", err)
 	}
 
 	if regErr := m.RegisterStatusUpdates(macAddress, []byte{StatusBatteryPercentage}); regErr != nil {
@@ -494,7 +524,7 @@ func (m *Manager) Connect(macAddress string) (err error) {
 
 	ssid, password, credErr := m.GetWifiCredentials(macAddress)
 	if credErr != nil {
-		err = fmt.Errorf("failed to get WiFi credentials: %v", credErr)
+		err = fmt.Errorf("failed to get WiFi credentials: %w", credErr)
 		return err
 	}
 	m.finishConnection(macAddress, hwInfo, ssid, password)
@@ -512,11 +542,11 @@ func (m *Manager) ConnectForPairing(macAddress string) (err error) {
 		}
 		return nil
 	})
+	if errors.Is(connErr, errAlreadyConnected) {
+		return nil
+	}
 	if connErr != nil {
 		return connErr
-	}
-	if services == nil {
-		return nil // already connected
 	}
 
 	defer func() {
@@ -571,13 +601,9 @@ func (m *Manager) ConnectForPairing(macAddress string) (err error) {
 	return nil
 }
 
-// Disconnect closes the connection to a device
+// Disconnect closes the connection to a device, sending Sleep first.
 func (m *Manager) Disconnect(macAddress string) error {
-	m.mutex.RLock()
-	device := m.connectedDevices[macAddress]
-	m.mutex.RUnlock()
-	
-	if device == nil {
+	if m.getConn(macAddress) == nil {
 		return fmt.Errorf("device not connected: %s", macAddress)
 	}
 
@@ -587,57 +613,48 @@ func (m *Manager) Disconnect(macAddress string) error {
 		m.log.Debugf("Sleep command succeeded for %s", macAddress)
 	}
 
-	device.Disconnect()
-	m.tlvCollector.Reset()
-
-	m.mutex.Lock()
-	delete(m.connectedDevices, macAddress)
-	delete(m.characteristics, macAddress)
-	m.mutex.Unlock()
-
+	if c := m.dropConn(macAddress); c != nil {
+		c.device.Disconnect()
+	}
 	return nil
 }
 
 // GetWifiCredentials retrieves WiFi SSID and password from the device
 func (m *Manager) GetWifiCredentials(macAddress string) (string, string, error) {
-	m.mutex.RLock()
-	device := m.connectedDevices[macAddress]
-	chars := m.characteristics[macAddress]
-	m.mutex.RUnlock()
-	
-	if device == nil {
+	c := m.getConn(macAddress)
+	if c == nil {
 		return "", "", fmt.Errorf("device not connected: %s", macAddress)
 	}
 
-	// Get WiFi SSID
-	ssidChar, exists := chars[CharWifiSSID]
-	if !exists {
+	m.mutex.RLock()
+	ssidChar, ssidOK := c.chars[CharWifiSSID]
+	passChar, passOK := c.chars[CharWifiPassword]
+	m.mutex.RUnlock()
+
+	if !ssidOK {
 		return "", "", fmt.Errorf("WiFi SSID characteristic not found")
 	}
 
 	ssidData := make([]byte, 32)
 	n, err := ssidChar.Read(ssidData)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to read SSID: %v", err)
+		return "", "", fmt.Errorf("failed to read SSID: %w", err)
 	}
 	ssid := strings.TrimSpace(string(ssidData[:n]))
 
-	// Get WiFi password
-	passChar, exists := chars[CharWifiPassword]
-	if !exists {
+	if !passOK {
 		return "", "", fmt.Errorf("WiFi password characteristic not found")
 	}
 
 	passData := make([]byte, 64)
 	n, err = passChar.Read(passData)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to read password: %v", err)
+		return "", "", fmt.Errorf("failed to read password: %w", err)
 	}
 	password := strings.TrimSpace(string(passData[:n]))
 
 	return ssid, password, nil
 }
-
 
 // GetBatteryLevel queries the battery level from the device
 func (m *Manager) GetBatteryLevel(macAddress string) (int, error) {
@@ -672,15 +689,13 @@ func (m *Manager) Sleep(macAddress string) error {
 // Private helper methods
 
 func (m *Manager) addDiscoveredDevice(result bluetooth.ScanResult) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
 	macAddress := result.Address.String()
 	localName := result.LocalName()
 	rssi := int32(result.RSSI)
 	now := time.Now()
 
-	// Check if device already exists
+	m.mutex.Lock()
+	var deviceCopy Device
 	if existingDevice, exists := m.discoveredDevices[macAddress]; exists {
 		// EMA smoothing to reduce RSSI jitter between advertisements
 		const emaAlpha = 0.15
@@ -689,15 +704,8 @@ func (m *Manager) addDiscoveredDevice(result bluetooth.ScanResult) {
 		if existingDevice.Name == "" || existingDevice.Name != localName {
 			existingDevice.Name = localName
 		}
-
-		if m.discoveryCallback != nil {
-			deviceCopy := *existingDevice
-			go func() {
-				m.discoveryCallback(deviceCopy)
-			}()
-		}
+		deviceCopy = *existingDevice
 	} else {
-		// Create new device
 		device := &Device{
 			Name:       localName,
 			BLEAddress: macAddress,
@@ -706,41 +714,40 @@ func (m *Manager) addDiscoveredDevice(result bluetooth.ScanResult) {
 		}
 		m.discoveredDevices[macAddress] = device
 		m.log.Infof("Discovered new GoPro device: %s (%s) RSSI:%d", device.Name, device.BLEAddress, device.RSSI)
+		deviceCopy = *device
+	}
+	callback := m.discoveryCallback
+	m.mutex.Unlock()
 
-		if m.discoveryCallback != nil {
-			deviceCopy := *device
-			go func() {
-				m.discoveryCallback(deviceCopy)
-			}()
-		}
+	// Synchronous, outside the lock: the processing path is in-memory only,
+	// and a goroutine per advertisement previously grew unbounded.
+	if callback != nil {
+		callback(deviceCopy)
 	}
 }
 
-
 // sendMessage sends a TLV message on the given characteristic and waits for a response.
 func (m *Manager) sendMessage(macAddress string, charUUID string, id byte, data []byte, buildPacket func(byte, []byte) []byte) (Response, error) {
-	m.mutex.RLock()
-	device := m.connectedDevices[macAddress]
-	chars := m.characteristics[macAddress]
-	m.mutex.RUnlock()
-
-	if device == nil {
+	c := m.getConn(macAddress)
+	if c == nil {
 		return Response{}, fmt.Errorf("device not connected")
 	}
 
-	char, exists := chars[charUUID]
+	m.mutex.RLock()
+	char, exists := c.chars[charUUID]
+	m.mutex.RUnlock()
 	if !exists {
 		return Response{}, fmt.Errorf("characteristic %s not found", GetCharacteristicName(charUUID))
 	}
 
-	responseChan := m.responseTracker.RegisterCommand(id)
-	defer m.responseTracker.UnregisterCommand(id)
+	responseChan := c.tracker.RegisterCommand(id)
+	defer c.tracker.UnregisterCommand(id)
 
 	packets := tlv.SplitIntoPackets(buildPacket(id, data))
 
 	for i, pkt := range packets {
 		if _, err := char.WriteWithoutResponse(pkt); err != nil {
-			return Response{}, fmt.Errorf("failed to send packet %d: %v", i, err)
+			return Response{}, fmt.Errorf("failed to send packet %d: %w", i, err)
 		}
 	}
 
@@ -750,8 +757,8 @@ func (m *Manager) sendMessage(macAddress string, charUUID string, id byte, data 
 			Status: message.Status,
 			Data:   message.Payload,
 		}, nil
-	case <-time.After(5 * time.Second):
-		m.log.Warnf("0x%02X timed out after 5 seconds", id)
+	case <-time.After(responseTimeout):
+		m.log.Warnf("0x%02X timed out after %v", id, responseTimeout)
 		return Response{}, fmt.Errorf("timeout waiting for response to 0x%02X", id)
 	}
 }
@@ -765,22 +772,17 @@ func (m *Manager) sendQuery(macAddress string, queryID byte, data []byte) (Respo
 }
 
 func (m *Manager) handleNotification(macAddress string, data []byte) {
-	m.mutex.RLock()
-	device := m.connectedDevices[macAddress]
-	m.mutex.RUnlock()
-
-	if device == nil {
+	c := m.getConn(macAddress)
+	if c == nil {
 		return
 	}
 
-	if m.tlvCollector != nil {
-		message, err := m.tlvCollector.ProcessFragment(data)
-		if err != nil {
-			m.log.Debugf("Error processing TLV fragment (raw %x): %v", data, err)
-		} else if message != nil && m.responseTracker != nil {
-			if !m.responseTracker.RouteResponse(macAddress, message) {
-				m.log.Debugf("Unrouted notification: cmd=0x%02x status=%d len=%d", message.CommandID, message.Status, len(message.Payload))
-			}
+	message, err := c.collector.ProcessFragment(data)
+	if err != nil {
+		m.log.Debugf("Error processing TLV fragment (raw %x): %v", data, err)
+	} else if message != nil {
+		if !c.tracker.RouteResponse(macAddress, message) {
+			m.log.Debugf("Unrouted notification: cmd=0x%02x status=%d len=%d", message.CommandID, message.Status, len(message.Payload))
 		}
 	}
 }
@@ -805,12 +807,8 @@ func (m *Manager) SendPairingFinish(macAddress string) error {
 
 // IsConnected checks if a device has an active BLE connection
 func (m *Manager) IsConnected(macAddress string) bool {
-	m.mutex.RLock()
-	_, exists := m.connectedDevices[macAddress]
-	m.mutex.RUnlock()
-	return exists
+	return m.getConn(macAddress) != nil
 }
-
 
 // SetMetadataCallback sets the callback for metadata updates
 func (m *Manager) SetMetadataCallback(callback MetadataUpdateFunc) {
@@ -831,7 +829,7 @@ func (m *Manager) SetStatusCallback(cb func(macAddress string, statusID byte, va
 func (m *Manager) RegisterStatusUpdates(macAddress string, statusIDs []byte) error {
 	response, err := m.sendQuery(macAddress, QueryRegisterStatusUpdates, statusIDs)
 	if err != nil {
-		return fmt.Errorf("failed to register status updates: %v", err)
+		return fmt.Errorf("failed to register status updates: %w", err)
 	}
 	if response.Status != 0x00 {
 		return fmt.Errorf("register status updates failed: status=0x%02X", response.Status)
@@ -862,20 +860,18 @@ func (m *Manager) Stop() error {
 
 	m.StopScanning()
 
-	m.mutex.Lock()
-	devices := make(map[string]*bluetooth.Device, len(m.connectedDevices))
-	for k, v := range m.connectedDevices {
-		devices[k] = v
+	m.mutex.RLock()
+	addresses := make([]string, 0, len(m.conns))
+	for macAddress := range m.conns {
+		addresses = append(addresses, macAddress)
 	}
-	m.mutex.Unlock()
+	m.mutex.RUnlock()
 
-	for macAddress := range devices {
+	for _, macAddress := range addresses {
 		if err := m.Disconnect(macAddress); err != nil {
 			m.log.Warnf("Failed to disconnect from %s: %v", macAddress, err)
 		}
 	}
-
-	m.tlvCollector.Stop()
 
 	return nil
 }

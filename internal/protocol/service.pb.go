@@ -51,7 +51,7 @@ const file_service_proto_rawDesc = "" +
 	"\n" +
 	"GetSetting\x12\x18.dropz.GetSettingRequest\x1a\x19.dropz.GetSettingResponse\x12;\n" +
 	"\rUpdateSetting\x12\x1b.dropz.UpdateSettingRequest\x1a\r.dropz.Config\x129\n" +
-	"\fResetSetting\x12\x1a.dropz.ResetSettingRequest\x1a\r.dropz.ConfigB%Z#github.com/dropz/dropz/pkg/protocolb\x06proto3"
+	"\fResetSetting\x12\x1a.dropz.ResetSettingRequest\x1a\r.dropz.ConfigB%Z#github.com/dropz/dropz/internal/protocolb\x06proto3"
 
 var file_service_proto_goTypes = []any{
 	(*GetDiscoveredCamerasRequest)(nil),  // 0: dropz.GetDiscoveredCamerasRequest

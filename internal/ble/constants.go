@@ -33,12 +33,12 @@ const (
 	AdvertisementService = "0000fea6-0000-1000-8000-00805f9b34fb" // Same as ServiceControl
 
 	// Command IDs (OpenGoPro specification)
-	CmdSleep               = 0x05
-	CmdSetDateTime         = 0x0D // Set date/time (no timezone)
-	CmdSetLocalDateTime    = 0x0F // Set date/time with timezone + DST
-	CmdSetAPControl        = 0x17 // Control WiFi Access Point
-	CmdGetHardwareInfo     = 0x3C
-	CmdKeepAlive           = 0x5B // Keep camera awake during transfers
+	CmdSleep            = 0x05
+	CmdSetDateTime      = 0x0D // Set date/time (no timezone)
+	CmdSetLocalDateTime = 0x0F // Set date/time with timezone + DST
+	CmdSetAPControl     = 0x17 // Control WiFi Access Point
+	CmdGetHardwareInfo  = 0x3C
+	CmdKeepAlive        = 0x5B // Keep camera awake during transfers
 	// Not a spec-defined TLV command; empirically works as raw byte to register as third-party client
 	CmdRegisterClient = 0x6B
 

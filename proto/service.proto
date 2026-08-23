@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package dropz;
-option go_package = "github.com/dropz/dropz/pkg/protocol";
+option go_package = "github.com/dropz/dropz/internal/protocol";
 
 import "gopro.proto";
 import "video.proto";

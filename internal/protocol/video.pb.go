@@ -307,7 +307,7 @@ const file_video_proto_rawDesc = "" +
 	"\x11GetVideosResponse\x12(\n" +
 	"\x06videos\x18\x01 \x03(\v2\x10.dropz.VideoFileR\x06videos\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
-	"totalCountB%Z#github.com/dropz/dropz/pkg/protocolb\x06proto3"
+	"totalCountB%Z#github.com/dropz/dropz/internal/protocolb\x06proto3"
 
 var (
 	file_video_proto_rawDescOnce sync.Once

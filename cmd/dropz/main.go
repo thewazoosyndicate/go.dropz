@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/dropz/dropz/pkg/manager"
-	"github.com/dropz/dropz/pkg/server"
+	"github.com/dropz/dropz/internal/manager"
+	"github.com/dropz/dropz/internal/server"
 	"github.com/sirupsen/logrus"
 )
 
@@ -33,8 +33,11 @@ var (
 	syncEnabled = flag.Bool("sync-enabled", true, "Enable automatic content synchronization")
 )
 
-const (
-	appVersion = "0.2.0"
+// Set via -ldflags "-X main.appVersion=... -X main.buildTime=..." (see Makefile).
+// Must stay vars: -X cannot override consts.
+var (
+	appVersion = "dev"
+	buildTime  = "unknown"
 )
 
 type logFormatter struct{}
@@ -94,7 +97,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("dropz version %s\n", appVersion)
+		fmt.Printf("dropz version %s (built %s)\n", appVersion, buildTime)
 		os.Exit(0)
 	}
 

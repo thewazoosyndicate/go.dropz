@@ -11,7 +11,7 @@ import (
 func parseAddress(addr string) (bluetooth.Address, error) {
 	mac, err := bluetooth.ParseMAC(addr)
 	if err != nil {
-		return bluetooth.Address{}, fmt.Errorf("failed to parse MAC: %v", err)
+		return bluetooth.Address{}, fmt.Errorf("failed to parse MAC: %w", err)
 	}
 	return bluetooth.Address{MACAddress: bluetooth.MACAddress{MAC: mac}}, nil
 }

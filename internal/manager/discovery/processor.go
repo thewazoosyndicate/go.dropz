@@ -4,21 +4,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dropz/dropz/pkg/ble"
-	"github.com/dropz/dropz/pkg/database"
+	"github.com/dropz/dropz/internal/ble"
+	"github.com/dropz/dropz/internal/model"
+	"github.com/dropz/dropz/internal/store"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
 // Processor handles discovery processing operations
 type Processor struct {
-	db                 *database.Database
+	db                 *store.Store
 	log                *logrus.Logger
 	onCameraReappeared func(cameraID string, wasGoneFor time.Duration)
 }
 
 // NewProcessor creates a new processor
-func NewProcessor(db *database.Database, log *logrus.Logger) *Processor {
+func NewProcessor(db *store.Store, log *logrus.Logger) *Processor {
 	return &Processor{
 		db:  db,
 		log: log,
@@ -60,23 +61,23 @@ func (p *Processor) processDevice(dev ble.Device) {
 
 // createNewCamera creates a new camera entry in the database
 func (p *Processor) createNewCamera(name, bleAddress string, rssi int32) {
-	cameraState := &database.CameraWithState{
-		Camera: database.Camera{
+	cameraState := &model.CameraWithState{
+		Camera: model.Camera{
 			ID:         uuid.New().String(),
 			Name:       name,
 			BLEAddress: bleAddress,
 			RSSI:       rssi,
 		},
-		Status: database.CameraStatus{
+		Status: model.CameraStatus{
 			LastSeen:    time.Now(),
 			IsReachable: true,
 		},
-		Metadata: database.CameraMetadata{
+		Metadata: model.CameraMetadata{
 			ID: uuid.New().String(),
 		},
 	}
 
-	discoveredCamera := &database.DiscoveredCamera{
+	discoveredCamera := &model.DiscoveredCamera{
 		CameraState: cameraState,
 	}
 
@@ -85,21 +86,29 @@ func (p *Processor) createNewCamera(name, bleAddress string, rssi int32) {
 	}
 }
 
-// updateExistingCamera atomically updates an existing camera entry in the database.
+// updateExistingCamera atomically updates an existing camera entry in the model.
 func (p *Processor) updateExistingCamera(dbKey, bleAddress, name string, rssi int32) {
 	var wasGoneFor time.Duration
 	var cameraID string
 	wasUnreachable := false
 
-	err := p.db.UpdateCamera(dbKey, func(cs *database.CameraWithState) {
+	// Only persist when identity fields change; RSSI, LastSeen, and
+	// reachability are ephemeral and would otherwise rewrite the DB file
+	// on every advertisement.
+	err := p.db.UpdateCamera(dbKey, func(cs *model.CameraWithState) bool {
 		cameraID = cs.Camera.ID
+		durable := false
 
 		// Update BLE address in case it changed (macOS assigns random UUIDs)
-		cs.Camera.BLEAddress = bleAddress
+		if cs.Camera.BLEAddress != bleAddress {
+			cs.Camera.BLEAddress = bleAddress
+			durable = true
+		}
 
 		if cs.Camera.Name == "" || (!strings.Contains(cs.Camera.Name, "GoPro") && strings.Contains(name, "GoPro")) {
-			p.log.Debugf("Name updated for %s: '%s' -> '%s'", dbKey, cs.Camera.Name, name)
+			p.log.Debugf("Name updated for %s: '%s' to '%s'", dbKey, cs.Camera.Name, name)
 			cs.Camera.Name = name
+			durable = true
 		}
 
 		if !cs.Status.IsReachable {
@@ -111,6 +120,7 @@ func (p *Processor) updateExistingCamera(dbKey, bleAddress, name string, rssi in
 
 		cs.Camera.RSSI = rssi
 		cs.Status.LastSeen = time.Now()
+		return durable
 	})
 	if err != nil {
 		p.log.Errorf("Failed to update discovered camera: %v", err)

@@ -19,7 +19,7 @@ func (justWorksAgent) Release() *dbus.Error { return nil }
 func (justWorksAgent) RequestConfirmation(device dbus.ObjectPath, passkey uint32) *dbus.Error {
 	return nil
 }
-func (justWorksAgent) Cancel() *dbus.Error                                          { return nil }
+func (justWorksAgent) Cancel() *dbus.Error                                              { return nil }
 func (justWorksAgent) AuthorizeService(device dbus.ObjectPath, uuid string) *dbus.Error { return nil }
 
 // pairViaDbus pairs via org.bluez.Device1 with a registered "Just Works" agent.
@@ -29,7 +29,7 @@ func (justWorksAgent) AuthorizeService(device dbus.ObjectPath, uuid string) *dbu
 func (m *Manager) pairViaDbus(macAddress string) error {
 	conn, err := dbus.SystemBus()
 	if err != nil {
-		return fmt.Errorf("failed to connect to system D-Bus: %v", err)
+		return fmt.Errorf("failed to connect to system D-Bus: %w", err)
 	}
 
 	devPath := "/org/bluez/hci0/dev_" + strings.ReplaceAll(macAddress, ":", "_")
@@ -104,7 +104,7 @@ func (m *Manager) pairViaDbus(macAddress string) error {
 					m.log.Infof("Device %s already paired", macAddress)
 					return nil
 				}
-				return fmt.Errorf("D-Bus Pair() failed: %v", result.Err)
+				return fmt.Errorf("D-Bus Pair() failed: %w", result.Err)
 			}
 			m.log.Infof("D-Bus pairing successful for %s", macAddress)
 			return nil

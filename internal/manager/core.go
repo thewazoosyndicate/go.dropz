@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"mime"
 	"os"
@@ -12,20 +13,20 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dropz/dropz/pkg/ble"
-	"github.com/dropz/dropz/pkg/database"
-	"github.com/dropz/dropz/pkg/manager/discovery"
-	"github.com/dropz/dropz/pkg/manager/pairing"
-	syncpkg "github.com/dropz/dropz/pkg/manager/sync"
+	"github.com/dropz/dropz/internal/ble"
+	"github.com/dropz/dropz/internal/manager/discovery"
+	"github.com/dropz/dropz/internal/manager/pairing"
+	syncpkg "github.com/dropz/dropz/internal/manager/sync"
+	"github.com/dropz/dropz/internal/model"
+	"github.com/dropz/dropz/internal/store"
 	"github.com/sirupsen/logrus"
 	"tinygo.org/x/bluetooth"
 )
 
-
 // GoProManager is the main service that coordinates all GoPro operations
 type GoProManager struct {
 	// Core dependencies
-	db       *database.Database
+	db       *store.Store
 	ble      *ble.Manager
 	log      *logrus.Logger
 	notifier func()
@@ -53,10 +54,10 @@ type GoProManager struct {
 func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProManager, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	db := database.GetDatabase()
-	if err := db.Initialize(dbPath); err != nil {
+	db, err := store.New(dbPath)
+	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("failed to initialize database: %v", err)
+		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
 	// Initialize BLE adapter
@@ -69,7 +70,7 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 	// Enable BLE adapter directly (not in goroutine - required by platform BLE stacks)
 	if err := adapter.Enable(); err != nil {
 		cancel()
-		return nil, fmt.Errorf("failed to enable BLE adapter: %v", err)
+		return nil, fmt.Errorf("failed to enable BLE adapter: %w", err)
 	}
 
 	bleManager := ble.NewManager(adapter, log)
@@ -82,7 +83,7 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 		}
 		cameraID := cam.CameraState.Camera.ID
 
-		db.UpdateCameraByID(cameraID, func(cs *database.CameraWithState) {
+		db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
 			if metadata.WiFiSSID != "" && metadata.WiFiPassword != "" {
 				cs.Camera.WiFiSSID = metadata.WiFiSSID
 				cs.Camera.WiFiPassword = metadata.WiFiPassword
@@ -111,7 +112,6 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 		db.UpdateConfig(config)
 	}
 
-
 	manager := &GoProManager{
 		ctx:                  ctx,
 		cancel:               cancel,
@@ -122,10 +122,10 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 		statusCheckRequest:   make(chan string, 8),
 	}
 
-	// Initialize component managers (coordinator gets notify/BLEOperation as method values)
-	manager.syncCoordinator = syncpkg.NewCoordinator(db, bleManager, log, make(map[string]*syncpkg.SyncTask), manager.notify, manager.BLEOperation, ctx)
+	// Initialize component managers (notify/BLEOperation passed as method values)
+	manager.syncCoordinator = syncpkg.NewCoordinator(ctx, db, bleManager, log, manager.notify, manager.BLEOperation)
 	manager.discoveryProcessor = discovery.NewProcessor(db, log)
-	manager.pairingManager = pairing.NewManager(db, bleManager, log, ctx)
+	manager.pairingManager = pairing.NewManager(ctx, db, bleManager, log, manager.BLEOperation, manager.notify)
 
 	// Handle real-time status push notifications from camera (battery level)
 	bleManager.SetStatusCallback(func(bleAddress string, statusID byte, value []byte) {
@@ -140,7 +140,7 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 
 		switch statusID {
 		case ble.StatusBatteryPercentage:
-			if err := db.UpdateCameraByID(cam.CameraState.Camera.ID, func(cs *database.CameraWithState) {
+			if err := db.UpdateCameraByID(cam.CameraState.Camera.ID, func(cs *model.CameraWithState) {
 				cs.Metadata.BatteryLevel = int32(value[0])
 			}); err != nil {
 				log.Errorf("Failed to update battery from push notification: %v", err)
@@ -185,11 +185,31 @@ func (m *GoProManager) notify() {
 	}
 }
 
+// GetDiscoveredCameras returns cameras in the Discovered pool
+func (m *GoProManager) GetDiscoveredCameras() []*model.DiscoveredCamera {
+	return m.db.GetCamerasForDiscoveredPool()
+}
+
+// GetManagedCameras returns cameras in the Managed pool
+func (m *GoProManager) GetManagedCameras() []*model.ManagedCamera {
+	return m.db.GetCamerasForManagedPool()
+}
+
+// GetSyncQueue returns the current sync queue
+func (m *GoProManager) GetSyncQueue() []*model.SyncQueueEntry {
+	return m.db.GetSyncQueue()
+}
+
+// GetGroups returns all groups
+func (m *GoProManager) GetGroups() []*model.Group {
+	return m.db.GetAllGroups()
+}
+
 // ManageCamera adds a camera to the managed camera pool
-func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, error) {
+func (m *GoProManager) ManageCamera(cameraID string) (*model.ManagedCamera, error) {
 	cs, found := m.db.GetCameraByID(cameraID)
 	if !found {
-		return nil, fmt.Errorf("camera with ID %s not found", cameraID)
+		return nil, fmt.Errorf("%w: %s", model.ErrCameraNotFound, cameraID)
 	}
 
 	if cs.Status.IsManaged {
@@ -197,7 +217,7 @@ func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, e
 		return managedCamera, nil
 	}
 
-	m.db.UpdateCameraByID(cameraID, func(cs *database.CameraWithState) {
+	m.db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
 		cs.Status.IsManaged = true
 	})
 
@@ -207,7 +227,12 @@ func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, e
 	config := m.db.GetConfig()
 	if config.PairModeEnabled && !cs.Status.IsPaired {
 		m.log.Infof("Pair mode enabled, starting pairing for camera %s", cs.Camera.Name)
-		m.PairCamera(cameraID)
+		// Async so the gRPC handler doesn't block behind pairingMu for 30s+
+		go func() {
+			if _, err := m.PairCamera(cameraID); err != nil {
+				m.log.Warnf("Auto-pairing failed for camera %s: %v", cs.Camera.Name, err)
+			}
+		}()
 	} else if cs.Status.IsReachable && cs.Status.IsPaired {
 		select {
 		case m.statusCheckRequest <- cameraID:
@@ -215,7 +240,14 @@ func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, e
 		}
 	}
 
-	managedCamera, _ := m.db.GetManagedCameraByID(cameraID)
+	// Pairing may still be running async, so fall back to the raw camera
+	// state instead of requiring managed+paired.
+	managedCamera, ok := m.db.GetManagedCameraByID(cameraID)
+	if !ok {
+		if updated, found := m.db.GetCameraByID(cameraID); found {
+			managedCamera = &model.ManagedCamera{CameraState: updated}
+		}
+	}
 	return managedCamera, nil
 }
 
@@ -223,10 +255,10 @@ func (m *GoProManager) ManageCamera(cameraID string) (*database.ManagedCamera, e
 func (m *GoProManager) UnmanageCamera(cameraID string) error {
 	_, found := m.db.GetCameraByID(cameraID)
 	if !found {
-		return fmt.Errorf("camera with ID %s not found", cameraID)
+		return fmt.Errorf("%w: %s", model.ErrCameraNotFound, cameraID)
 	}
 
-	m.db.UpdateCameraByID(cameraID, func(cs *database.CameraWithState) {
+	m.db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
 		cs.Status.IsManaged = false
 	})
 
@@ -246,11 +278,11 @@ func (m *GoProManager) BLEOperation(ctx context.Context, critical bool, operatio
 			return nil
 		}
 
-		if opErr == context.Canceled && critical {
+		if errors.Is(opErr, context.Canceled) && critical {
 			m.log.Infof("Waiting 3 seconds before retrying critical operation attempt %d/3", opTry+1)
 			time.Sleep(3 * time.Second)
 			continue
-		} else if opErr == context.Canceled {
+		} else if errors.Is(opErr, context.Canceled) || errors.Is(opErr, context.DeadlineExceeded) {
 			return opErr
 		}
 
@@ -275,7 +307,7 @@ func (m *GoProManager) ResetTransientStates() {
 }
 
 // PairCamera pairs with a GoPro camera using BLE
-func (m *GoProManager) PairCamera(cameraID string) (*database.ManagedCamera, error) {
+func (m *GoProManager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 	// Mark as pairing immediately so UI shows spinner even while queued
 	m.db.UpdateCameraPairingStatusByID(cameraID, true)
 	m.notify()
@@ -283,7 +315,7 @@ func (m *GoProManager) PairCamera(cameraID string) (*database.ManagedCamera, err
 	m.pairingMu.Lock()
 	defer m.pairingMu.Unlock()
 
-	result, err := m.pairingManager.PairCamera(cameraID, m.BLEOperation, m.notify)
+	result, err := m.pairingManager.PairCamera(cameraID)
 	if err != nil {
 		return result, err
 	}
@@ -300,7 +332,7 @@ func (m *GoProManager) PairCamera(cameraID string) (*database.ManagedCamera, err
 }
 
 // ForceSync adds a camera to the sync queue for immediate synchronization
-func (m *GoProManager) ForceSync(cameraID string) (*database.SyncQueueEntry, error) {
+func (m *GoProManager) ForceSync(cameraID string) (*model.SyncQueueEntry, error) {
 	syncEntry, err := m.syncCoordinator.ForceSync(cameraID)
 	if err != nil {
 		return nil, err
@@ -322,10 +354,10 @@ func (m *GoProManager) CancelSync(cameraID string) error {
 }
 
 // GetVideosByCamera scans the destination folder for media files and maps them to cameras via WiFi SSID.
-func (m *GoProManager) GetVideosByCamera(cameraID string, startDate, endDate time.Time, limit, offset int) ([]*database.VideoFile, int) {
+func (m *GoProManager) GetVideosByCamera(cameraID string, startDate, endDate time.Time, limit, offset int) ([]*model.VideoFile, int) {
 	config := m.db.GetConfig()
 	if config.DestinationFolder == "" {
-		return []*database.VideoFile{}, 0
+		return []*model.VideoFile{}, 0
 	}
 
 	// Build WiFi SSID → camera ID map
@@ -339,10 +371,10 @@ func (m *GoProManager) GetVideosByCamera(cameraID string, startDate, endDate tim
 	entries, err := os.ReadDir(config.DestinationFolder)
 	if err != nil {
 		m.log.Warnf("Cannot read destination folder %s: %v", config.DestinationFolder, err)
-		return []*database.VideoFile{}, 0
+		return []*model.VideoFile{}, 0
 	}
 
-	var allVideos []*database.VideoFile
+	var allVideos []*model.VideoFile
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -386,7 +418,7 @@ func (m *GoProManager) GetVideosByCamera(cameraID string, startDate, endDate tim
 			}
 
 			hash := sha256.Sum256([]byte(fullPath))
-			allVideos = append(allVideos, &database.VideoFile{
+			allVideos = append(allVideos, &model.VideoFile{
 				ID:        fmt.Sprintf("%x", hash[:8]),
 				Name:      f.Name(),
 				Path:      fullPath,
@@ -405,7 +437,7 @@ func (m *GoProManager) GetVideosByCamera(cameraID string, startDate, endDate tim
 
 	totalCount := len(allVideos)
 	if offset >= totalCount {
-		return []*database.VideoFile{}, totalCount
+		return []*model.VideoFile{}, totalCount
 	}
 	end := offset + limit
 	if limit == 0 || end > totalCount {

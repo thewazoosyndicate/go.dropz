@@ -23,11 +23,11 @@ func TestParseHeader(t *testing.T) {
 			name: "General header (5-bit)",
 			data: []byte{0x05}, // 0000 0101 - General type, 5 byte message
 			expected: &PacketHeader{
-				IsStart:       true,
+				IsStart:        true,
 				IsContinuation: false,
-				PacketType:    HeaderTypeGeneral,
-				MessageLength: 5,
-				HeaderSize:    1,
+				PacketType:     HeaderTypeGeneral,
+				MessageLength:  5,
+				HeaderSize:     1,
 			},
 			expectError: false,
 		},
@@ -35,11 +35,11 @@ func TestParseHeader(t *testing.T) {
 			name: "Extended 13-bit header",
 			data: []byte{0x21, 0x00}, // 0010 0001, 0000 0000 - Extended13, 256 byte message
 			expected: &PacketHeader{
-				IsStart:       true,
+				IsStart:        true,
 				IsContinuation: false,
-				PacketType:    HeaderTypeExtended13,
-				MessageLength: 256,
-				HeaderSize:    2,
+				PacketType:     HeaderTypeExtended13,
+				MessageLength:  256,
+				HeaderSize:     2,
 			},
 			expectError: false,
 		},
@@ -47,11 +47,11 @@ func TestParseHeader(t *testing.T) {
 			name: "Extended 16-bit header",
 			data: []byte{0x40, 0x10, 0x00}, // 0100 0000, 0001 0000, 0000 0000 - Extended16, 4096 byte message
 			expected: &PacketHeader{
-				IsStart:       true,
+				IsStart:        true,
 				IsContinuation: false,
-				PacketType:    HeaderTypeExtended16,
-				MessageLength: 4096,
-				HeaderSize:    3,
+				PacketType:     HeaderTypeExtended16,
+				MessageLength:  4096,
+				HeaderSize:     3,
 			},
 			expectError: false,
 		},
@@ -70,11 +70,11 @@ func TestParseHeader(t *testing.T) {
 			name: "Maximum general header length",
 			data: []byte{0x1F}, // 0001 1111 - General type, 31 byte message (max for 5-bit)
 			expected: &PacketHeader{
-				IsStart:       true,
+				IsStart:        true,
 				IsContinuation: false,
-				PacketType:    HeaderTypeGeneral,
-				MessageLength: 31,
-				HeaderSize:    1,
+				PacketType:     HeaderTypeGeneral,
+				MessageLength:  31,
+				HeaderSize:     1,
 			},
 			expectError: false,
 		},
@@ -106,24 +106,24 @@ func TestParseHeader(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			header, err := ParseHeader(tt.data)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if header == nil {
 				t.Errorf("Expected header but got nil")
 				return
 			}
-			
+
 			// Compare fields
 			if header.IsStart != tt.expected.IsStart {
 				t.Errorf("IsStart: got %v, want %v", header.IsStart, tt.expected.IsStart)
@@ -243,19 +243,19 @@ func TestParseTLVResponse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			msg, err := ParseTLVResponse(tt.data)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if msg.CommandID != tt.expected.CommandID {
 				t.Errorf("CommandID: got %02X, want %02X", msg.CommandID, tt.expected.CommandID)
 			}
@@ -275,7 +275,7 @@ func TestFragmentCollector(t *testing.T) {
 	t.Run("Single packet message", func(t *testing.T) {
 		// Extended 13-bit header: length=4, then Command 0x01, Status 0x00, Payload "Hi"
 		packet := []byte{0x20, 0x04, 0x01, 0x00, 0x48, 0x69} // Header + 4 bytes of message
-		
+
 		msg, err := fc.ProcessFragment(packet)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
@@ -297,16 +297,16 @@ func TestFragmentCollector(t *testing.T) {
 	t.Run("Multi-packet message", func(t *testing.T) {
 		// Message: Command 0x02, Status 0x00, Payload: 20 bytes of 'A'
 		// Total message length: 22 bytes (1 cmd + 1 status + 20 payload)
-		
+
 		// First packet: Extended 13-bit header for 22 bytes, then first 18 bytes of message
-		packet1 := []byte{0x20, 0x16} // Header: Extended13, length = 22
-		packet1 = append(packet1, 0x02, 0x00) // Command and Status
+		packet1 := []byte{0x20, 0x16}                               // Header: Extended13, length = 22
+		packet1 = append(packet1, 0x02, 0x00)                       // Command and Status
 		packet1 = append(packet1, bytes.Repeat([]byte{'A'}, 16)...) // 16 bytes of payload (18 bytes total after header)
-		
+
 		// Second packet: Continuation with counter 0, remaining 4 bytes
-		packet2 := []byte{0x80} // Continuation header, counter = 0
+		packet2 := []byte{0x80}                                    // Continuation header, counter = 0
 		packet2 = append(packet2, bytes.Repeat([]byte{'A'}, 4)...) // Remaining 4 bytes of payload
-		
+
 		// Process first packet
 		msg, err := fc.ProcessFragment(packet1)
 		if err != nil {
@@ -315,7 +315,7 @@ func TestFragmentCollector(t *testing.T) {
 		if msg != nil {
 			t.Fatalf("Expected nil message after first packet, got %v", msg)
 		}
-		
+
 		// Process second packet
 		msg, err = fc.ProcessFragment(packet2)
 		if err != nil {
@@ -338,7 +338,7 @@ func TestFragmentCollector(t *testing.T) {
 	t.Run("Out of order packets", func(t *testing.T) {
 		// Try to send continuation packet without start
 		contPacket := []byte{0x81, 0x00, 0x00} // Continuation with counter 1
-		
+
 		msg, err := fc.ProcessFragment(contPacket)
 		if err == nil {
 			t.Errorf("Expected error for out of order packet")

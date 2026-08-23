@@ -2,41 +2,61 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
 	"time"
 
-	"github.com/dropz/dropz/pkg/database"
+	"github.com/dropz/dropz/internal/model"
+	"github.com/dropz/dropz/internal/protocol"
 	"github.com/sirupsen/logrus"
-	"github.com/dropz/dropz/pkg/protocol"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Manager defines the operations the server needs from the business layer
 type Manager interface {
+	// Reads
+	GetDiscoveredCameras() []*model.DiscoveredCamera
+	GetManagedCameras() []*model.ManagedCamera
+	GetSyncQueue() []*model.SyncQueueEntry
+	GetGroups() []*model.Group
 	// Camera
-	ManageCamera(cameraID string) (*database.ManagedCamera, error)
+	ManageCamera(cameraID string) (*model.ManagedCamera, error)
 	UnmanageCamera(cameraID string) error
-	PairCamera(cameraID string) (*database.ManagedCamera, error)
+	PairCamera(cameraID string) (*model.ManagedCamera, error)
 	// Sync
-	ForceSync(cameraID string) (*database.SyncQueueEntry, error)
+	ForceSync(cameraID string) (*model.SyncQueueEntry, error)
 	CancelSync(cameraID string) error
-	GetVideosByCamera(cameraID string, startDate, endDate time.Time, limit, offset int) ([]*database.VideoFile, int)
+	GetVideosByCamera(cameraID string, startDate, endDate time.Time, limit, offset int) ([]*model.VideoFile, int)
 	// Groups
-	CreateGroup(name string, cameraIDs []string) (*database.Group, error)
-	UpdateGroup(groupID, name string, cameraIDs []string) (*database.Group, error)
+	CreateGroup(name string, cameraIDs []string) (*model.Group, error)
+	UpdateGroup(groupID, name string, cameraIDs []string) (*model.Group, error)
 	DeleteGroup(groupID string) error
 	LoadGroup(groupID string) error
-	SaveManagedAsGroup(name string) (*database.Group, error)
+	SaveManagedAsGroup(name string) (*model.Group, error)
 	// Config
-	GetConfig() database.Config
-	UpdateConfig(config database.Config) error
+	GetConfig() model.Config
+	UpdateConfig(config model.Config) error
 	GetSetting(settingName string) (interface{}, error)
-	UpdateSetting(settingName string, value interface{}) (database.Config, error)
-	ResetSetting(settingName string) (database.Config, error)
+	UpdateSetting(settingName string, value interface{}) (model.Config, error)
+	ResetSetting(settingName string) (model.Config, error)
 	// Notifications
 	SetNotifier(notifier func())
+}
+
+// rpcError maps domain errors to gRPC status codes.
+func rpcError(err error) error {
+	switch {
+	case errors.Is(err, model.ErrCameraNotFound), errors.Is(err, model.ErrGroupNotFound):
+		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, model.ErrNotManagedPaired):
+		return status.Error(codes.FailedPrecondition, err.Error())
+	default:
+		return status.Error(codes.Internal, err.Error())
+	}
 }
 
 // streamEntry tracks a single gRPC stream and its done channel
@@ -78,6 +98,22 @@ func NewDropzServer(manager Manager, log *logrus.Logger) *DropzServer {
 	}
 }
 
+// unaryShutdownInterceptor rejects unary RPCs once shutdown has started.
+func (s *DropzServer) unaryShutdownInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	if s.ctx.Err() != nil {
+		return nil, status.Error(codes.Unavailable, "server is shutting down")
+	}
+	return handler(ctx, req)
+}
+
+// streamShutdownInterceptor rejects new streams once shutdown has started.
+func (s *DropzServer) streamShutdownInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	if s.ctx.Err() != nil {
+		return status.Error(codes.Unavailable, "server is shutting down")
+	}
+	return handler(srv, ss)
+}
+
 // Start starts the gRPC server
 func (s *DropzServer) Start(address string) error {
 	s.log.Debug("Starting DropzServer", "address", address)
@@ -86,10 +122,13 @@ func (s *DropzServer) Start(address string) error {
 
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %v", address, err)
+		return fmt.Errorf("failed to listen on %s: %w", address, err)
 	}
 
-	s.server = grpc.NewServer()
+	s.server = grpc.NewServer(
+		grpc.ChainUnaryInterceptor(s.unaryShutdownInterceptor),
+		grpc.ChainStreamInterceptor(s.streamShutdownInterceptor),
+	)
 	protocol.RegisterDropzServiceServer(s.server, s)
 
 	s.log.WithFields(logrus.Fields{"address": address}).Info("gRPC server started")
@@ -174,9 +213,15 @@ func (s *DropzServer) streamUpdateHandler() {
 			if !ok {
 				return
 			}
+			// Coalesce bursts: BLE advertisements can notify several times
+			// per second and each broadcast is a full snapshot per stream.
 			select {
 			case <-s.ctx.Done():
 				return
+			case <-time.After(250 * time.Millisecond):
+			}
+			select {
+			case <-s.streamUpdateChannel:
 			default:
 			}
 			s.forEachStream(false)
@@ -262,15 +307,10 @@ func (s *DropzServer) watchStream(stream grpc.ServerStream, sendFn func(heartbea
 
 // GetDiscoveredCameras implements the GetDiscoveredCameras RPC method
 func (s *DropzServer) GetDiscoveredCameras(ctx context.Context, req *protocol.GetDiscoveredCamerasRequest) (*protocol.GetDiscoveredCamerasResponse, error) {
-	if s.ctx.Err() != nil {
-		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
-	}
-
-	db := database.GetDatabase()
-	cameras := db.GetCamerasForDiscoveredPool()
+	cameras := s.manager.GetDiscoveredCameras()
 	proto := make([]*protocol.DiscoveredCamera, len(cameras))
 	for i, cam := range cameras {
-		proto[i] = cam.ToProtoDiscoveredCamera()
+		proto[i] = toProtoDiscoveredCamera(cam)
 	}
 	return &protocol.GetDiscoveredCamerasResponse{Cameras: proto}, nil
 }
@@ -293,15 +333,10 @@ func (s *DropzServer) WatchDiscoveredCameras(req *protocol.GetDiscoveredCamerasR
 
 // GetManagedCameras implements the GetManagedCameras RPC method
 func (s *DropzServer) GetManagedCameras(ctx context.Context, req *protocol.GetManagedCamerasRequest) (*protocol.GetManagedCamerasResponse, error) {
-	if s.ctx.Err() != nil {
-		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
-	}
-
-	db := database.GetDatabase()
-	cameras := db.GetCamerasForManagedPool()
+	cameras := s.manager.GetManagedCameras()
 	proto := make([]*protocol.ManagedCamera, len(cameras))
 	for i, cam := range cameras {
-		proto[i] = cam.ToProtoManagedCamera()
+		proto[i] = toProtoManagedCamera(cam)
 	}
 	return &protocol.GetManagedCamerasResponse{Cameras: proto}, nil
 }
@@ -324,15 +359,10 @@ func (s *DropzServer) WatchManagedCameras(req *protocol.GetManagedCamerasRequest
 
 // GetSyncQueue implements the GetSyncQueue RPC method
 func (s *DropzServer) GetSyncQueue(ctx context.Context, req *protocol.GetSyncQueueRequest) (*protocol.GetSyncQueueResponse, error) {
-	if s.ctx.Err() != nil {
-		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
-	}
-
-	db := database.GetDatabase()
-	queue := db.GetSyncQueue()
+	queue := s.manager.GetSyncQueue()
 	proto := make([]*protocol.SyncQueueEntry, len(queue))
 	for i, entry := range queue {
-		proto[i] = entry.ToProtoSyncQueueEntry()
+		proto[i] = toProtoSyncQueueEntry(entry)
 	}
 	return &protocol.GetSyncQueueResponse{Queue: proto}, nil
 }
@@ -355,21 +385,14 @@ func (s *DropzServer) WatchSyncQueue(req *protocol.GetSyncQueueRequest, stream p
 
 // ManageCamera implements the ManageCamera RPC method
 func (s *DropzServer) ManageCamera(ctx context.Context, req *protocol.ManageCameraRequest) (*protocol.ManageCameraResponse, error) {
-	if s.ctx.Err() != nil {
-		return &protocol.ManageCameraResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
-	}
 	s.log.WithFields(logrus.Fields{"camera_id": req.CameraId}).Info("Handling ManageCamera request")
 
 	managedCamera, err := s.manager.ManageCamera(req.CameraId)
 	if err != nil {
-		return &protocol.ManageCameraResponse{Success: false, Message: err.Error()}, nil
+		return nil, rpcError(err)
 	}
-
 	if managedCamera == nil {
-		return &protocol.ManageCameraResponse{
-			Success: false,
-			Message: "Failed to manage camera: camera not found or not eligible for management",
-		}, nil
+		return nil, status.Error(codes.NotFound, "camera not found")
 	}
 
 	s.NotifyUpdate()
@@ -377,19 +400,14 @@ func (s *DropzServer) ManageCamera(ctx context.Context, req *protocol.ManageCame
 	return &protocol.ManageCameraResponse{
 		Success: true,
 		Message: fmt.Sprintf("Camera %s is now managed", req.CameraId),
-		Camera:  managedCamera.ToProtoManagedCamera(),
+		Camera:  toProtoManagedCamera(managedCamera),
 	}, nil
 }
 
 // UnmanageCamera implements the UnmanageCamera RPC method
 func (s *DropzServer) UnmanageCamera(ctx context.Context, req *protocol.UnmanageCameraRequest) (*protocol.UnmanageCameraResponse, error) {
-	if s.ctx.Err() != nil {
-		return &protocol.UnmanageCameraResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
-	}
-
-	err := s.manager.UnmanageCamera(req.CameraId)
-	if err != nil {
-		return &protocol.UnmanageCameraResponse{Success: false, Message: err.Error()}, nil
+	if err := s.manager.UnmanageCamera(req.CameraId); err != nil {
+		return nil, rpcError(err)
 	}
 
 	s.NotifyUpdate()
@@ -402,20 +420,12 @@ func (s *DropzServer) UnmanageCamera(ctx context.Context, req *protocol.Unmanage
 
 // PairCamera implements the PairCamera RPC method
 func (s *DropzServer) PairCamera(ctx context.Context, req *protocol.PairCameraRequest) (*protocol.PairCameraResponse, error) {
-	if s.ctx.Err() != nil {
-		return &protocol.PairCameraResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
-	}
-
 	managedCamera, err := s.manager.PairCamera(req.CameraId)
 	if err != nil {
-		return &protocol.PairCameraResponse{Success: false, Message: err.Error()}, nil
+		return nil, rpcError(err)
 	}
-
 	if managedCamera == nil {
-		return &protocol.PairCameraResponse{
-			Success: false,
-			Message: "Failed to pair camera: camera not found or not eligible for pairing",
-		}, nil
+		return nil, status.Error(codes.NotFound, "camera not found")
 	}
 
 	s.NotifyUpdate()
@@ -423,19 +433,15 @@ func (s *DropzServer) PairCamera(ctx context.Context, req *protocol.PairCameraRe
 	return &protocol.PairCameraResponse{
 		Success: true,
 		Message: fmt.Sprintf("Camera %s paired successfully", req.CameraId),
-		Camera:  managedCamera.ToProtoManagedCamera(),
+		Camera:  toProtoManagedCamera(managedCamera),
 	}, nil
 }
 
 // ForceSync implements the ForceSync RPC method
 func (s *DropzServer) ForceSync(ctx context.Context, req *protocol.ForceSyncRequest) (*protocol.ForceSyncResponse, error) {
-	if s.ctx.Err() != nil {
-		return &protocol.ForceSyncResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
-	}
-
 	queueEntry, err := s.manager.ForceSync(req.CameraId)
 	if err != nil {
-		return &protocol.ForceSyncResponse{Success: false, Message: err.Error()}, nil
+		return nil, rpcError(err)
 	}
 
 	s.NotifyUpdate()
@@ -443,19 +449,14 @@ func (s *DropzServer) ForceSync(ctx context.Context, req *protocol.ForceSyncRequ
 	return &protocol.ForceSyncResponse{
 		Success:    true,
 		Message:    fmt.Sprintf("Camera %s added to sync queue", req.CameraId),
-		QueueEntry: queueEntry.ToProtoSyncQueueEntry(),
+		QueueEntry: toProtoSyncQueueEntry(queueEntry),
 	}, nil
 }
 
 // CancelSync implements the CancelSync RPC method
 func (s *DropzServer) CancelSync(ctx context.Context, req *protocol.CancelSyncRequest) (*protocol.CancelSyncResponse, error) {
-	if s.ctx.Err() != nil {
-		return &protocol.CancelSyncResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
-	}
-
-	err := s.manager.CancelSync(req.CameraId)
-	if err != nil {
-		return &protocol.CancelSyncResponse{Success: false, Message: err.Error()}, nil
+	if err := s.manager.CancelSync(req.CameraId); err != nil {
+		return nil, rpcError(err)
 	}
 
 	s.NotifyUpdate()
@@ -468,58 +469,40 @@ func (s *DropzServer) CancelSync(ctx context.Context, req *protocol.CancelSyncRe
 
 // GetGroups implements the GetGroups RPC method
 func (s *DropzServer) GetGroups(ctx context.Context, req *protocol.GetGroupsRequest) (*protocol.GetGroupsResponse, error) {
-	if s.ctx.Err() != nil {
-		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
-	}
-
-	db := database.GetDatabase()
-	groups := db.GetAllGroups()
+	groups := s.manager.GetGroups()
 	protoGroups := make([]*protocol.Group, len(groups))
 	for i, group := range groups {
-		protoGroups[i] = group.ToProtoGroup()
+		protoGroups[i] = toProtoGroup(group)
 	}
 	return &protocol.GetGroupsResponse{Groups: protoGroups}, nil
 }
 
 // CreateGroup implements the CreateGroup RPC method
 func (s *DropzServer) CreateGroup(ctx context.Context, req *protocol.CreateGroupRequest) (*protocol.Group, error) {
-	if s.ctx.Err() != nil {
-		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
-	}
-
 	group, err := s.manager.CreateGroup(req.Name, req.CameraIds)
 	if err != nil {
-		return nil, err
+		return nil, rpcError(err)
 	}
 
 	s.NotifyUpdate()
-	return group.ToProtoGroup(), nil
+	return toProtoGroup(group), nil
 }
 
 // UpdateGroup implements the UpdateGroup RPC method
 func (s *DropzServer) UpdateGroup(ctx context.Context, req *protocol.UpdateGroupRequest) (*protocol.Group, error) {
-	if s.ctx.Err() != nil {
-		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
-	}
-
 	group, err := s.manager.UpdateGroup(req.GroupId, req.Name, req.CameraIds)
 	if err != nil {
-		return nil, err
+		return nil, rpcError(err)
 	}
 
 	s.NotifyUpdate()
-	return group.ToProtoGroup(), nil
+	return toProtoGroup(group), nil
 }
 
 // DeleteGroup implements the DeleteGroup RPC method
 func (s *DropzServer) DeleteGroup(ctx context.Context, req *protocol.DeleteGroupRequest) (*protocol.OperationResponse, error) {
-	if s.ctx.Err() != nil {
-		return &protocol.OperationResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
-	}
-
-	err := s.manager.DeleteGroup(req.GroupId)
-	if err != nil {
-		return &protocol.OperationResponse{Success: false, Message: err.Error()}, nil
+	if err := s.manager.DeleteGroup(req.GroupId); err != nil {
+		return nil, rpcError(err)
 	}
 
 	s.NotifyUpdate()
@@ -532,13 +515,8 @@ func (s *DropzServer) DeleteGroup(ctx context.Context, req *protocol.DeleteGroup
 
 // LoadGroup implements the LoadGroup RPC method
 func (s *DropzServer) LoadGroup(ctx context.Context, req *protocol.LoadGroupRequest) (*protocol.LoadGroupResponse, error) {
-	if s.ctx.Err() != nil {
-		return &protocol.LoadGroupResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
-	}
-
-	err := s.manager.LoadGroup(req.GroupId)
-	if err != nil {
-		return &protocol.LoadGroupResponse{Success: false, Message: err.Error()}, nil
+	if err := s.manager.LoadGroup(req.GroupId); err != nil {
+		return nil, rpcError(err)
 	}
 
 	s.NotifyUpdate()
@@ -551,25 +529,17 @@ func (s *DropzServer) LoadGroup(ctx context.Context, req *protocol.LoadGroupRequ
 
 // SaveManagedAsGroup implements the SaveManagedAsGroup RPC method
 func (s *DropzServer) SaveManagedAsGroup(ctx context.Context, req *protocol.SaveManagedAsGroupRequest) (*protocol.Group, error) {
-	if s.ctx.Err() != nil {
-		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
-	}
-
 	group, err := s.manager.SaveManagedAsGroup(req.Name)
 	if err != nil {
-		return nil, err
+		return nil, rpcError(err)
 	}
 
 	s.NotifyUpdate()
-	return group.ToProtoGroup(), nil
+	return toProtoGroup(group), nil
 }
 
 // GetVideos implements the GetVideos RPC method
 func (s *DropzServer) GetVideos(ctx context.Context, req *protocol.GetVideosRequest) (*protocol.GetVideosResponse, error) {
-	if s.ctx.Err() != nil {
-		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
-	}
-
 	var startDate, endDate time.Time
 	if req.StartDate != nil {
 		startDate = req.StartDate.AsTime()
@@ -581,7 +551,7 @@ func (s *DropzServer) GetVideos(ctx context.Context, req *protocol.GetVideosRequ
 	videos, totalCount := s.manager.GetVideosByCamera(req.CameraId, startDate, endDate, int(req.Limit), int(req.Offset))
 	protoVideos := make([]*protocol.VideoFile, len(videos))
 	for i, video := range videos {
-		protoVideos[i] = video.ToProtoVideoFile()
+		protoVideos[i] = toProtoVideoFile(video)
 	}
 
 	return &protocol.GetVideosResponse{
@@ -592,25 +562,18 @@ func (s *DropzServer) GetVideos(ctx context.Context, req *protocol.GetVideosRequ
 
 // GetConfig implements the GetConfig RPC method
 func (s *DropzServer) GetConfig(ctx context.Context, req *protocol.GetConfigRequest) (*protocol.GetConfigResponse, error) {
-	if s.ctx.Err() != nil {
-		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
-	}
-
 	config := s.manager.GetConfig()
-	return &protocol.GetConfigResponse{Config: config.ToProtoConfig()}, nil
+	return &protocol.GetConfigResponse{Config: toProtoConfig(config)}, nil
 }
 
 // UpdateConfig implements the UpdateConfig RPC method
 func (s *DropzServer) UpdateConfig(ctx context.Context, req *protocol.UpdateConfigRequest) (*protocol.UpdateConfigResponse, error) {
-	if s.ctx.Err() != nil {
-		return &protocol.UpdateConfigResponse{Success: false, Message: fmt.Sprintf("server is shutting down: %s", s.ctx.Err().Error())}, nil
-	}
-
 	if req.Config == nil {
-		return &protocol.UpdateConfigResponse{Success: false, Message: "No config provided"}, nil
+		return nil, status.Error(codes.InvalidArgument, "no config provided")
 	}
 
-	dbConfig := database.Config{
+	dbConfig := model.Config{
+		PairModeEnabled:            req.Config.PairModeEnabled,
 		SyncEnabled:                req.Config.SyncEnabled,
 		ScanIntervalSeconds:        req.Config.ScanIntervalSeconds,
 		ConnectTimeoutSeconds:      req.Config.ConnectTimeoutSeconds,
@@ -624,28 +587,23 @@ func (s *DropzServer) UpdateConfig(ctx context.Context, req *protocol.UpdateConf
 		LastUpdated:                req.Config.LastUpdated.AsTime(),
 	}
 
-	err := s.manager.UpdateConfig(dbConfig)
-	if err != nil {
-		return &protocol.UpdateConfigResponse{Success: false, Message: err.Error()}, nil
+	if err := s.manager.UpdateConfig(dbConfig); err != nil {
+		return nil, rpcError(err)
 	}
 
 	updatedConfig := s.manager.GetConfig()
 	return &protocol.UpdateConfigResponse{
 		Success: true,
 		Message: "Configuration updated successfully",
-		Config:  updatedConfig.ToProtoConfig(),
+		Config:  toProtoConfig(updatedConfig),
 	}, nil
 }
 
 // GetSetting implements the GetSetting RPC method
 func (s *DropzServer) GetSetting(ctx context.Context, req *protocol.GetSettingRequest) (*protocol.GetSettingResponse, error) {
-	if s.ctx.Err() != nil {
-		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
-	}
-
 	value, err := s.manager.GetSetting(req.SettingName)
 	if err != nil {
-		return nil, err
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	response := &protocol.GetSettingResponse{}
@@ -657,7 +615,7 @@ func (s *DropzServer) GetSetting(ctx context.Context, req *protocol.GetSettingRe
 	case string:
 		response.Value = &protocol.GetSettingResponse_StringValue{StringValue: v}
 	default:
-		return nil, fmt.Errorf("unsupported setting type for %s", req.SettingName)
+		return nil, status.Errorf(codes.InvalidArgument, "unsupported setting type for %s", req.SettingName)
 	}
 
 	return response, nil
@@ -665,10 +623,6 @@ func (s *DropzServer) GetSetting(ctx context.Context, req *protocol.GetSettingRe
 
 // UpdateSetting implements the UpdateSetting RPC method
 func (s *DropzServer) UpdateSetting(ctx context.Context, req *protocol.UpdateSettingRequest) (*protocol.Config, error) {
-	if s.ctx.Err() != nil {
-		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
-	}
-
 	var value interface{}
 	switch req.Value.(type) {
 	case *protocol.UpdateSettingRequest_BoolValue:
@@ -678,30 +632,25 @@ func (s *DropzServer) UpdateSetting(ctx context.Context, req *protocol.UpdateSet
 	case *protocol.UpdateSettingRequest_StringValue:
 		value = req.GetStringValue()
 	default:
-		return nil, fmt.Errorf("no value provided for setting %s", req.SettingName)
+		return nil, status.Errorf(codes.InvalidArgument, "no value provided for setting %s", req.SettingName)
 	}
 
 	config, err := s.manager.UpdateSetting(req.SettingName, value)
 	if err != nil {
-		return nil, err
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	s.NotifyUpdate()
-	return config.ToProtoConfig(), nil
+	return toProtoConfig(config), nil
 }
 
 // ResetSetting implements the ResetSetting RPC method
 func (s *DropzServer) ResetSetting(ctx context.Context, req *protocol.ResetSettingRequest) (*protocol.Config, error) {
-	if s.ctx.Err() != nil {
-		return nil, fmt.Errorf("server is shutting down: %w", s.ctx.Err())
-	}
-
 	config, err := s.manager.ResetSetting(req.SettingName)
 	if err != nil {
-		return nil, err
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	s.NotifyUpdate()
-	return config.ToProtoConfig(), nil
+	return toProtoConfig(config), nil
 }
-

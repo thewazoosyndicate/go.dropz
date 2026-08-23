@@ -3,8 +3,13 @@ package manager
 import (
 	"time"
 
-	"github.com/dropz/dropz/pkg/ble"
-	"github.com/dropz/dropz/pkg/manager/discovery"
+	"github.com/dropz/dropz/internal/ble"
+	"github.com/dropz/dropz/internal/manager/discovery"
+)
+
+const (
+	syncQueueInterval   = 30 * time.Second
+	unreachableInterval = 15 * time.Second
 )
 
 // Start starts the GoPro manager service
@@ -13,9 +18,10 @@ func (m *GoProManager) Start() error {
 
 	m.ResetTransientStates()
 
-	m.wg.Add(2)
+	m.wg.Add(3)
 	go m.startBackgroundScanner()
 	go m.deviceManager()
+	go m.statusCheckWorker()
 
 	return nil
 }
@@ -37,12 +43,13 @@ func (m *GoProManager) Stop() {
 	m.log.Info("GoPro manager shutdown: phase=completed status=success")
 }
 
-// deviceManager periodically processes sync queue and checks camera statuses via BLE.
+// deviceManager periodically processes the sync queue and schedules status checks.
+// BLE-heavy work runs in statusCheckWorker so a slow camera never stalls this loop.
 func (m *GoProManager) deviceManager() {
 	defer m.wg.Done()
 	defer m.log.Debug("Device manager goroutine finished.")
 
-	syncTicker := time.NewTicker(30 * time.Second)
+	syncTicker := time.NewTicker(syncQueueInterval)
 	defer syncTicker.Stop()
 
 	config := m.db.GetConfig()
@@ -53,7 +60,7 @@ func (m *GoProManager) deviceManager() {
 	statusCheckTicker := time.NewTicker(statusInterval)
 	defer statusCheckTicker.Stop()
 
-	unreachableTicker := time.NewTicker(15 * time.Second)
+	unreachableTicker := time.NewTicker(unreachableInterval)
 	defer unreachableTicker.Stop()
 
 	m.log.Info("Starting device manager")
@@ -78,17 +85,30 @@ func (m *GoProManager) deviceManager() {
 			}
 		case <-statusCheckTicker.C:
 			if m.db.GetConfig().StatusCheckIntervalSeconds > 0 {
-				m.checkCameraStatuses()
+				m.enqueueStatusChecks()
 			}
 		case <-m.immediateSyncTrigger:
 			m.log.Debug("Immediate sync triggered - processing sync queue")
 			m.syncCoordinator.ProcessSyncQueue()
-		case cameraID := <-m.statusCheckRequest:
-			m.checkSingleCameraStatusByID(cameraID)
 		case <-unreachableTicker.C:
 			config := m.db.GetConfig()
 			timeout := time.Duration(config.InactivityTimeoutSeconds) * time.Second
 			m.discoveryProcessor.MarkUnreachableDevicesBackground(timeout, m.notify)
+		}
+	}
+}
+
+// statusCheckWorker serializes BLE status checks off the deviceManager loop.
+func (m *GoProManager) statusCheckWorker() {
+	defer m.wg.Done()
+	defer m.log.Debug("Status check worker finished.")
+
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case cameraID := <-m.statusCheckRequest:
+			m.checkSingleCameraStatusByID(cameraID)
 		}
 	}
 }

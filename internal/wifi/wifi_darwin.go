@@ -14,7 +14,7 @@ import (
 func detectWiFiInterface() (string, error) {
 	out, err := exec.Command("networksetup", "-listallhardwareports").CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("failed to list hardware ports: %v", err)
+		return "", fmt.Errorf("failed to list hardware ports: %w", err)
 	}
 
 	lines := strings.Split(string(out), "\n")
@@ -37,7 +37,7 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 
 	iface, err := detectWiFiInterface()
 	if err != nil {
-		return fmt.Errorf("failed to detect Wi-Fi interface: %v", err)
+		return fmt.Errorf("failed to detect Wi-Fi interface: %w", err)
 	}
 
 	// Try to connect, retrying while the AP becomes visible
@@ -71,7 +71,7 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 	}
 
 	if lastErr != nil {
-		return fmt.Errorf("failed to connect to WiFi %s after 10 attempts: %v", ssid, lastErr)
+		return fmt.Errorf("failed to connect to WiFi %s after 10 attempts: %w", ssid, lastErr)
 	}
 
 	// Poll until connected
@@ -92,14 +92,14 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 func (m *WiFiManager) Disconnect() error {
 	iface, err := detectWiFiInterface()
 	if err != nil {
-		return fmt.Errorf("failed to detect Wi-Fi interface: %v", err)
+		return fmt.Errorf("failed to detect Wi-Fi interface: %w", err)
 	}
 
 	// Get current network to remove it from preferred list
 	cmd := exec.Command("networksetup", "-getairportnetwork", iface)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("failed to get current network: %v", err)
+		return fmt.Errorf("failed to get current network: %w", err)
 	}
 
 	// Output format: "Current Wi-Fi Network: <SSID>"

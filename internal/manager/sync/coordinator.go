@@ -8,10 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dropz/dropz/pkg/ble"
-	"github.com/dropz/dropz/pkg/database"
+	"github.com/dropz/dropz/internal/ble"
+	"github.com/dropz/dropz/internal/model"
+	"github.com/dropz/dropz/internal/store"
+	"github.com/dropz/dropz/internal/wifi"
 	"github.com/sirupsen/logrus"
-	"github.com/dropz/dropz/pkg/wifi"
 )
 
 // Sync priority constants
@@ -19,6 +20,18 @@ const (
 	SyncPriorityManual = 10 // High priority for manually requested syncs
 	SyncPriorityAuto   = 5  // Normal priority for automatic syncs
 )
+
+// Operation timeouts
+const (
+	syncOverallTimeout = 30 * time.Minute
+	downloadTimeout    = 20 * time.Minute
+	keepAliveInterval  = 3 * time.Second
+	apiReadyAttempts   = 10
+	apiReadyDelay      = 2 * time.Second
+)
+
+// BLEOperation runs a BLE operation with the manager's retry policy.
+type BLEOperation func(ctx context.Context, critical bool, op func() error) error
 
 // SyncTask represents a camera sync task
 type SyncTask struct {
@@ -31,24 +44,24 @@ type SyncTask struct {
 
 // Coordinator handles sync orchestration
 type Coordinator struct {
-	db             *database.Database
-	ble            *ble.Manager
-	log            *logrus.Logger
-	activeTasks    map[string]*SyncTask
-	mutex          sync.RWMutex
-	notifier       func()
-	bleOperation   func(context.Context, bool, func() error) error
-	ctx            context.Context
-	syncSem        chan struct{}
+	db           *store.Store
+	ble          *ble.Manager
+	log          *logrus.Logger
+	activeTasks  map[string]*SyncTask
+	mutex        sync.RWMutex
+	notifier     func()
+	bleOperation BLEOperation
+	ctx          context.Context
+	syncSem      chan struct{}
 }
 
 // NewCoordinator creates a new sync coordinator
-func NewCoordinator(db *database.Database, ble *ble.Manager, log *logrus.Logger, activeTasks map[string]*SyncTask, notifier func(), bleOperation func(context.Context, bool, func() error) error, ctx context.Context) *Coordinator {
+func NewCoordinator(ctx context.Context, db *store.Store, ble *ble.Manager, log *logrus.Logger, notifier func(), bleOperation BLEOperation) *Coordinator {
 	return &Coordinator{
 		db:           db,
 		ble:          ble,
 		log:          log,
-		activeTasks:  activeTasks,
+		activeTasks:  make(map[string]*SyncTask),
 		notifier:     notifier,
 		bleOperation: bleOperation,
 		ctx:          ctx,
@@ -84,7 +97,7 @@ func (c *Coordinator) ProcessSyncQueue() {
 }
 
 // tryClaimCamera validates a sync queue entry and atomically claims the camera for syncing.
-func (c *Coordinator) tryClaimCamera(entry *database.SyncQueueEntry) (*SyncTask, bool) {
+func (c *Coordinator) tryClaimCamera(entry *model.SyncQueueEntry) (*SyncTask, bool) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
@@ -133,13 +146,13 @@ func (c *Coordinator) tryClaimCamera(entry *database.SyncQueueEntry) (*SyncTask,
 }
 
 // ForceSync adds a camera to the sync queue for immediate synchronization
-func (c *Coordinator) ForceSync(cameraID string) (*database.SyncQueueEntry, error) {
+func (c *Coordinator) ForceSync(cameraID string) (*model.SyncQueueEntry, error) {
 	camera, found := c.db.GetCameraByID(cameraID)
 	if !found {
-		return nil, fmt.Errorf("camera with ID %s not found", cameraID)
+		return nil, fmt.Errorf("%w: %s", model.ErrCameraNotFound, cameraID)
 	}
 	if !camera.Status.IsManaged || !camera.Status.IsPaired {
-		return nil, fmt.Errorf("camera %s must be managed and paired before syncing", camera.Camera.Name)
+		return nil, fmt.Errorf("%w: %s", model.ErrNotManagedPaired, camera.Camera.Name)
 	}
 
 	for _, entry := range c.db.GetSyncQueue() {
@@ -149,7 +162,7 @@ func (c *Coordinator) ForceSync(cameraID string) (*database.SyncQueueEntry, erro
 		}
 	}
 
-	syncEntry := &database.SyncQueueEntry{
+	syncEntry := &model.SyncQueueEntry{
 		CameraID:         cameraID,
 		QueuedAt:         time.Now(),
 		Priority:         SyncPriorityManual,
@@ -158,7 +171,7 @@ func (c *Coordinator) ForceSync(cameraID string) (*database.SyncQueueEntry, erro
 	}
 
 	if err := c.db.AddSyncQueueEntry(syncEntry); err != nil {
-		return nil, fmt.Errorf("failed to add camera to sync queue: %v", err)
+		return nil, fmt.Errorf("failed to add camera to sync queue: %w", err)
 	}
 
 	c.db.ResetSyncStatusByID(cameraID)
@@ -172,7 +185,7 @@ func (c *Coordinator) ForceSync(cameraID string) (*database.SyncQueueEntry, erro
 func (c *Coordinator) CancelSync(cameraID string) error {
 	camera, found := c.db.GetCameraByID(cameraID)
 	if !found {
-		return fmt.Errorf("camera with ID %s not found", cameraID)
+		return fmt.Errorf("%w: %s", model.ErrCameraNotFound, cameraID)
 	}
 
 	c.log.Infof("Canceling sync for camera %s", camera.Camera.Name)
@@ -221,7 +234,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		return
 	}
 
-	syncEntry := &database.SyncQueueEntry{
+	syncEntry := &model.SyncQueueEntry{
 		CameraID: task.CameraID,
 	}
 
@@ -234,7 +247,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 	}
 
 	config := c.db.GetConfig()
-	syncCtx, cancel := context.WithTimeout(task.Ctx, 30*time.Minute)
+	syncCtx, cancel := context.WithTimeout(task.Ctx, syncOverallTimeout)
 	defer cancel()
 
 	// Step 1: Connect to camera via BLE
@@ -263,7 +276,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 	keepAliveCtx, keepAliveCancel := context.WithCancel(syncCtx)
 	defer keepAliveCancel()
 	go func() {
-		ticker := time.NewTicker(3 * time.Second)
+		ticker := time.NewTicker(keepAliveInterval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -304,20 +317,20 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 
 	// Step 3: Verify GoPro HTTP API is reachable
 	c.log.Info("Verifying GoPro HTTP API connectivity...")
-	for attempt := 1; attempt <= 10; attempt++ {
+	for attempt := 1; attempt <= apiReadyAttempts; attempt++ {
 		_, err := wifiManager.GetCameraStatus(syncCtx)
 		if err == nil {
 			c.log.Info("GoPro HTTP API is reachable")
 			break
 		}
-		if attempt == 10 {
+		if attempt == apiReadyAttempts {
 			updateProgress("GoPro API unreachable", syncEntry.ProgressPercent)
 			c.log.Errorf("GoPro HTTP API not reachable after %d attempts: %v", attempt, err)
 			c.db.SetLastSyncErrorByID(task.CameraID, "GoPro API unreachable")
 			return
 		}
-		c.log.Debugf("GoPro API not ready (attempt %d/10): %v", attempt, err)
-		time.Sleep(2 * time.Second)
+		c.log.Debugf("GoPro API not ready (attempt %d/%d): %v", attempt, apiReadyAttempts, err)
+		time.Sleep(apiReadyDelay)
 	}
 
 	// Step 4: Download media
@@ -338,7 +351,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		return
 	}
 
-	downloadCtx, downloadCancel := context.WithTimeout(syncCtx, 20*time.Minute)
+	downloadCtx, downloadCancel := context.WithTimeout(syncCtx, downloadTimeout)
 	defer downloadCancel()
 
 	downloadedFiles, err := wifiManager.DownloadVideos(downloadCtx, cameraFolder, int(config.DaysThreshold))
@@ -358,7 +371,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 }
 
 // updateSyncQueueEntrySafely updates the sync queue entry only if the task hasn't been cancelled
-func (c *Coordinator) updateSyncQueueEntrySafely(task *SyncTask, syncEntry *database.SyncQueueEntry) error {
+func (c *Coordinator) updateSyncQueueEntrySafely(task *SyncTask, syncEntry *model.SyncQueueEntry) error {
 	// Check if the task has been cancelled
 	if task.Ctx != nil {
 		select {

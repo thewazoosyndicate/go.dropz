@@ -34,8 +34,8 @@ const (
 	// Status endpoints
 	StatusURL = "/gopro/camera/state"
 	// Media endpoints
-	MediaListURL      = "/gopro/media/list"
-	MediaInfoURL      = "/gopro/media/info"
+	MediaListURL = "/gopro/media/list"
+	MediaInfoURL = "/gopro/media/info"
 )
 
 // WiFiManager handles WiFi operations for GoPro devices
@@ -53,12 +53,12 @@ func NewWiFiManager(log *logrus.Logger) *WiFiManager {
 // DownloadVideos downloads videos from a GoPro device
 func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysInPast int) ([]string, error) {
 	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create destination directory: %v", err)
+		return nil, fmt.Errorf("failed to create destination directory: %w", err)
 	}
 
 	mediaFiles, err := m.getMediaList(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get media list: %v", err)
+		return nil, fmt.Errorf("failed to get media list: %w", err)
 	}
 
 	if len(mediaFiles) == 0 {
@@ -93,13 +93,7 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 			continue
 		}
 
-		var dlErr error
-		if media.Size > 10*1024*1024 {
-			dlErr = m.downloadChunked(ctx, media.URL, outputPath, media.CreatedAt, media.Size)
-		} else {
-			dlErr = m.downloadFileWithResume(ctx, media.URL, outputPath, media.CreatedAt, media.Size)
-		}
-
+		dlErr := m.downloadFileWithResume(ctx, media.URL, outputPath, media.CreatedAt, media.Size)
 		if dlErr != nil {
 			m.log.Errorf("Failed to download %s: %v", media.Name, dlErr)
 			continue
@@ -156,13 +150,13 @@ func (m *WiFiManager) GetCameraStatus(ctx context.Context) (map[string]interface
 	url := fmt.Sprintf("%s%s", GoProBaseURL, StatusURL)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %v", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get camera status: %v", err)
+		return nil, fmt.Errorf("failed to get camera status: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -172,7 +166,7 @@ func (m *WiFiManager) GetCameraStatus(ctx context.Context) (map[string]interface
 
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode camera status: %v", err)
+		return nil, fmt.Errorf("failed to decode camera status: %w", err)
 	}
 	return result, nil
 }
@@ -182,7 +176,7 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 	url := fmt.Sprintf("%s%s", GoProBaseURL, MediaListURL)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %v", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	client := &http.Client{
@@ -191,7 +185,7 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get media list: %v", err)
+		return nil, fmt.Errorf("failed to get media list: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -202,7 +196,7 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 	// Parse the response
 	var mediaList GoProMediaList
 	if err := json.NewDecoder(resp.Body).Decode(&mediaList); err != nil {
-		return nil, fmt.Errorf("failed to decode media list: %v", err)
+		return nil, fmt.Errorf("failed to decode media list: %w", err)
 	}
 
 	// Convert to our internal format
@@ -246,18 +240,9 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 	return result, nil
 }
 
-// downloadFileWithResume downloads a file with resume capability
-// This function assumes the caller has already checked if the file exists
+// downloadFileWithResume downloads a file with resume capability.
+// The caller is responsible for skipping files that already exist.
 func (m *WiFiManager) downloadFileWithResume(ctx context.Context, url, outputPath string, createdAt time.Time, totalSize int64) error {
-	// Skip if file already exists with correct size
-	exists, err := m.fileExistsWithSize(outputPath, totalSize)
-	if err != nil {
-		m.log.Warnf("Error checking file existence for %s: %v", filepath.Base(outputPath), err)
-	}
-	if exists {
-		return nil // already downloaded
-	}
-
 	maxRetries := 3
 	var lastErr error
 
@@ -281,7 +266,7 @@ func (m *WiFiManager) downloadFileWithResume(ctx context.Context, url, outputPat
 		m.log.Warnf("Download failed for %s: %v", outputPath, err)
 	}
 
-	return fmt.Errorf("failed after %d attempts: %v", maxRetries, lastErr)
+	return fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 // downloadFileWithResumeOnce performs a single attempt to download a file with resume capability
@@ -305,7 +290,7 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 	}
 
 	if err != nil {
-		return fmt.Errorf("failed to create/open output file: %v", err)
+		return fmt.Errorf("failed to create/open output file: %w", err)
 	}
 	defer file.Close()
 
@@ -318,7 +303,7 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 	// Prepare the request with range header
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %v", err)
+		return fmt.Errorf("failed to create request: %w", err)
 	}
 
 	if startOffset > 0 {
@@ -327,7 +312,7 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 
 	resp, err := downloadClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to download file: %v", err)
+		return fmt.Errorf("failed to download file: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -352,17 +337,17 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 
 	// Check copy error
 	if err != nil {
-		return fmt.Errorf("failed to copy data: %v", err)
+		return fmt.Errorf("failed to copy data: %w", err)
 	}
 
 	// Close the file before moving it
 	if err := file.Close(); err != nil {
-		return fmt.Errorf("failed to close file: %v", err)
+		return fmt.Errorf("failed to close file: %w", err)
 	}
 
 	// Rename the temporary file to the final filename
 	if err := os.Rename(tempFilePath, outputPath); err != nil {
-		return fmt.Errorf("failed to rename temp file: %v", err)
+		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
 	// After renaming the file, verify its size (silent check)
@@ -409,170 +394,6 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 	}
 
 	return n, err
-}
-
-// downloadChunk downloads a specific byte range of a file with retries
-func (m *WiFiManager) downloadChunk(ctx context.Context, url, chunkPath string, startOffset, endOffset int64) error {
-	maxRetries := 3
-	var lastErr error
-
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		if attempt > 0 {
-			m.log.Tracef("Retrying chunk download (attempt %d/%d) for range %d-%d", attempt+1, maxRetries, startOffset, endOffset)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(time.Duration(attempt) * 2 * time.Second): // Exponential backoff
-				// Continue with retry
-			}
-		}
-
-		err := m.downloadChunkOnce(ctx, url, chunkPath, startOffset, endOffset)
-		if err == nil {
-			return nil // Success
-		}
-
-		lastErr = err
-		m.log.Warnf("Chunk download failed for range %d-%d: %v", startOffset, endOffset, err)
-	}
-
-	return fmt.Errorf("failed after %d attempts: %v", maxRetries, lastErr)
-}
-
-// downloadChunkOnce downloads a specific byte range of a file in a single attempt
-func (m *WiFiManager) downloadChunkOnce(ctx context.Context, url, chunkPath string, startOffset, endOffset int64) error {
-	// Check if partial chunk exists
-	var resumeOffset int64 = startOffset
-	if fi, err := os.Stat(chunkPath); err == nil {
-		resumeOffset = startOffset + fi.Size()
-		if resumeOffset > endOffset {
-			// Chunk is already complete
-			return nil
-		}
-	}
-
-	// Create or open the chunk file
-	var file *os.File
-	var err error
-
-	if resumeOffset > startOffset {
-		file, err = os.OpenFile(chunkPath, os.O_APPEND|os.O_WRONLY, 0644)
-	} else {
-		file, err = os.Create(chunkPath)
-	}
-
-	if err != nil {
-		return fmt.Errorf("failed to create/open chunk file: %v", err)
-	}
-	defer file.Close()
-
-	// Prepare request with range header
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %v", err)
-	}
-
-	// Set range header
-	rangeHeader := fmt.Sprintf("bytes=%d-%d", resumeOffset, endOffset)
-	req.Header.Set("Range", rangeHeader)
-
-	resp, err := downloadClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to download chunk: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// Check response status
-	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("received invalid response for range request: %d", resp.StatusCode)
-	}
-
-	// Copy response body to file
-	buf := make([]byte, 256*1024) // 256KB buffer
-	_, err = io.CopyBuffer(file, resp.Body, buf)
-
-	if err != nil {
-		return fmt.Errorf("error while copying data: %v", err)
-	}
-
-	return nil
-}
-
-// downloadChunked downloads large files using chunked approach
-func (m *WiFiManager) downloadChunked(ctx context.Context, url, outputPath string, createdAt time.Time, totalSize int64) error {
-	if exists, _ := m.fileExistsWithSize(outputPath, totalSize); exists {
-		return nil
-	}
-
-	if totalSize < 10*1024*1024 {
-		return m.downloadFileWithResume(ctx, url, outputPath, createdAt, totalSize)
-	}
-
-	tempDir := outputPath + ".chunks"
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		return fmt.Errorf("failed to create chunks directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	chunkSize := int64(64 * 1024 * 1024)
-	chunkCount := (totalSize + chunkSize - 1) / chunkSize
-
-	m.log.Debugf("Downloading %s in %d chunks of size %d bytes", outputPath, chunkCount, chunkSize)
-
-	for i := int64(0); i < chunkCount; i++ {
-		startOffset := i * chunkSize
-		endOffset := (i+1)*chunkSize - 1
-		if endOffset >= totalSize {
-			endOffset = totalSize - 1
-		}
-
-		chunkPath := filepath.Join(tempDir, fmt.Sprintf("chunk-%03d", i))
-
-		// Skip if chunk already exists with the right size
-		expectedSize := endOffset - startOffset + 1
-		if fi, statErr := os.Stat(chunkPath); statErr == nil && fi.Size() == expectedSize {
-			continue
-		}
-
-		if err := m.downloadChunk(ctx, url, chunkPath, startOffset, endOffset); err != nil {
-			return fmt.Errorf("chunk %d/%d failed: %v", i+1, chunkCount, err)
-		}
-	}
-
-	finalFile, err := os.Create(outputPath)
-	if err != nil {
-		return fmt.Errorf("failed to create final file: %v", err)
-	}
-	defer finalFile.Close()
-
-	buffer := make([]byte, 1024*1024)
-	for i := int64(0); i < chunkCount; i++ {
-		chunkPath := filepath.Join(tempDir, fmt.Sprintf("chunk-%03d", i))
-
-		chunkFile, err := os.Open(chunkPath)
-		if err != nil {
-			return fmt.Errorf("failed to open chunk %d: %v", i, err)
-		}
-
-		_, err = io.CopyBuffer(finalFile, chunkFile, buffer)
-		chunkFile.Close()
-
-		if err != nil {
-			return fmt.Errorf("failed to copy chunk %d to final file: %v", i, err)
-		}
-	}
-
-	if fi, err := os.Stat(outputPath); err != nil {
-		m.log.Warnf("Failed to stat combined file %s: %v", outputPath, err)
-	} else if fi.Size() != totalSize {
-		return fmt.Errorf("file size verification failed for %s: expected %d bytes, got %d bytes", outputPath, totalSize, fi.Size())
-	}
-
-	if err := os.Chtimes(outputPath, createdAt, createdAt); err != nil {
-		m.log.Warnf("Failed to set file timestamps for %s: %v", outputPath, err)
-	}
-
-	return nil
 }
 
 // filterMediaByDate filters media files by their creation date

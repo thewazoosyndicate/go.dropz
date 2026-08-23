@@ -22,7 +22,6 @@ type Response struct {
 	Data   []byte `json:"data"`
 }
 
-
 // DeviceDiscoveryCallback is called when a device is discovered during scanning
 type DeviceDiscoveryCallback func(Device)
 

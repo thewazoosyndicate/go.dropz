@@ -78,7 +78,7 @@ func main() {
 		"log_file", logFile,
 		"db", dbPath,
 		"addr", *serverAddr,
-		"level", levelVar.Level().String(),
+		"level", logging.LevelName(levelVar.Level()),
 	)
 
 	// Initialize GoPro manager
@@ -87,9 +87,6 @@ func main() {
 		mainLog.Error("Failed to initialize GoPro manager", "err", err)
 		os.Exit(1)
 	}
-
-	// Reset transient camera states (is_syncing, is_pairing) on startup
-	goProManager.ResetTransientStates()
 
 	// Only override config settings if flags were explicitly set
 	config := goProManager.GetConfig()

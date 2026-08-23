@@ -46,6 +46,15 @@ var levelNames = map[string]slog.Level{
 	"fatal": slog.LevelError,
 }
 
+// LevelName renders a level for log output; slog.Level.String prints the
+// custom trace level as "DEBUG-4".
+func LevelName(lvl slog.Level) string {
+	if lvl == LevelTrace {
+		return "TRACE"
+	}
+	return lvl.String()
+}
+
 // ParseLevel converts a config level name to a slog.Level.
 func ParseLevel(name string) (slog.Level, error) {
 	if lvl, ok := levelNames[strings.ToLower(name)]; ok {

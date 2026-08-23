@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -354,22 +355,30 @@ func runValidate(adapter *bluetooth.Adapter, fragment string, doSleep, doWifi, d
 	r.check("wifi AP ready (status 69)", manager.WaitForWiFiAPReady(addr, 15*time.Second),
 		fmt.Sprintf("AP up after %v", time.Since(start).Round(time.Millisecond)))
 
+	bleDropped := false
 	if doWifi {
-		validateWifi(r, manager, addr, doSpeed)
+		dropBLE := func() {
+			manager.DisconnectQuietly(addr)
+			bleDropped = true
+		}
+		validateWifi(r, manager, addr, doSpeed, dropBLE)
 	} else {
 		r.note("wifi checks", "skipped; rerun with -wifi to validate join, media list, turbo")
 	}
 
-	if doSleep {
+	switch {
+	case bleDropped:
+		r.note("disconnect", "BLE dropped during speed test; rerun without -speed to validate Sleep")
+	case doSleep:
 		r.check("sleep on disconnect", manager.Disconnect(addr), "Sleep 0x05 accepted (camera screen should turn off)")
-	} else {
+	default:
 		manager.DisconnectQuietly(addr)
 		r.note("disconnect", "quiet (no Sleep); rerun with -sleep to validate Sleep")
 	}
 	return r.summary()
 }
 
-func validateWifi(r *report, manager *ble.Manager, addr string, doSpeed bool) {
+func validateWifi(r *report, manager *ble.Manager, addr string, doSpeed bool, dropBLE func()) {
 	ssid, password, err := manager.GetWifiCredentials(addr)
 	if err != nil || ssid == "" || password == "" {
 		r.bad("wifi credentials", fmt.Sprintf("ssid=%q err=%v", ssid, err))
@@ -420,14 +429,17 @@ func validateWifi(r *report, manager *ble.Manager, addr string, doSpeed bool) {
 	}
 
 	if doSpeed {
-		speedTest(r, ctx, wm, files)
+		speedTest(r, wm, files, dropBLE)
 	}
 }
 
-// speedTest measures single-stream download throughput with turbo off and
-// on, using the largest file on the card (capped at 64MB per run).
-// The number that settles whether turbo helps this host and camera.
-func speedTest(r *report, ctx context.Context, wm *wifi.WiFiManager, files []wifi.MediaFile) {
+// speedTest measures download throughput on the largest file.
+// Each run is time-boxed to 20s and reports bytes/elapsed, so a slow
+// camera cannot starve later runs.
+// Matrix: BLE held vs dropped (camera-side coexistence pins the camera
+// to MCS 0 while a GATT connection is live), 1 stream vs 4 parallel
+// range chunks (Quik's shape, what turbo is tuned for), turbo off/on.
+func speedTest(r *report, wm *wifi.WiFiManager, files []wifi.MediaFile, dropBLE func()) {
 	var largest wifi.MediaFile
 	for _, f := range files {
 		if f.Size > largest.Size {
@@ -439,48 +451,84 @@ func speedTest(r *report, ctx context.Context, wm *wifi.WiFiManager, files []wif
 		return
 	}
 
-	const capBytes = 64 << 20
-	measure := func() (float64, error) {
+	// Independent of the wifi section's context: speed runs manage
+	// their own deadlines.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	fetch := func(ctx context.Context, from, to int64) (int64, error) {
 		req, err := http.NewRequestWithContext(ctx, "GET", largest.URL, nil)
 		if err != nil {
 			return 0, err
 		}
-		limit := largest.Size
-		if limit > capBytes {
-			limit = capBytes
-		}
-		req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", limit-1))
-		start := time.Now()
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", from, to))
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return 0, err
 		}
 		defer resp.Body.Close()
-		n, err := io.Copy(io.Discard, resp.Body)
-		if err != nil {
-			return 0, err
-		}
-		return float64(n) / 1e6 / time.Since(start).Seconds(), nil
+		return io.Copy(io.Discard, resp.Body)
 	}
 
-	run := func(label string, turbo bool) {
+	measure := func(streams int) (float64, error) {
+		runCtx, runCancel := context.WithTimeout(ctx, 20*time.Second)
+		defer runCancel()
+		chunk := largest.Size / int64(streams)
+		var wg sync.WaitGroup
+		totals := make([]int64, streams)
+		errs := make([]error, streams)
+		start := time.Now()
+		for i := 0; i < streams; i++ {
+			from := int64(i) * chunk
+			to := from + chunk - 1
+			if i == streams-1 {
+				to = largest.Size - 1
+			}
+			wg.Add(1)
+			go func(i int, from, to int64) {
+				defer wg.Done()
+				totals[i], errs[i] = fetch(runCtx, from, to)
+			}(i, from, to)
+		}
+		wg.Wait()
+		elapsed := time.Since(start).Seconds()
+		var n int64
+		for i := range totals {
+			// The 20s cutoff is the normal end of a run, not a failure.
+			if errs[i] != nil && !errors.Is(errs[i], context.DeadlineExceeded) {
+				return 0, errs[i]
+			}
+			n += totals[i]
+		}
+		if n == 0 {
+			return 0, fmt.Errorf("no bytes in %ds", int(elapsed))
+		}
+		return float64(n) / 1e6 / elapsed, nil
+	}
+
+	run := func(label string, turbo bool, streams int) {
 		if err := wm.SetTurboTransfer(ctx, turbo); err != nil {
 			r.note("speed "+label, "turbo toggle failed: "+err.Error())
 			return
 		}
 		time.Sleep(2 * time.Second) // let the camera settle into the mode
-		rate, err := measure()
+		rate, err := measure(streams)
 		if err != nil {
 			r.bad("speed "+label, err.Error())
 			return
 		}
-		r.ok("speed "+label, fmt.Sprintf("%.1f MB/s (%s, first %dMB)", rate, largest.Name, min(largest.Size, capBytes)>>20))
+		r.ok("speed "+label, fmt.Sprintf("%.1f MB/s (%s, 20s sample)", rate, largest.Name))
 	}
 
-	run("turbo off", false)
-	run("turbo ON", true)
+	run("BLE held, 1 stream", false, 1)
+	dropBLE()
+	time.Sleep(2 * time.Second) // let the camera notice the BLE link is gone
+	run("BLE down, 1 stream", false, 1)
+	run("BLE down, 4 chunks", false, 4)
+	run("BLE down, 1 stream, turbo", true, 1)
+	run("BLE down, 4 chunks, turbo", true, 4)
 	wm.SetTurboTransfer(ctx, false)
-	r.note("speed verdict", "set turbo_enabled in the app config to whichever won")
+	r.note("speed verdict", "if BLE down beats BLE held, drop BLE before downloading")
 }
 
 func runPair(adapter *bluetooth.Adapter, fragment string) int {

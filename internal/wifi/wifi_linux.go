@@ -22,13 +22,16 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 	}
 
 	// Create a proper connection profile
+	// wifi.powersave 2 = disabled. NetworkManager's default powersave
+	// collapses GoPro AP throughput to under 1 MB/s on many NICs.
 	addCmd := exec.CommandContext(ctx, "nmcli", "connection", "add",
 		"type", "wifi",
 		"con-name", connName,
 		"ifname", "*",
 		"ssid", ssid,
 		"wifi-sec.key-mgmt", "wpa-psk",
-		"wifi-sec.psk", password)
+		"wifi-sec.psk", password,
+		"wifi.powersave", "2")
 
 	if addOutput, addErr := addCmd.CombinedOutput(); addErr != nil {
 		return fmt.Errorf("failed to create WiFi connection for %s: %w (nmcli: %s)",

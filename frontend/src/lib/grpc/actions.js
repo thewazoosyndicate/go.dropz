@@ -382,3 +382,53 @@ export function renameGroup(groupId, name, cameraIds) {
     addOrUpdateGroup(processGroup(response));
   });
 }
+
+// Camera settings over BLE. Promise-based: the modal drives its own state.
+export function fetchCameraSettings(cameraId, refresh) {
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.GetCameraSettingsRequest();
+    request.setCameraId(cameraId);
+    request.setRefresh(!!refresh);
+    // BLE refresh connects to the camera; allow up to 45s
+    const deadline = new Date(Date.now() + (refresh ? 45000 : 5000));
+    client.getCameraSettings(request, { deadline }, (error, response) => {
+      if (error) return reject(error);
+      resolve({
+        updatedAt: response.getUpdatedAt()?.toDate() || null,
+        settings: response.getSettingsList().map(s => ({
+          id: s.getId(),
+          name: s.getName(),
+          value: s.getValue(),
+          valueName: s.getValueName(),
+          options: s.getOptionsList().map(o => ({ value: o.getValue(), name: o.getName() })),
+        })),
+      });
+    });
+  });
+}
+
+export function applyCameraSettings({ cameraId, groupId, changes }) {
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.ApplyCameraSettingsRequest();
+    if (cameraId) request.setCameraId(cameraId);
+    if (groupId) request.setGroupId(groupId);
+    request.setChangesList(changes.map(c => {
+      const change = new proto.SettingChange();
+      change.setId(c.id);
+      change.setValue(c.value);
+      return change;
+    }));
+    // Group applies run one BLE session per camera
+    const deadline = new Date(Date.now() + 120000);
+    client.applyCameraSettings(request, { deadline }, (error, response) => {
+      if (error) return reject(error);
+      resolve(response.getCamerasList().map(c => ({
+        cameraId: c.getCameraId(),
+        error: c.getError(),
+        results: c.getResultsList().map(r => ({ id: r.getId(), error: r.getError() })),
+      })));
+    });
+  });
+}

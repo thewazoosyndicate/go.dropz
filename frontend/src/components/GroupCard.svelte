@@ -1,6 +1,7 @@
 <script>
   import { loadGroup, deleteGroup } from '../lib/grpc/actions.js';
   import { getAllDevices } from '../lib/stores/devices.svelte.js';
+  import { openCameraSettings, addToast } from '../lib/stores/ui.svelte.js';
 
   let { group } = $props();
   let confirming = $state(false);
@@ -16,6 +17,25 @@
 
   function handleLoad() {
     loadGroup(group.id);
+  }
+
+  function handleSettings() {
+    // Options are read from one reachable member; each camera applies
+    // what its model supports.
+    const devices = Object.values(getAllDevices());
+    const reference = group.cameraIds.find(id =>
+      devices.some(d => d.id === id && d.isReachable && d.isPaired)
+    );
+    if (!reference) {
+      addToast('No reachable camera in this group', 'error');
+      return;
+    }
+    openCameraSettings({
+      type: 'group',
+      id: group.id,
+      name: group.name,
+      referenceCameraId: reference,
+    });
   }
 
   function handleDelete() {
@@ -43,6 +63,10 @@
   </div>
   <div class="card-actions">
     <button class="btn btn-primary" onclick={handleLoad}>Load</button>
+    <button class="btn btn-outline" onclick={handleSettings}
+            title="Group settings" aria-label="Group settings">
+      <i class="fas fa-sliders-h"></i>
+    </button>
     <button class="btn {confirming ? 'btn-danger' : 'btn-outline'}" onclick={handleDelete}>
       {confirming ? 'Confirm?' : 'Delete'}
     </button>

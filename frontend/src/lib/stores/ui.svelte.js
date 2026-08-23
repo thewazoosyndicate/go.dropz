@@ -2,6 +2,8 @@
 let theme = $state('light');
 let logsExpanded = $state(false);
 let settingsOpen = $state(false);
+// {type: 'camera'|'group', id, name, referenceCameraId} or null
+let cameraSettingsTarget = $state(null);
 let searchQuery = $state('');
 let sortBy = $state('signal');
 let toasts = $state([]);
@@ -12,6 +14,9 @@ let logLevel = $state('info');
 export function getTheme() { return theme; }
 export function getLogsExpanded() { return logsExpanded; }
 export function getSettingsOpen() { return settingsOpen; }
+export function getCameraSettingsTarget() { return cameraSettingsTarget; }
+export function openCameraSettings(target) { cameraSettingsTarget = target; }
+export function closeCameraSettings() { cameraSettingsTarget = null; }
 export function getSearchQuery() { return searchQuery; }
 export function getSortBy() { return sortBy; }
 export function getToasts() { return toasts; }

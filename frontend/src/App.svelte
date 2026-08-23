@@ -3,6 +3,7 @@
   import MainLayout from './components/MainLayout.svelte';
   import LogDrawer from './components/LogDrawer.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
+  import CameraSettingsModal from './components/CameraSettingsModal.svelte';
   import ToastContainer from './components/ToastContainer.svelte';
   import { loadThemePreference } from './lib/stores/ui.svelte.js';
   import { startDeviceStreaming, cancelAllStreams } from './lib/grpc/streams.js';
@@ -66,6 +67,7 @@
   <MainLayout />
   <LogDrawer />
   <SettingsModal />
+  <CameraSettingsModal />
   <ToastContainer />
 </div>
 

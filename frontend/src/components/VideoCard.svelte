@@ -1,6 +1,7 @@
 <script>
-  const { shell } = window.require('electron');
-  const path = window.require('path');
+  // shell.openPath / showItemInFolder can block the UI on Linux;
+  // main runs them detached instead (desktop-open / desktop-show)
+  const { ipcRenderer } = window.require('electron');
 
   let { video, cameraName } = $props();
 
@@ -17,11 +18,11 @@
   }
 
   function openFile() {
-    shell.openPath(video.path);
+    ipcRenderer.send('desktop-open', video.path);
   }
 
   function showInFolder() {
-    shell.showItemInFolder(video.path);
+    ipcRenderer.send('desktop-show', video.path);
   }
 </script>
 

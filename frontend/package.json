@@ -86,9 +86,10 @@
         "Icon": "dropz-electron",
         "Name": "Dropz",
         "Comment": "Electron frontend for Dropz",
-        "Categories": "Utility;"
+        "Categories": "Utility;",
+        "StartupWMClass": "dropz-electron"
       },
-      "artifactName": "${productName}-${version}.${ext}",
+      "artifactName": "${productName}.${ext}",
       "executableName": "dropz-electron",
       "synopsis": "Electron frontend for Dropz",
       "mimeTypes": [

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const log = require('electron-log');
 const fs = require('fs');
@@ -224,6 +224,42 @@ app.on('before-quit', () => {
       log.error(`Error terminating Go binary: ${err.message}`);
     }
   }
+});
+
+// On Linux, Electron's shell.openPath waits for xdg-open to exit and
+// showItemInFolder blocks on a D-Bus round-trip; a slow desktop handler
+// froze the UI for the full timeout. Detached spawns never block.
+function spawnDetached(cmd, args, onFail) {
+  let failed = false;
+  const fail = (msg) => {
+    log.warn(`${cmd} ${msg}`);
+    if (onFail && !failed) { failed = true; onFail(); }
+  };
+  const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+  child.on('error', (err) => fail(`failed: ${err.message}`));
+  child.on('exit', (code) => { if (code !== 0) fail(`exited with ${code}`); });
+  child.unref();
+}
+
+ipcMain.on('desktop-open', (_event, target) => {
+  if (typeof target !== 'string' || !target) return;
+  log.info(`Desktop open: ${target}`);
+  if (process.platform !== 'linux') { shell.openPath(target); return; }
+  spawnDetached('xdg-open', [target]);
+});
+
+ipcMain.on('desktop-show', (_event, target) => {
+  if (typeof target !== 'string' || !target) return;
+  log.info(`Desktop show: ${target}`);
+  if (process.platform !== 'linux') { shell.showItemInFolder(target); return; }
+  const uri = require('url').pathToFileURL(target).href;
+  spawnDetached('gdbus', [
+    'call', '--session',
+    '--dest', 'org.freedesktop.FileManager1',
+    '--object-path', '/org/freedesktop/FileManager1',
+    '--method', 'org.freedesktop.FileManager1.ShowItems',
+    `['${uri}']`, '',
+  ], () => spawnDetached('xdg-open', [path.dirname(target)]));
 });
 
 // Handle folder selection dialog for destination folder setting

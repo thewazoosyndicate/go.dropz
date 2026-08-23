@@ -96,6 +96,8 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	var downloadedFiles []string
 	skippedCount := 0
 	failedCount := 0
+	var totalBytes int64
+	var totalSeconds float64
 
 	for _, media := range filteredMedia {
 		select {
@@ -124,6 +126,8 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 		// Throughput per file: the number that settles turbo-vs-not debates
 		if fi, statErr := os.Stat(outputPath); statErr == nil {
 			elapsed := time.Since(dlStart).Seconds()
+			totalBytes += fi.Size()
+			totalSeconds += elapsed
 			if elapsed > 0.5 {
 				m.log.Info("File downloaded", "file", media.Name,
 					"mb", fmt.Sprintf("%.1f", float64(fi.Size())/1e6),
@@ -132,6 +136,15 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 		}
 
 		downloadedFiles = append(downloadedFiles, outputPath)
+	}
+
+	// A healthy 5GHz link does 20+ MB/s; sustained sub-2 usually means the
+	// host WiFi is degraded, not the camera. Known case: mt7925 on kernel
+	// 7.1.x pins the rate after an AP switch (docs/conformance.md).
+	if totalBytes > 32<<20 && totalSeconds > 0 && float64(totalBytes)/1e6/totalSeconds < 2 {
+		m.log.Warn("WiFi throughput unusually low for the whole sync",
+			"mb_per_s", fmt.Sprintf("%.1f", float64(totalBytes)/1e6/totalSeconds),
+			"hint", "host wifi driver or signal problem; see docs/conformance.md")
 	}
 
 	actualDownloads := len(downloadedFiles) - skippedCount

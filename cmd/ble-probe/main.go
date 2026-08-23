@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/internal/ble"
+	"github.com/dropz/dropz/internal/logging"
 	"github.com/dropz/dropz/internal/wifi"
 	"tinygo.org/x/bluetooth"
 )
@@ -82,20 +83,26 @@ func main() {
 	case "scan":
 		fs := flag.NewFlagSet("scan", flag.ExitOnError)
 		duration := fs.Duration("duration", 30*time.Second, "how long to scan")
+		level := logLevelFlag(fs)
 		fs.Parse(args)
+		initLogger(*level)
 		runScan(adapter, *duration)
 	case "validate":
 		fs := flag.NewFlagSet("validate", flag.ExitOnError)
 		doSleep := fs.Bool("sleep", false, "send Sleep on disconnect")
 		doWifi := fs.Bool("wifi", false, "also join the camera AP and run HTTP checks")
+		level := logLevelFlag(fs)
 		fs.Parse(args)
+		initLogger(*level)
 		if fs.NArg() != 1 {
 			usage()
 		}
 		os.Exit(runValidate(adapter, fs.Arg(0), *doSleep, *doWifi))
 	case "pair":
 		fs := flag.NewFlagSet("pair", flag.ExitOnError)
+		level := logLevelFlag(fs)
 		fs.Parse(args)
+		initLogger(*level)
 		if fs.NArg() != 1 {
 			usage()
 		}
@@ -117,8 +124,20 @@ func fatal(format string, a ...any) {
 	os.Exit(1)
 }
 
-func verboseLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+// probeLog goes to stderr so `1>report 2>trace` keeps report and logs apart.
+// Default warn: the checklist on stdout is the product, logs are diagnostics.
+var probeLog *slog.Logger
+
+func logLevelFlag(fs *flag.FlagSet) *string {
+	return fs.String("log-level", "warn", "log level (trace, debug, info, warn, error)")
+}
+
+func initLogger(level string) {
+	log, _, err := logging.New(logging.Options{Level: level})
+	if err != nil {
+		fatal("%v", err)
+	}
+	probeLog = log
 }
 
 // rawScan runs a direct adapter scan and calls sighting for each GoPro
@@ -244,7 +263,7 @@ func runValidate(adapter *bluetooth.Adapter, fragment string, doSleep, doWifi bo
 		r.note("adv serial", "not assembled (schema 2 with hashed id_hash is normal; schema 3 should assemble)")
 	}
 
-	manager := ble.NewManager(adapter, verboseLogger())
+	manager := ble.NewManager(adapter, probeLog)
 	defer manager.Stop()
 
 	// Connect exercises the spec's readiness gate (hardware info poll),
@@ -326,7 +345,7 @@ func validateWifi(r *report, manager *ble.Manager, addr string) {
 	}
 	r.ok("wifi credentials", "ssid "+ssid)
 
-	wm := wifi.NewWiFiManager(verboseLogger())
+	wm := wifi.NewWiFiManager(probeLog)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
@@ -390,7 +409,7 @@ func runPair(adapter *bluetooth.Adapter, fragment string) int {
 		r.bad("pairing flag (bit 2)", "camera is on the pairing screen but bit 2 is unset; bit parsing is wrong (or camera is not in pairing mode)")
 	}
 
-	manager := ble.NewManager(adapter, verboseLogger())
+	manager := ble.NewManager(adapter, probeLog)
 	defer manager.Stop()
 
 	start := time.Now()

@@ -51,6 +51,7 @@ type Coordinator struct {
 	db           *store.Store
 	ble          *ble.Manager
 	log          *slog.Logger
+	rootLog      *slog.Logger // for wifi.NewWiFiManager, which tags its own component
 	activeTasks  map[string]*SyncTask
 	mutex        sync.RWMutex
 	notifier     func()
@@ -65,6 +66,7 @@ func NewCoordinator(ctx context.Context, db *store.Store, ble *ble.Manager, log 
 		db:           db,
 		ble:          ble,
 		log:          log.With("component", "sync"),
+		rootLog:      log,
 		activeTasks:  make(map[string]*SyncTask),
 		notifier:     notifier,
 		bleOperation: bleOperation,
@@ -329,7 +331,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 	// Step 2: Connect to camera WiFi
 	updateProgress("Connecting to WiFi", 30)
 
-	wifiManager := wifi.NewWiFiManager(c.log)
+	wifiManager := wifi.NewWiFiManager(c.rootLog)
 
 	wifiCtx, wifiCancel := context.WithTimeout(syncCtx, time.Duration(config.ConnectTimeoutSeconds)*time.Second)
 	defer wifiCancel()

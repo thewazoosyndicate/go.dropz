@@ -1,6 +1,24 @@
 // Package logging builds the process-wide slog logger.
 // One writer per line: stderr and the rotating file share one handler,
 // so a line is never formatted twice or written by two owners.
+//
+// Level contract:
+//   - Error: terminal failure of a user-visible operation, or operator action required.
+//   - Warn: degraded, retried-then-recovered, unexpected but survivable, dropped work.
+//   - Info: user-visible state transitions only: startup/shutdown (one line per layer),
+//     camera managed/unmanaged, paired, reachable/unreachable, sync start/finish/fail,
+//     config change.
+//   - Debug: per-operation internals: connects, scan lifecycle, RPC completions, retries.
+//   - Trace: per-packet, per-poll, per-progress-tick.
+//
+// Ownership: the layer owning a state transition logs it; callers log only their
+// own decision, at Debug. A function that returns an error never logs it; the
+// outermost handler that decides logs once. Goroutine termini log their own
+// errors because nobody is above them.
+//
+// Keys are snake_case: camera_id (store UUID), camera (display name), ble_addr,
+// ssid, group_id, err, attempt, max, elapsed. Attr values stay typed: never
+// fmt.Sprintf into an attr.
 package logging
 
 import (

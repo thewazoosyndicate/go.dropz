@@ -51,7 +51,7 @@ func main() {
 	// Create directories if they don't exist
 	for _, dir := range []string{*dataDir, *videoDir, *logDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			fmt.Printf("Failed to create directory %s: %v\n", dir, err)
+			fmt.Fprintf(os.Stderr, "Failed to create directory %s: %v\n", dir, err)
 			os.Exit(1)
 		}
 	}
@@ -64,16 +64,27 @@ func main() {
 		FilePath: logFile,
 	})
 	if err != nil {
-		fmt.Printf("Failed to initialize logger: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
 		os.Exit(1)
 	}
-	log.Info("Starting dropz", "version", appVersion)
+	log = log.With("version", appVersion, "pid", os.Getpid())
+	mainLog := log.With("component", "main")
+
+	dbPath := filepath.Join(*dataDir, "dropz.db")
+	mainLog.Info("Starting dropz",
+		"built", buildTime,
+		"data_dir", *dataDir,
+		"video_dir", *videoDir,
+		"log_file", logFile,
+		"db", dbPath,
+		"addr", *serverAddr,
+		"level", levelVar.Level().String(),
+	)
 
 	// Initialize GoPro manager
-	dbPath := filepath.Join(*dataDir, "dropz.db")
 	goProManager, err := manager.NewGoProManager(dbPath, *videoDir, log, levelVar)
 	if err != nil {
-		log.Error("Failed to initialize GoPro manager", "err", err)
+		mainLog.Error("Failed to initialize GoPro manager", "err", err)
 		os.Exit(1)
 	}
 
@@ -107,37 +118,40 @@ func main() {
 	// Only update config if at least one setting was explicitly changed
 	if configChanged {
 		if err := goProManager.UpdateConfig(config); err != nil {
-			log.Warn("Failed to apply config settings from command line", "err", err)
+			mainLog.Warn("Failed to apply config settings from command line", "err", err)
 		}
 	}
 
 	// Apply persisted log level (CLI flag takes priority if explicitly set)
 	if level, err := logging.ParseLevel(config.LogLevel); err == nil {
+		if level != levelVar.Level() {
+			mainLog.Info("Log level set from persisted config", "level", config.LogLevel)
+		}
 		levelVar.Set(level)
+	} else {
+		mainLog.Warn("Invalid persisted log level, keeping flag level", "value", config.LogLevel, "err", err)
 	}
 
 	// Start GoPro manager
 	if err := goProManager.Start(); err != nil {
-		log.Error("Failed to start GoPro manager", "err", err)
+		mainLog.Error("Failed to start GoPro manager", "err", err)
 		os.Exit(1)
 	}
 
 	// Initialize and start gRPC server
 	dropzServer := server.NewDropzServer(goProManager, log)
 	if err := dropzServer.Start(*serverAddr); err != nil {
-		log.Error("Failed to start gRPC server", "err", err)
+		mainLog.Error("Failed to start gRPC server", "err", err)
 		os.Exit(1)
 	}
-
-	log.Info("dropz is running. Press Ctrl+C to exit.")
 
 	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	receivedSignal := <-sigChan
-	log.Info("Shutting down on signal", "signal", receivedSignal.String())
+	mainLog.Info("Shutting down on signal", "signal", receivedSignal.String())
 
 	dropzServer.Stop()
 	goProManager.Stop()
-	log.Info("dropz has been shut down")
+	mainLog.Info("dropz has been shut down")
 }

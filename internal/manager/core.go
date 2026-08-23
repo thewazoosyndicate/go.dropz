@@ -55,6 +55,9 @@ type GoProManager struct {
 func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *slog.LevelVar) (*GoProManager, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Built before the callback closures below so they carry the component attr
+	mlog := log.With("component", "manager")
+
 	db, err := store.New(dbPath)
 	if err != nil {
 		cancel()
@@ -67,11 +70,11 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 	adapter := bluetooth.DefaultAdapter
 	if adapter != nil {
 		if err := adapter.Enable(); err != nil {
-			log.Error("Bluetooth unavailable, camera features disabled", "err", err)
+			mlog.Error("Bluetooth unavailable, camera features disabled", "err", err)
 			adapter = nil
 		}
 	} else {
-		log.Error("No default Bluetooth adapter, camera features disabled")
+		mlog.Error("No default Bluetooth adapter, camera features disabled")
 	}
 
 	bleManager := ble.NewManager(adapter, log)
@@ -101,7 +104,7 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 		// Re-key from BLE address to serial number once serial is known
 		if metadata.SerialNumber != "" && cam.DBKey != metadata.SerialNumber {
 			if err := db.RekeyCamera(cam.DBKey, metadata.SerialNumber); err != nil {
-				log.Warn("Failed to re-key camera to serial", "serial", metadata.SerialNumber, "err", err)
+				mlog.Warn("Failed to re-key camera to serial", "serial", metadata.SerialNumber, "err", err)
 			}
 		}
 	})
@@ -118,7 +121,7 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 		cancel:               cancel,
 		ble:                  bleManager,
 		db:                   db,
-		log:                  log.With("component", "manager"),
+		log:                  mlog,
 		logLevel:             logLevel,
 		immediateSyncTrigger: make(chan struct{}, 1),
 		statusCheckRequest:   make(chan string, 8),
@@ -145,7 +148,7 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 			if err := db.UpdateCameraByID(cam.CameraState.Camera.ID, func(cs *model.CameraWithState) {
 				cs.Metadata.BatteryLevel = int32(value[0])
 			}); err != nil {
-				log.Error("Failed to update battery from push notification", "err", err)
+				mlog.Error("Failed to update battery from push notification", "err", err)
 			}
 			manager.notify()
 		}
@@ -162,10 +165,10 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 		if !ok || !cs.Status.IsManaged || cs.Status.IsPaired || cs.Status.IsPairing {
 			return
 		}
-		log.Info("Camera in pairing mode, starting pairing", "camera", cs.Camera.Name)
+		mlog.Info("Camera in pairing mode, starting pairing", "camera", cs.Camera.Name)
 		go func() {
 			if _, err := manager.PairCamera(cameraID); err != nil {
-				log.Warn("Advertised pairing failed", "camera", cs.Camera.Name, "err", err)
+				mlog.Warn("Advertised pairing failed", "camera", cs.Camera.Name, "err", err)
 			}
 		}()
 	})
@@ -177,7 +180,7 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 		if !ok || cam.CameraState.Status.IsSyncing {
 			return
 		}
-		log.Info("Camera advertises new media, triggering status check", "camera", cam.CameraState.Camera.Name)
+		mlog.Info("Camera advertises new media, triggering status check", "camera", cam.CameraState.Camera.Name)
 		select {
 		case manager.statusCheckRequest <- cameraID:
 		default:
@@ -193,7 +196,7 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 		if !ok || cam.CameraState.Status.IsSyncing {
 			return
 		}
-		log.Info("Camera reappeared, triggering status check", "camera", cam.CameraState.Camera.Name, "gone_for", wasGoneFor)
+		mlog.Info("Camera reappeared, triggering status check", "camera", cam.CameraState.Camera.Name, "gone_for", wasGoneFor)
 		select {
 		case manager.statusCheckRequest <- cameraID:
 		default:

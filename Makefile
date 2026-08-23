@@ -1,6 +1,11 @@
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1.0")
 BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -ldflags "-X main.appVersion=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
+# go install puts protoc plugins here; the caller's PATH rarely includes it
+GOBIN := $(shell go env GOBIN)
+ifeq ($(GOBIN),)
+GOBIN := $(shell go env GOPATH)/bin
+endif
 
 .PHONY: all build build-darwin-universal clean proto test appimage dmg app frontend-deps frontend-build
 
@@ -23,7 +28,7 @@ proto:
 	@mkdir -p internal/protocol
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
 	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1
-	protoc -I=proto -I=include -I=/usr/local/include -I=/usr/include \
+	PATH="$(GOBIN):$$PATH" protoc -I=proto -I=include -I=/usr/local/include -I=/usr/include \
         --go_out=internal/protocol/ --go_opt=paths=source_relative \
 		--go-grpc_out=internal/protocol/ --go-grpc_opt=paths=source_relative \
 		--go_opt=Mservice.proto=github.com/dropz/dropz/internal/protocol \

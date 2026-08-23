@@ -31,10 +31,13 @@ const (
 // fragment collector and response tracker so concurrent traffic from two
 // cameras can never collide on command IDs.
 type conn struct {
-	device    *bluetooth.Device
-	chars     map[string]bluetooth.DeviceCharacteristic
-	collector *tlv.FragmentCollector
-	tracker   *tlv.ResponseTracker
+	device *bluetooth.Device
+	chars  map[string]bluetooth.DeviceCharacteristic
+	// One collector per notify characteristic: the spec accumulates fragments
+	// per source UUID, and a push on one char must not corrupt a fragmented
+	// response arriving on another.
+	collectors map[string]*tlv.FragmentCollector
+	tracker    *tlv.ResponseTracker
 }
 
 // Manager provides a clean, simple BLE interface for GoPro devices
@@ -93,10 +96,10 @@ func (m *Manager) Available() bool {
 // notifications (0x93) through to the manager-level status callback.
 func (m *Manager) newConn(macAddress string, device *bluetooth.Device) *conn {
 	c := &conn{
-		device:    device,
-		chars:     make(map[string]bluetooth.DeviceCharacteristic),
-		collector: tlv.NewFragmentCollector(fragmentTimeout),
-		tracker:   tlv.NewResponseTracker(),
+		device:     device,
+		chars:      make(map[string]bluetooth.DeviceCharacteristic),
+		collectors: make(map[string]*tlv.FragmentCollector),
+		tracker:    tlv.NewResponseTracker(),
 	}
 	c.tracker.SetPushHandler(func(addr string, msg *tlv.TLVMessage) {
 		m.mutex.RLock()
@@ -346,8 +349,12 @@ func (m *Manager) discoverCharacteristics(macAddress string, services []bluetoot
 				c.chars[charUUID] = char
 			}
 			if notifyChars[charUUID] {
+				if c.collectors[charUUID] == nil {
+					c.collectors[charUUID] = tlv.NewFragmentCollector(fragmentTimeout)
+				}
+				collector := c.collectors[charUUID]
 				notifErr := char.EnableNotifications(func(data []byte) {
-					m.handleNotification(macAddress, data)
+					m.handleNotification(macAddress, collector, data)
 				})
 				if notifErr != nil {
 					m.log.Warn("Failed to enable notifications", "char", GetCharacteristicName(charUUID), "err", notifErr)
@@ -368,7 +375,9 @@ func (m *Manager) dropConn(macAddress string) *conn {
 	m.mutex.Unlock()
 
 	if c != nil {
-		c.collector.Stop()
+		for _, collector := range c.collectors {
+			collector.Stop()
+		}
 	}
 	m.signalConnectingDone()
 	return c
@@ -814,13 +823,13 @@ func (m *Manager) sendSetting(macAddress string, settingID byte, data []byte) (R
 	return m.sendMessage(macAddress, CharSettings, settingID, data, tlv.BuildCommandPacket)
 }
 
-func (m *Manager) handleNotification(macAddress string, data []byte) {
+func (m *Manager) handleNotification(macAddress string, collector *tlv.FragmentCollector, data []byte) {
 	c := m.getConn(macAddress)
 	if c == nil {
 		return
 	}
 
-	message, err := c.collector.ProcessFragment(data)
+	message, err := collector.ProcessFragment(data)
 	if err != nil {
 		m.log.Debug("Error processing TLV fragment", "raw", fmt.Sprintf("%x", data), "err", err)
 	} else if message != nil {

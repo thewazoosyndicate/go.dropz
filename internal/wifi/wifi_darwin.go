@@ -5,7 +5,9 @@ package wifi
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -31,7 +33,24 @@ func detectWiFiInterface() (string, error) {
 	return "", fmt.Errorf("Wi-Fi interface not found")
 }
 
-// Connect connects to a GoPro WiFi network using macOS networksetup
+// findWifiJoinHelper locates the compiled CoreWLAN helper (scripts/wifi_join.swift).
+// networksetup alone reports success without connecting on macOS 15, so the
+// helper scans with CoreWLAN until the AP is visible before connecting.
+func findWifiJoinHelper() (string, bool) {
+	candidates := []string{"bin/wifi_join", "../bin/wifi_join"}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "wifi_join"))
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p, true
+		}
+	}
+	return "", false
+}
+
+// Connect connects to a GoPro WiFi network. Prefers the CoreWLAN helper
+// when present; falls back to bare networksetup retries otherwise.
 func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error {
 	m.log.Debug("Connecting to WiFi network", "ssid", ssid)
 
@@ -39,6 +58,18 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 	if err != nil {
 		return fmt.Errorf("failed to detect Wi-Fi interface: %w", err)
 	}
+
+	if helper, ok := findWifiJoinHelper(); ok {
+		m.log.Debug("Using CoreWLAN helper", "helper", helper, "interface", iface)
+		output, err := exec.CommandContext(ctx, helper, ssid, password, iface).CombinedOutput()
+		out := strings.TrimSpace(string(output))
+		if err != nil {
+			return fmt.Errorf("CoreWLAN helper failed: %w (%s)", err, out)
+		}
+		m.log.Debug("CoreWLAN helper connected", "output", out)
+		return nil
+	}
+	m.log.Warn("wifi_join helper not found, falling back to networksetup (unreliable on macOS 15)")
 
 	// Try to connect, retrying while the AP becomes visible
 	var lastErr error

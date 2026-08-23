@@ -97,7 +97,7 @@ var settings = map[string]setting{
 	"set_time_enabled":  boolSetting(func(c *model.Config) *bool { return &c.SetTimeEnabled }),
 
 	"scan_interval_seconds":         int32Setting(func(c *model.Config) *int32 { return &c.ScanIntervalSeconds }, 5, -1, "seconds"),
-	"connect_timeout_seconds":       int32Setting(func(c *model.Config) *int32 { return &c.ConnectTimeoutSeconds }, 5, 60, "seconds"),
+	"connect_timeout_seconds":       int32Setting(func(c *model.Config) *int32 { return &c.ConnectTimeoutSeconds }, 5, 300, "seconds"),
 	"days_threshold":                int32Setting(func(c *model.Config) *int32 { return &c.DaysThreshold }, 1, -1, "day"),
 	"inactivity_timeout_seconds":    int32Setting(func(c *model.Config) *int32 { return &c.InactivityTimeoutSeconds }, 30, 3600, "seconds"),
 	"status_check_interval_seconds": int32Setting(func(c *model.Config) *int32 { return &c.StatusCheckIntervalSeconds }, 0, 3600, "seconds"),

@@ -144,7 +144,7 @@ func DefaultConfig() Config {
 		PairModeEnabled:            false,
 		SyncEnabled:                true,
 		ScanIntervalSeconds:        30,
-		ConnectTimeoutSeconds:      60,
+		ConnectTimeoutSeconds:      120,
 		DaysThreshold:              1,
 		DestinationFolder:          filepath.Join(homeDir, "Videos", "dropz"),
 		InactivityTimeoutSeconds:   60,

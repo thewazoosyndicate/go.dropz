@@ -43,13 +43,20 @@ proto:
 		../proto/*.proto
 	@echo "Protobuf code generation complete."
 
-build-darwin-universal:
+build-darwin-universal: wifi-helper
 	@echo "Building universal macOS binary..."
 	@mkdir -p bin
 	CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/dropz-amd64 cmd/dropz/main.go
 	CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/dropz-arm64 cmd/dropz/main.go
 	lipo -create bin/dropz-amd64 bin/dropz-arm64 -output bin/dropz
 	@rm bin/dropz-amd64 bin/dropz-arm64
+
+# CoreWLAN helper: networksetup alone reports success without connecting
+# on macOS 15; the helper scans until the AP is visible first.
+wifi-helper:
+	@echo "Building wifi_join helper..."
+	@mkdir -p bin
+	swiftc scripts/wifi_join.swift -o bin/wifi_join
 
 appimage: build frontend-build
 	@echo "Building AppImage..."

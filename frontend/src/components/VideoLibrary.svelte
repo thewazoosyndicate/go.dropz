@@ -1,12 +1,32 @@
 <script>
   import VideoCard from './VideoCard.svelte';
+  import CameraMediaBrowser from './CameraMediaBrowser.svelte';
   import { getVideos, getTotalCount, getLoading } from '../lib/stores/videos.svelte.js';
-  import { getAllDevices } from '../lib/stores/devices.svelte.js';
+  import { getManagedDevices, getAllDevices } from '../lib/stores/devices.svelte.js';
   import { loadVideos } from '../lib/grpc/actions.js';
 
   let videos = $derived(getVideos());
   let totalCount = $derived(getTotalCount());
   let loading = $derived(getLoading());
+
+  // 'local' or a camera ID: the media source being browsed
+  let source = $state('local');
+
+  let managedCameras = $derived.by(() =>
+    Object.values(getManagedDevices())
+      .filter(d => d.id)
+      .map(d => ({ id: d.id, name: d.wifiSsid?.trim()?.substring(0, 12) || d.name || 'Unknown' }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  );
+
+  // A camera leaving the managed pool drops the tab back to local
+  $effect(() => {
+    if (source !== 'local' && !managedCameras.some(c => c.id === source)) {
+      source = 'local';
+    }
+  });
+
+  let sourceCamera = $derived(managedCameras.find(c => c.id === source));
 
   // Build camera ID → display name map
   let cameraNames = $derived.by(() => {
@@ -25,14 +45,28 @@
   <div class="panel-header">
     <h2><i class="fas fa-photo-film"></i> Library</h2>
     <div class="header-actions">
-      <span class="badge">{totalCount} files</span>
-      <button class="refresh-btn" onclick={() => loadVideos()} disabled={loading}>
-        <i class="fas fa-refresh" class:spinning={loading}></i>
-      </button>
+      {#if source === 'local'}
+        <span class="badge">{totalCount} files</span>
+        <button class="refresh-btn" onclick={() => loadVideos()} disabled={loading}>
+          <i class="fas fa-refresh" class:spinning={loading}></i>
+        </button>
+      {/if}
     </div>
   </div>
+  <div class="source-bar">
+    <button class="source-chip" class:active={source === 'local'} onclick={() => source = 'local'}>
+      <i class="fas fa-hard-drive"></i> Local
+    </button>
+    {#each managedCameras as cam (cam.id)}
+      <button class="source-chip" class:active={source === cam.id} onclick={() => source = cam.id}>
+        <i class="fas fa-camera"></i> {cam.name}
+      </button>
+    {/each}
+  </div>
   <div class="panel-content">
-    {#if loading && videos.length === 0}
+    {#if source !== 'local' && sourceCamera}
+      <CameraMediaBrowser cameraId={sourceCamera.id} cameraName={sourceCamera.name} />
+    {:else if loading && videos.length === 0}
       <div class="empty-state">
         <i class="fas fa-spinner fa-spin"></i>
         <p>Scanning files...</p>
@@ -124,10 +158,41 @@
     to { transform: rotate(360deg); }
   }
 
+  .source-bar {
+    display: flex;
+    gap: 6px;
+    padding: 8px 16px 0;
+    flex-wrap: wrap;
+  }
+
+  .source-chip {
+    background: none;
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 4px 12px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.15s;
+  }
+
+  .source-chip:hover { color: var(--text-primary); }
+
+  .source-chip.active {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+    color: white;
+  }
+
   .panel-content {
     flex: 1;
     padding: 12px;
     overflow-y: auto;
+    display: flex;
+    flex-direction: column;
   }
 
   .cards-grid {

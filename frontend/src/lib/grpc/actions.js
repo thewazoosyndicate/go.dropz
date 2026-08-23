@@ -294,6 +294,7 @@ export function loadVideos(cameraId = '', limit = 200, offset = 0) {
       createdAt: v.getCreatedAt()?.toDate(),
       cameraId: v.getCameraId(),
       mimeType: v.getMimeType(),
+      thumbnailPath: v.getThumbnailPath(),
     }));
 
     setVideos(videos, response.getTotalCount());
@@ -429,6 +430,43 @@ export function applyCameraSettings({ cameraId, groupId, changes }) {
         error: c.getError(),
         results: c.getResultsList().map(r => ({ id: r.getId(), error: r.getError() })),
       })));
+    });
+  });
+}
+
+// Media browser: cached catalog of what is on a camera.
+export function fetchCameraMedia(cameraId) {
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.GetCameraMediaRequest();
+    request.setCameraId(cameraId);
+    client.getCameraMedia(request, (error, response) => {
+      if (error) return reject(error);
+      resolve({
+        updatedAt: response.getUpdatedAt()?.toDate() || null,
+        items: response.getItemsList().map(i => ({
+          name: i.getName(),
+          cameraPath: i.getCameraPath(),
+          sizeBytes: i.getSizeBytes(),
+          createdAt: i.getCreatedAt()?.toDate(),
+          thumbnailPath: i.getThumbnailPath(),
+          downloaded: i.getDownloaded(),
+        })),
+      });
+    });
+  });
+}
+
+// Empty fileNames queues a catalog-only refresh.
+export function requestMediaDownload(cameraId, fileNames) {
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.RequestMediaDownloadRequest();
+    request.setCameraId(cameraId);
+    request.setFileNamesList(fileNames || []);
+    client.requestMediaDownload(request, (error, response) => {
+      if (error) return reject(error);
+      resolve(processSyncQueueEntry(response.getEntry()));
     });
   });
 }

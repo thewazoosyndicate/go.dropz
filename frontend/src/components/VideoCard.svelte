@@ -26,6 +26,11 @@
 </script>
 
 <div class="card">
+  {#if video.thumbnailPath}
+    <div class="thumb">
+      <img src={'file://' + video.thumbnailPath} alt={video.name} loading="lazy" />
+    </div>
+  {/if}
   <div class="card-header">
     <i class="fas {icon} file-icon"></i>
     <div class="file-info">
@@ -57,6 +62,20 @@
 
   .card:hover {
     box-shadow: var(--shadow-md);
+  }
+
+  .thumb {
+    margin: -14px -14px 0;
+    aspect-ratio: 16 / 9;
+    background-color: var(--light-bg);
+    overflow: hidden;
+    border-radius: 8px 8px 0 0;
+  }
+
+  .thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
 
   .card-header {

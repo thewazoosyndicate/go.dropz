@@ -47,4 +47,6 @@ export const proto = {
   GetCameraSettingsRequest: goProProto.GetCameraSettingsRequest,
   ApplyCameraSettingsRequest: goProProto.ApplyCameraSettingsRequest,
   SettingChange: goProProto.SettingChange,
+  GetCameraMediaRequest: goProProto.GetCameraMediaRequest,
+  RequestMediaDownloadRequest: goProProto.RequestMediaDownloadRequest,
 };

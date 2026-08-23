@@ -64,6 +64,13 @@ func (m *GoProManager) settingsSession(cameraID string, op func(bleAddress strin
 	}
 	bleAddress := cs.Camera.BLEAddress
 
+	// Wait out a short holder (status check); fail if one keeps it (sync).
+	release, err := m.ble.AcquireSession(bleAddress, 15*time.Second)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	return m.BLEOperation(m.ctx, true, func() error {
 		if err := m.ble.ConnectForStatusCheck(bleAddress); err != nil {
 			return fmt.Errorf("connect: %w", err)

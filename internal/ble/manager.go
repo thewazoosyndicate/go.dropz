@@ -58,6 +58,41 @@ type Manager struct {
 	discoveryCallback DeviceDiscoveryCallback                              // callback for live discovery updates
 	metadataCallback  MetadataUpdateFunc                                   // callback for metadata updates during connection
 	statusCallback    func(macAddress string, statusID byte, value []byte) // push notification callback
+	sessions          map[string]bool                                      // addresses with an active logical session
+}
+
+// TryAcquireSession claims exclusive use of one camera for a logical BLE
+// session (connect, operate, disconnect). Two concurrent sessions to the
+// same device collide in BlueZ ("In Progress") and one side's teardown
+// sleeps the camera under the other, so every session type must hold this.
+// Returns the release func and true, or nil and false when busy.
+func (m *Manager) TryAcquireSession(macAddress string) (func(), bool) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	if m.sessions[macAddress] {
+		return nil, false
+	}
+	m.sessions[macAddress] = true
+	return func() {
+		m.mutex.Lock()
+		delete(m.sessions, macAddress)
+		m.mutex.Unlock()
+	}, true
+}
+
+// AcquireSession polls TryAcquireSession until it succeeds or the timeout
+// passes. For sessions that should wait out a short-lived holder.
+func (m *Manager) AcquireSession(macAddress string, timeout time.Duration) (func(), error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		if release, ok := m.TryAcquireSession(macAddress); ok {
+			return release, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("camera %s is busy with another BLE session", macAddress)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 // parseTLVPairs parses a byte sequence of [ID][Length][Value...] triplets into a map.
@@ -87,6 +122,7 @@ func NewManager(adapter *bluetooth.Adapter, log *slog.Logger) *Manager {
 		adapter:           adapter,
 		discoveredDevices: make(map[string]*Device),
 		conns:             make(map[string]*conn),
+		sessions:          make(map[string]bool),
 		log:               log.With("component", "ble"),
 	}
 	if adapter != nil {

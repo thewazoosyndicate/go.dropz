@@ -53,6 +53,14 @@ func (pm *Manager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 	ctx, cancel := context.WithTimeout(pm.ctx, pairingTimeout)
 	defer cancel()
 
+	release, sessionErr := pm.ble.AcquireSession(bleAddress, 15*time.Second)
+	if sessionErr != nil {
+		pm.db.UpdateCameraPairingStatusByID(cameraID, false)
+		pm.notifier()
+		return nil, sessionErr
+	}
+	defer release()
+
 	var verifiedPairingState bool
 
 	bleErr := pm.bleOperation(ctx, true, func() error {

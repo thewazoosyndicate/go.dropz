@@ -52,6 +52,14 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 	bleAddress := cs.Camera.BLEAddress
 	var syncQueued bool
 
+	// Another session (settings, pairing, sync) owns the camera: skip;
+	// the next tick re-checks.
+	release, ok := m.ble.TryAcquireSession(bleAddress)
+	if !ok {
+		return
+	}
+	defer release()
+
 	if err := m.ble.ConnectForStatusCheck(bleAddress); err != nil {
 		m.log.Debug("Status check connect failed", append(cs.LogAttrs(), "err", err)...)
 		return

@@ -270,6 +270,16 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 	// Step 1: Connect to camera via BLE
 	updateProgress("Connecting via BLE", 10)
 
+	// Serialize with status checks and settings sessions on this camera.
+	release, sessionErr := c.ble.AcquireSession(bleAddress, 30*time.Second)
+	if sessionErr != nil {
+		updateProgress("Camera busy", syncEntry.ProgressPercent)
+		c.log.Warn("Sync could not acquire BLE session", "camera", task.CameraName, "err", sessionErr)
+		c.db.SetLastSyncErrorByID(task.CameraID, "Camera busy with another operation")
+		return
+	}
+	defer release()
+
 	connErr := c.bleOperation(syncCtx, true, func() error {
 		return c.ble.Connect(bleAddress)
 	})

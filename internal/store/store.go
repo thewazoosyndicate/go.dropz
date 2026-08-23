@@ -172,6 +172,41 @@ func (db *Store) FindCameraByBLEAddress(bleAddress string) (*CameraLookupResult,
 	return nil, false
 }
 
+// FindCameraBySerial finds a camera by serial number: the stable identity
+// that survives macOS's per-boot random BLE addresses.
+func (db *Store) FindCameraBySerial(serial string) (*CameraLookupResult, bool) {
+	if serial == "" {
+		return nil, false
+	}
+	db.mutex.RLock()
+	defer db.mutex.RUnlock()
+
+	for key, cs := range db.cameraStates {
+		if key == serial || cs.Metadata.SerialNumber == serial {
+			return &CameraLookupResult{DBKey: key, CameraState: db.copyCamera(cs)}, true
+		}
+	}
+	return nil, false
+}
+
+// FindCameraByName finds a camera by its exact advertised name.
+// Fallback identity for older cameras whose advertisements carry no
+// serial, on platforms with unstable BLE addresses (macOS).
+func (db *Store) FindCameraByName(name string) (*CameraLookupResult, bool) {
+	if name == "" {
+		return nil, false
+	}
+	db.mutex.RLock()
+	defer db.mutex.RUnlock()
+
+	for key, cs := range db.cameraStates {
+		if cs.Camera.Name == name {
+			return &CameraLookupResult{DBKey: key, CameraState: db.copyCamera(cs)}, true
+		}
+	}
+	return nil, false
+}
+
 // RekeyCamera moves a camera entry from oldKey to newKey.
 func (db *Store) RekeyCamera(oldKey, newKey string) error {
 	db.mutex.Lock()
@@ -189,12 +224,17 @@ func (db *Store) RekeyCamera(oldKey, newKey string) error {
 	return db.saveToFile()
 }
 
-// AddOrUpdateDiscoveredCamera adds or updates a discovered camera
+// AddOrUpdateDiscoveredCamera adds or updates a discovered camera.
+// Keyed by serial number when known (stable identity); BLE address otherwise.
 func (db *Store) AddOrUpdateDiscoveredCamera(camera *model.DiscoveredCamera) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
-	db.cameraStates[camera.CameraState.Camera.BLEAddress] = camera.CameraState
+	key := camera.CameraState.Camera.BLEAddress
+	if serial := camera.CameraState.Metadata.SerialNumber; serial != "" {
+		key = serial
+	}
+	db.cameraStates[key] = camera.CameraState
 
 	return db.saveToFile()
 }

@@ -11,24 +11,42 @@ import (
 	"github.com/google/uuid"
 )
 
-// Processor handles discovery processing operations
+// Processor handles discovery processing operations.
+// Only the scan callback goroutine calls processDevice, so lastNewMedia
+// needs no lock.
 type Processor struct {
-	db                 *store.Store
-	log                *slog.Logger
-	onCameraReappeared func(cameraID string, wasGoneFor time.Duration)
+	db                    *store.Store
+	log                   *slog.Logger
+	onCameraReappeared    func(cameraID string, wasGoneFor time.Duration)
+	onPairingModeDetected func(cameraID string)
+	onNewMediaAdvertised  func(cameraID string)
+	lastNewMedia          map[string]bool // rising-edge detection per camera ID
 }
 
 // NewProcessor creates a new processor
 func NewProcessor(db *store.Store, log *slog.Logger) *Processor {
 	return &Processor{
-		db:  db,
-		log: log.With("component", "discovery"),
+		db:           db,
+		log:          log.With("component", "discovery"),
+		lastNewMedia: make(map[string]bool),
 	}
 }
 
 // SetOnCameraReappeared sets a callback invoked when a camera becomes reachable again
 func (p *Processor) SetOnCameraReappeared(fn func(cameraID string, wasGoneFor time.Duration)) {
 	p.onCameraReappeared = fn
+}
+
+// SetOnPairingModeDetected sets a callback invoked when a camera starts
+// advertising its pairing UI (transition only, not on every advertisement).
+func (p *Processor) SetOnPairingModeDetected(fn func(cameraID string)) {
+	p.onPairingModeDetected = fn
+}
+
+// SetOnNewMediaAdvertised sets a callback invoked when a camera starts
+// advertising unsynced media (transition only).
+func (p *Processor) SetOnNewMediaAdvertised(fn func(cameraID string)) {
+	p.onNewMediaAdvertised = fn
 }
 
 // ProcessDiscoveredDeviceLive handles a single discovered device immediately (for live updates)
@@ -39,41 +57,48 @@ func (p *Processor) ProcessDiscoveredDeviceLive(device ble.Device, notifier func
 	}
 }
 
-// processDevice processes a single discovered device
+// processDevice processes a single discovered device.
+// Identity resolution order: serial number (stable across macOS's random
+// BLE addresses), then BLE address, then exact name (older cameras whose
+// advertisements carry no serial).
 func (p *Processor) processDevice(dev ble.Device) {
-	name := dev.Name
-	bleAddress := dev.BLEAddress
-	rssi := dev.RSSI
-
-	if name == "" || !strings.Contains(strings.ToLower(name), "gopro") {
+	if dev.Name == "" || !strings.Contains(strings.ToLower(dev.Name), "gopro") {
 		return
 	}
 
-	// Look up by BLE address — finds the camera even if re-keyed by serial
-	lookup, exists := p.db.FindCameraByBLEAddress(bleAddress)
+	lookup, exists := p.db.FindCameraBySerial(dev.SerialNumber)
+	if !exists {
+		lookup, exists = p.db.FindCameraByBLEAddress(dev.BLEAddress)
+	}
+	if !exists {
+		lookup, exists = p.db.FindCameraByName(dev.Name)
+	}
 
 	if !exists {
-		p.createNewCamera(name, bleAddress, rssi)
-	} else {
-		p.updateExistingCamera(lookup.DBKey, bleAddress, name, rssi)
+		p.createNewCamera(dev)
+		return
 	}
+	p.updateExistingCamera(lookup.DBKey, dev)
 }
 
 // createNewCamera creates a new camera entry in the database
-func (p *Processor) createNewCamera(name, bleAddress string, rssi int32) {
+func (p *Processor) createNewCamera(dev ble.Device) {
 	cameraState := &model.CameraWithState{
 		Camera: model.Camera{
 			ID:         uuid.New().String(),
-			Name:       name,
-			BLEAddress: bleAddress,
-			RSSI:       rssi,
+			Name:       dev.Name,
+			BLEAddress: dev.BLEAddress,
+			RSSI:       dev.RSSI,
 		},
 		Status: model.CameraStatus{
-			LastSeen:    time.Now(),
-			IsReachable: true,
+			LastSeen:      time.Now(),
+			IsReachable:   true,
+			InPairingMode: dev.PairingMode,
 		},
 		Metadata: model.CameraMetadata{
-			ID: uuid.New().String(),
+			ID:           uuid.New().String(),
+			SerialNumber: dev.SerialNumber,
+			ModelID:      dev.ModelID,
 		},
 	}
 
@@ -86,28 +111,42 @@ func (p *Processor) createNewCamera(name, bleAddress string, rssi int32) {
 	}
 }
 
-// updateExistingCamera atomically updates an existing camera entry in the model.
-func (p *Processor) updateExistingCamera(dbKey, bleAddress, name string, rssi int32) {
+// updateExistingCamera atomically updates an existing camera entry.
+func (p *Processor) updateExistingCamera(dbKey string, dev ble.Device) {
 	var wasGoneFor time.Duration
 	var cameraID string
 	wasUnreachable := false
+	enteredPairingMode := false
+	newMediaAppeared := false
 
-	// Only persist when identity fields change; RSSI, LastSeen, and
-	// reachability are ephemeral and would otherwise rewrite the DB file
-	// on every advertisement.
+	// Only persist when identity fields change; RSSI, LastSeen,
+	// reachability, and the advertisement flags are ephemeral and would
+	// otherwise rewrite the DB file on every advertisement.
 	err := p.db.UpdateCamera(dbKey, func(cs *model.CameraWithState) bool {
 		cameraID = cs.Camera.ID
 		durable := false
 
 		// Update BLE address in case it changed (macOS assigns random UUIDs)
-		if cs.Camera.BLEAddress != bleAddress {
-			cs.Camera.BLEAddress = bleAddress
+		if cs.Camera.BLEAddress != dev.BLEAddress {
+			p.log.Info("Camera BLE address changed", "camera", cs.Camera.Name,
+				"old", cs.Camera.BLEAddress, "new", dev.BLEAddress)
+			cs.Camera.BLEAddress = dev.BLEAddress
 			durable = true
 		}
 
-		if cs.Camera.Name == "" || (!strings.Contains(cs.Camera.Name, "GoPro") && strings.Contains(name, "GoPro")) {
-			p.log.Debug("Camera name updated", "key", dbKey, "old", cs.Camera.Name, "new", name)
-			cs.Camera.Name = name
+		if cs.Camera.Name == "" || (!strings.Contains(cs.Camera.Name, "GoPro") && strings.Contains(dev.Name, "GoPro")) {
+			p.log.Debug("Camera name updated", "key", dbKey, "old", cs.Camera.Name, "new", dev.Name)
+			cs.Camera.Name = dev.Name
+			durable = true
+		}
+
+		// Identity and model info learned from advertising data
+		if dev.SerialNumber != "" && cs.Metadata.SerialNumber == "" {
+			cs.Metadata.SerialNumber = dev.SerialNumber
+			durable = true
+		}
+		if dev.ModelID > 0 && cs.Metadata.ModelID == 0 {
+			cs.Metadata.ModelID = dev.ModelID
 			durable = true
 		}
 
@@ -118,7 +157,13 @@ func (p *Processor) updateExistingCamera(dbKey, bleAddress, name string, rssi in
 			cs.Status.IsReachable = true
 		}
 
-		cs.Camera.RSSI = rssi
+		// Transition detection: fire callbacks once per flag rise
+		if dev.PairingMode && !cs.Status.InPairingMode {
+			enteredPairingMode = true
+		}
+		cs.Status.InPairingMode = dev.PairingMode
+
+		cs.Camera.RSSI = dev.RSSI
 		cs.Status.LastSeen = time.Now()
 		return durable
 	})
@@ -127,8 +172,26 @@ func (p *Processor) updateExistingCamera(dbKey, bleAddress, name string, rssi in
 		return
 	}
 
+	// Rising edge of the advertised new-media flag. The flag reflects the
+	// camera's own idea of unsynced media, so it only triggers a status
+	// check; the count comparison there decides whether to sync.
+	if dev.NewMedia && !p.lastNewMedia[cameraID] {
+		newMediaAppeared = true
+	}
+	p.lastNewMedia[cameraID] = dev.NewMedia
+
 	if wasUnreachable && p.onCameraReappeared != nil {
 		p.onCameraReappeared(cameraID, wasGoneFor)
+	}
+	if enteredPairingMode {
+		p.log.Info("Camera entered pairing mode", "camera", dbKey)
+		if p.onPairingModeDetected != nil {
+			p.onPairingModeDetected(cameraID)
+		}
+	}
+	if newMediaAppeared && p.onNewMediaAdvertised != nil {
+		p.log.Info("Camera advertises new media", "camera", dbKey)
+		p.onNewMediaAdvertised(cameraID)
 	}
 }
 

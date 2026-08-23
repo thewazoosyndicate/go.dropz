@@ -151,6 +151,39 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 		}
 	})
 
+	// Auto-pair when a managed, unpaired camera shows its pairing UI.
+	// The camera advertises the pairing flag, so no connection is needed
+	// to detect it, and pairing attempts are no longer fired blind.
+	manager.discoveryProcessor.SetOnPairingModeDetected(func(cameraID string) {
+		if !db.GetConfig().PairModeEnabled {
+			return
+		}
+		cs, ok := db.GetCameraByID(cameraID)
+		if !ok || !cs.Status.IsManaged || cs.Status.IsPaired || cs.Status.IsPairing {
+			return
+		}
+		log.Info("Camera in pairing mode, starting pairing", "camera", cs.Camera.Name)
+		go func() {
+			if _, err := manager.PairCamera(cameraID); err != nil {
+				log.Warn("Advertised pairing failed", "camera", cs.Camera.Name, "err", err)
+			}
+		}()
+	})
+
+	// A camera advertising new media gets a status check; the count
+	// comparison there decides whether a sync is queued.
+	manager.discoveryProcessor.SetOnNewMediaAdvertised(func(cameraID string) {
+		cam, ok := db.GetManagedCameraByID(cameraID)
+		if !ok || cam.CameraState.Status.IsSyncing {
+			return
+		}
+		log.Info("Camera advertises new media, triggering status check", "camera", cam.CameraState.Camera.Name)
+		select {
+		case manager.statusCheckRequest <- cameraID:
+		default:
+		}
+	})
+
 	// Trigger BLE status check when a managed camera reappears
 	manager.discoveryProcessor.SetOnCameraReappeared(func(cameraID string, wasGoneFor time.Duration) {
 		if !db.GetConfig().CheckOnReturn {

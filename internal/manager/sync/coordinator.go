@@ -29,6 +29,8 @@ const (
 	keepAliveInterval  = 3 * time.Second
 	apiReadyAttempts   = 10
 	apiReadyDelay      = 2 * time.Second
+	idleWaitTimeout    = 2 * time.Minute // max wait for busy/encoding to clear
+	idleWaitPoll       = 5 * time.Second
 )
 
 // BLEOperation runs a BLE operation with the manager's retry policy.
@@ -235,6 +237,14 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		return
 	}
 
+	// Re-read the BLE address at sync time: the enqueue-time address can be
+	// stale on macOS, which rotates BLE identifiers.
+	bleAddress := camera.Camera.BLEAddress
+	if bleAddress != task.BLEAddress {
+		c.log.Info("BLE address changed since enqueue", "camera", task.CameraName,
+			"old", task.BLEAddress, "new", bleAddress)
+	}
+
 	syncEntry := &model.SyncQueueEntry{
 		CameraID: task.CameraID,
 	}
@@ -255,7 +265,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 	updateProgress("Connecting via BLE", 10)
 
 	connErr := c.bleOperation(syncCtx, true, func() error {
-		return c.ble.Connect(task.BLEAddress)
+		return c.ble.Connect(bleAddress)
 	})
 	if connErr != nil {
 		updateProgress("BLE Connection Failed", syncEntry.ProgressPercent)
@@ -266,7 +276,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 
 	defer func() {
 		disconnectErr := c.bleOperation(syncCtx, false, func() error {
-			return c.ble.Disconnect(task.BLEAddress)
+			return c.ble.Disconnect(bleAddress)
 		})
 		if disconnectErr != nil {
 			c.log.Warn("Failed to disconnect from BLE after sync", "err", disconnectErr)
@@ -284,12 +294,22 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 			case <-keepAliveCtx.Done():
 				return
 			case <-ticker.C:
-				if err := c.ble.KeepAlive(task.BLEAddress); err != nil {
+				if err := c.ble.KeepAlive(bleAddress); err != nil {
 					c.log.Debug("Keep-alive failed", "err", err)
 				}
 			}
 		}
 	}()
+
+	// Step 1b: Wait until the camera is neither busy nor encoding
+	// (OpenGoPro state_management: gate work on statuses 8 and 10).
+	updateProgress("Waiting for camera to be idle", 20)
+	if err := c.waitForCameraIdle(syncCtx, bleAddress); err != nil {
+		updateProgress("Camera busy", syncEntry.ProgressPercent)
+		c.log.Error("Camera did not become idle", "camera", task.CameraName, "err", err)
+		c.db.SetLastSyncErrorByID(task.CameraID, "Camera busy or recording")
+		return
+	}
 
 	// Step 2: Connect to camera WiFi
 	updateProgress("Connecting to WiFi", 30)
@@ -369,6 +389,39 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 	c.db.MarkCameraSyncedByID(task.CameraID)
 	c.db.SetLastSyncErrorByID(task.CameraID, "")
 	c.log.Info("Camera synced successfully", "camera", task.CameraName, "files", len(downloadedFiles))
+}
+
+// waitForCameraIdle polls busy (8) and encoding (10) until both clear.
+func (c *Coordinator) waitForCameraIdle(ctx context.Context, bleAddress string) error {
+	deadline := time.Now().Add(idleWaitTimeout)
+	for {
+		statuses, err := c.ble.QueryStatuses(bleAddress, []byte{ble.StatusSystemBusy, ble.StatusEncoding})
+		if err != nil {
+			return fmt.Errorf("busy query failed: %w", err)
+		}
+		if !statusesInUse(statuses) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("camera still busy after %v", idleWaitTimeout)
+		}
+		c.log.Debug("Camera busy or encoding, waiting", "device", bleAddress)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(idleWaitPoll):
+		}
+	}
+}
+
+// statusesInUse reports whether busy or encoding statuses are nonzero.
+func statusesInUse(statuses map[byte][]byte) bool {
+	for _, id := range []byte{ble.StatusSystemBusy, ble.StatusEncoding} {
+		if v, ok := statuses[id]; ok && len(v) >= 1 && v[0] != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // updateSyncQueueEntrySafely updates the sync queue entry only if the task hasn't been cancelled

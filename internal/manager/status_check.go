@@ -62,6 +62,8 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 		ble.StatusNumTotalVideos,
 		ble.StatusSDCardStatus,
 		ble.StatusSDCardRemainingKB,
+		ble.StatusSystemBusy,
+		ble.StatusEncoding,
 	})
 	if err != nil {
 		m.log.Debug("Status check query failed", "camera", cs.Camera.Name, "err", err)
@@ -70,6 +72,13 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 	}
 
 	syncQueued = m.processStatusResults(cs, statuses)
+
+	// A busy or recording camera must not be put to sleep.
+	if cameraInUse(statuses) {
+		m.log.Info("Camera busy or recording, leaving it awake", "camera", cs.Camera.Name)
+		m.ble.DisconnectQuietly(bleAddress)
+		return
+	}
 
 	// HERO13+/MAX2 (Broadcom BCM4381, model ID >= 64) ignore Sleep on the
 	// first BLE connection from idle. Reconnect so Sleep works on the second.
@@ -173,6 +182,17 @@ func (m *GoProManager) processStatusResults(cs *model.CameraWithState, statuses 
 	m.notify()
 
 	return true
+}
+
+// cameraInUse reports whether the camera is busy or actively encoding
+// (OpenGoPro statuses 8 and 10).
+func cameraInUse(statuses map[byte][]byte) bool {
+	for _, id := range []byte{ble.StatusSystemBusy, ble.StatusEncoding} {
+		if v, ok := statuses[id]; ok && len(v) >= 1 && v[0] != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func parseIntStatus(v []byte) int32 {

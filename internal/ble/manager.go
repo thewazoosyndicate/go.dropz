@@ -139,7 +139,7 @@ func (m *Manager) StartScanningWithCallback(ctx context.Context, callback Device
 				// Fallback: name-based check for older cameras that may not advertise the UUID
 				if result.HasServiceUUID(goProServiceUUID) ||
 					strings.Contains(strings.ToLower(result.LocalName()), "gopro") {
-					m.addDiscoveredDevice(result)
+					m.addDiscoveredDevice(result, parseAdvertisement(result, goProServiceUUID))
 				}
 			})
 			if scanErr != nil {
@@ -216,19 +216,21 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 
 	connectStart := time.Now()
 
-	// Signal scanner to wait until GATT discovery is complete before restarting.
+	// Signal scanner to wait until connection setup is complete before
+	// restarting. Resumed by the public Connect* methods once their full
+	// GATT setup is done, and by the error paths below; resuming earlier
+	// restarts the scan mid-session and breaks notifications on macOS.
 	m.mutex.Lock()
 	m.connectingDone = make(chan struct{})
 	m.mutex.Unlock()
-	defer m.signalConnectingDone()
 
 	m.log.Debug("Stopping BLE scan for GATT connection")
 	m.StopScanning()
-	m.adapter.StopScan()
 	time.Sleep(ScanToConnectDelay)
 
 	addr, parseErr := parseAddress(macAddress)
 	if parseErr != nil {
+		m.signalConnectingDone()
 		return nil, time.Time{}, parseErr
 	}
 
@@ -288,6 +290,7 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 		if connected {
 			device.Disconnect()
 		}
+		m.signalConnectingDone()
 		return nil, time.Time{}, fmt.Errorf("service discovery failed after %d retries", ServiceDiscoveryRetries)
 	}
 
@@ -333,7 +336,6 @@ func (m *Manager) discoverCharacteristics(macAddress string, services []bluetoot
 		m.mutex.Unlock()
 	}
 
-	m.signalConnectingDone()
 	m.log.Debug("Characteristic discovery complete", "elapsed", time.Since(connectStart))
 }
 
@@ -347,6 +349,7 @@ func (m *Manager) dropConn(macAddress string) *conn {
 	if c != nil {
 		c.collector.Stop()
 	}
+	m.signalConnectingDone()
 	return c
 }
 
@@ -360,6 +363,7 @@ func (m *Manager) cleanupOnError(macAddress string) {
 // connectBase establishes a BLE connection, discovers services/characteristics,
 // and polls until the camera is ready.
 func (m *Manager) connectBase(macAddress string) (hwInfo *HardwareInfo, err error) {
+	defer m.signalConnectingDone()
 	services, connectStart, connErr := m.connectAndDiscover(macAddress, nil)
 	if errors.Is(connErr, errAlreadyConnected) {
 		return nil, nil
@@ -459,6 +463,7 @@ func (m *Manager) finishConnection(macAddress string, hwInfo *HardwareInfo, ssid
 // Only discovers the Control service (Command/Query chars) — skips GetHardwareInfo,
 // SetThirdPartyClient, and SetLocalDateTime.
 func (m *Manager) ConnectForStatusCheck(macAddress string) error {
+	defer m.signalConnectingDone()
 	services, connectStart, err := m.connectAndDiscover(macAddress, nil)
 	if errors.Is(err, errAlreadyConnected) {
 		return nil
@@ -535,6 +540,7 @@ func (m *Manager) Connect(macAddress string) (err error) {
 // Only discovers WiFi AP and Camera Management services — skips the control
 // service (which hangs on BlueZ) since pairing doesn't need commands/queries.
 func (m *Manager) ConnectForPairing(macAddress string) (err error) {
+	defer m.signalConnectingDone()
 	// D-Bus bonding runs between connect and service discovery on each attempt
 	services, connectStart, connErr := m.connectAndDiscover(macAddress, func(addr string) error {
 		if pairErr := m.pairViaDbus(addr); pairErr != nil {
@@ -691,25 +697,24 @@ func (m *Manager) Sleep(macAddress string) error {
 
 // Private helper methods
 
-func (m *Manager) addDiscoveredDevice(result bluetooth.ScanResult) {
+func (m *Manager) addDiscoveredDevice(result bluetooth.ScanResult, adv AdvInfo) {
 	macAddress := result.Address.String()
 	localName := result.LocalName()
 	rssi := int32(result.RSSI)
 	now := time.Now()
 
 	m.mutex.Lock()
-	var deviceCopy Device
-	if existingDevice, exists := m.discoveredDevices[macAddress]; exists {
+	device, exists := m.discoveredDevices[macAddress]
+	if exists {
 		// EMA smoothing to reduce RSSI jitter between advertisements
 		const emaAlpha = 0.15
-		existingDevice.RSSI = int32(emaAlpha*float64(rssi) + (1-emaAlpha)*float64(existingDevice.RSSI))
-		existingDevice.LastSeen = now
-		if existingDevice.Name == "" || existingDevice.Name != localName {
-			existingDevice.Name = localName
+		device.RSSI = int32(emaAlpha*float64(rssi) + (1-emaAlpha)*float64(device.RSSI))
+		device.LastSeen = now
+		if device.Name == "" || device.Name != localName {
+			device.Name = localName
 		}
-		deviceCopy = *existingDevice
 	} else {
-		device := &Device{
+		device = &Device{
 			Name:       localName,
 			BLEAddress: macAddress,
 			RSSI:       rssi,
@@ -717,8 +722,18 @@ func (m *Manager) addDiscoveredDevice(result bluetooth.ScanResult) {
 		}
 		m.discoveredDevices[macAddress] = device
 		m.log.Info("Discovered new GoPro device", "name", device.Name, "device", device.BLEAddress, "rssi", device.RSSI)
-		deviceCopy = *device
 	}
+	if adv.Valid {
+		device.PairingMode = adv.PairingMode
+		device.NewMedia = adv.NewMedia
+		if device.ModelID == 0 && adv.ModelID > 0 {
+			device.ModelID = adv.ModelID
+		}
+	}
+	if device.SerialNumber == "" && adv.SerialNumber != "" {
+		device.SerialNumber = adv.SerialNumber
+	}
+	deviceCopy := *device
 	callback := m.discoveryCallback
 	m.mutex.Unlock()
 
@@ -749,7 +764,7 @@ func (m *Manager) sendMessage(macAddress string, charUUID string, id byte, data 
 	packets := tlv.SplitIntoPackets(buildPacket(id, data))
 
 	for i, pkt := range packets {
-		if _, err := char.WriteWithoutResponse(pkt); err != nil {
+		if _, err := writeCharacteristic(char, pkt); err != nil {
 			return Response{}, fmt.Errorf("failed to send packet %d: %w", i, err)
 		}
 	}

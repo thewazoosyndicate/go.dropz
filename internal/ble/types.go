@@ -14,6 +14,10 @@ type Device struct {
 	WiFiSSID        string    `json:"wifi_ssid,omitempty"`
 	WiFiPassword    string    `json:"wifi_password,omitempty"`
 	LastSeen        time.Time `json:"last_seen"`
+
+	// Parsed from advertising data (OpenGoPro manufacturer/service data)
+	PairingMode bool `json:"pairing_mode,omitempty"`
+	NewMedia    bool `json:"new_media,omitempty"`
 }
 
 // Response represents a BLE response from the device

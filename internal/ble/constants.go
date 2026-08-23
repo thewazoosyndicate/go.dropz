@@ -53,6 +53,8 @@ const (
 	AsyncStatusNotification = 0x93
 
 	// Status IDs
+	StatusSystemBusy        = 8  // camera loading presets, formatting, etc.
+	StatusEncoding          = 10 // camera actively capturing
 	StatusSDCardStatus      = 33
 	StatusNumTotalPhotos    = 38
 	StatusNumTotalVideos    = 39

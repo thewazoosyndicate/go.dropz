@@ -5,12 +5,14 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/dropz/dropz/internal/logging"
 	"github.com/dropz/dropz/internal/model"
 )
 
@@ -21,6 +23,7 @@ type Store struct {
 	groups       []*model.Group
 	config       model.Config
 	filePath     string
+	log          *slog.Logger
 	mutex        sync.RWMutex
 }
 
@@ -54,12 +57,18 @@ func (db *Store) UnmarshalJSON(data []byte) error {
 }
 
 // New creates a store backed by the given JSON file, loading it if present.
-func New(filePath string) (*Store, error) {
+// A nil log discards; the store logs its own write failures because many
+// callers deliberately ignore the returned error.
+func New(filePath string, log *slog.Logger) (*Store, error) {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
 	db := &Store{
 		cameraStates: make(map[string]*model.CameraWithState),
 		syncQueue:    make([]*model.SyncQueueEntry, 0),
 		groups:       make([]*model.Group, 0),
 		config:       model.DefaultConfig(),
+		log:          log.With("component", "store"),
 	}
 	if err := db.initialize(filePath); err != nil {
 		return nil, err
@@ -86,11 +95,17 @@ func (db *Store) initialize(filePath string) error {
 		if err := db.saveToFile(); err != nil {
 			return fmt.Errorf("failed to create store file: %w", err)
 		}
+		db.log.Info("Store created", "path", filePath)
 		return nil
 	}
 
 	// Load existing store
-	return db.loadFromFile()
+	if err := db.loadFromFile(); err != nil {
+		return err
+	}
+	db.log.Info("Store loaded", "path", filePath,
+		"cameras", len(db.cameraStates), "groups", len(db.groups), "queued", len(db.syncQueue))
+	return nil
 }
 
 // loadFromFile loads the store from the JSON file
@@ -101,6 +116,7 @@ func (db *Store) loadFromFile() error {
 	}
 
 	if err := json.Unmarshal(data, db); err != nil {
+		db.log.Error("Store file is corrupt", "path", db.filePath, "bytes", len(data), "err", err)
 		return fmt.Errorf("failed to unmarshal store: %w", err)
 	}
 
@@ -108,25 +124,33 @@ func (db *Store) loadFromFile() error {
 	// Default to true for users who had periodic checks enabled.
 	if db.config.StatusCheckIntervalSeconds > 0 && !db.config.CheckOnReturn {
 		db.config.CheckOnReturn = true
+		db.log.Info("Store migration applied", "migration", "check_on_return")
 	}
 
 	return nil
 }
 
 // saveToFile saves the store to the JSON file atomically via temp file + rename.
+// Failures are logged here as well as returned: persistence silently stopping
+// is the worst store failure mode and most callers drop the error.
 func (db *Store) saveToFile() error {
+	start := time.Now()
 	data, err := json.MarshalIndent(db, "", "  ")
 	if err != nil {
+		db.log.Error("Store save failed", "path", db.filePath, "err", err)
 		return fmt.Errorf("failed to marshal store: %w", err)
 	}
 
 	tmpPath := db.filePath + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		db.log.Error("Store save failed", "path", db.filePath, "err", err)
 		return fmt.Errorf("failed to write temp store file: %w", err)
 	}
 	if err := os.Rename(tmpPath, db.filePath); err != nil {
+		db.log.Error("Store save failed", "path", db.filePath, "err", err)
 		return fmt.Errorf("failed to rename temp store file: %w", err)
 	}
+	logging.Trace(db.log, "Store saved", "bytes", len(data), "elapsed", time.Since(start))
 	return nil
 }
 
@@ -346,7 +370,7 @@ func (db *Store) UpdateSyncQueueEntry(entry *model.SyncQueueEntry) error {
 			return db.saveToFile()
 		}
 	}
-	return fmt.Errorf("sync queue entry for camera %s not found", entry.CameraID)
+	return fmt.Errorf("%w: no sync queue entry for camera %s", model.ErrCameraNotFound, entry.CameraID)
 }
 
 // RemoveSyncQueueEntry removes an entry from the sync queue

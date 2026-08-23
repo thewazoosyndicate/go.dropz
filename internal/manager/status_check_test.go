@@ -14,7 +14,7 @@ import (
 
 func newTestManager(t *testing.T) *GoProManager {
 	t.Helper()
-	st, err := store.New(filepath.Join(t.TempDir(), "dropz.db"))
+	st, err := store.New(filepath.Join(t.TempDir(), "dropz.db"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

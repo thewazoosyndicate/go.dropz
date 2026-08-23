@@ -12,7 +12,7 @@ import (
 
 func newTestProcessor(t *testing.T) (*Processor, *store.Store) {
 	t.Helper()
-	st, err := store.New(filepath.Join(t.TempDir(), "dropz.db"))
+	st, err := store.New(filepath.Join(t.TempDir(), "dropz.db"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

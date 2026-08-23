@@ -14,7 +14,7 @@ import (
 
 func newTestCoordinator(t *testing.T) (*Coordinator, *store.Store) {
 	t.Helper()
-	st, err := store.New(filepath.Join(t.TempDir(), "dropz.db"))
+	st, err := store.New(filepath.Join(t.TempDir(), "dropz.db"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

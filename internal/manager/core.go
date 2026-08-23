@@ -58,7 +58,7 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 	// Built before the callback closures below so they carry the component attr
 	mlog := log.With("component", "manager")
 
-	db, err := store.New(dbPath)
+	db, err := store.New(dbPath, log)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to initialize database: %w", err)

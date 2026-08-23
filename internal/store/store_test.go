@@ -12,7 +12,7 @@ import (
 func newTestStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "dropz.db")
-	st, err := New(path)
+	st, err := New(path, nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestPersistenceRoundTrip(t *testing.T) {
 		cs.Status.IsManaged = true
 	})
 
-	reloaded, err := New(path)
+	reloaded, err := New(path, nil)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}

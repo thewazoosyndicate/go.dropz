@@ -70,6 +70,7 @@ func rpcError(err error) error {
 // streamEntry tracks a single gRPC stream and its done channel
 type streamEntry struct {
 	stream grpc.ServerStream
+	kind   string // discovered|managed|sync_queue
 	done   chan bool
 	send   func(heartbeat bool) error // sends either data or heartbeat
 }
@@ -122,10 +123,42 @@ func (s *DropzServer) streamShutdownInterceptor(srv interface{}, ss grpc.ServerS
 	return handler(srv, ss)
 }
 
+// unaryLogInterceptor records every RPC outcome so handlers stay log-free.
+func (s *DropzServer) unaryLogInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	start := time.Now()
+	resp, err := handler(ctx, req)
+	s.logRPC(info.FullMethod, start, err)
+	return resp, err
+}
+
+// streamLogInterceptor records stream RPC outcomes; a nil return is the
+// normal client disconnect.
+func (s *DropzServer) streamLogInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	start := time.Now()
+	err := handler(srv, ss)
+	s.logRPC(info.FullMethod, start, err)
+	return err
+}
+
+// logRPC levels by outcome: client-side codes Warn, server faults Error.
+func (s *DropzServer) logRPC(method string, start time.Time, err error) {
+	if err == nil {
+		s.log.Debug("RPC completed", "method", method, "elapsed", time.Since(start))
+		return
+	}
+	st, _ := status.FromError(err)
+	attrs := []any{"method", method, "code", st.Code().String(), "elapsed", time.Since(start), "err", err}
+	switch st.Code() {
+	case codes.NotFound, codes.InvalidArgument, codes.FailedPrecondition,
+		codes.Unavailable, codes.Canceled, codes.DeadlineExceeded:
+		s.log.Warn("RPC failed", attrs...)
+	default:
+		s.log.Error("RPC failed", attrs...)
+	}
+}
+
 // Start starts the gRPC server
 func (s *DropzServer) Start(address string) error {
-	s.log.Debug("Starting DropzServer", "address", address)
-
 	s.manager.SetNotifier(s.NotifyUpdate)
 
 	listener, err := net.Listen("tcp", address)
@@ -133,9 +166,10 @@ func (s *DropzServer) Start(address string) error {
 		return fmt.Errorf("failed to listen on %s: %w", address, err)
 	}
 
+	// Log interceptors first so shutdown-refused RPCs are recorded too
 	s.server = grpc.NewServer(
-		grpc.ChainUnaryInterceptor(s.unaryShutdownInterceptor),
-		grpc.ChainStreamInterceptor(s.streamShutdownInterceptor),
+		grpc.ChainUnaryInterceptor(s.unaryLogInterceptor, s.unaryShutdownInterceptor),
+		grpc.ChainStreamInterceptor(s.streamLogInterceptor, s.streamShutdownInterceptor),
 	)
 	protocol.RegisterDropzServiceServer(s.server, s)
 
@@ -145,7 +179,10 @@ func (s *DropzServer) Start(address string) error {
 	go s.streamUpdateHandler()
 	go s.heartbeatSender()
 
+	// Tracked in wg so a Serve error cannot log after the shutdown line
+	s.wg.Add(1)
 	go func() {
+		defer s.wg.Done()
 		if err := s.server.Serve(listener); err != nil {
 			s.log.Error("gRPC server error", "err", err)
 		}
@@ -156,11 +193,10 @@ func (s *DropzServer) Start(address string) error {
 
 // Stop stops the gRPC server
 func (s *DropzServer) Stop() {
-	s.log.Info("Initiating DropzServer shutdown")
-
 	s.cancel()
 
 	s.streamMutex.Lock()
+	closed := len(s.streams)
 	for _, entry := range s.streams {
 		close(entry.done)
 	}
@@ -172,17 +208,18 @@ func (s *DropzServer) Stop() {
 	}
 
 	s.wg.Wait()
-	s.log.Info("DropzServer shutdown complete")
+	s.log.Info("gRPC server stopped", "streams_closed", closed)
 }
 
 // addStream registers a stream and returns its done channel
-func (s *DropzServer) addStream(stream grpc.ServerStream, sendFn func(heartbeat bool) error) chan bool {
+func (s *DropzServer) addStream(stream grpc.ServerStream, kind string, sendFn func(heartbeat bool) error) chan bool {
 	done := make(chan bool)
 	s.streamMutex.Lock()
 	defer s.streamMutex.Unlock()
 
 	select {
 	case <-s.ctx.Done():
+		s.log.Debug("Stream refused, server shutting down", "kind", kind)
 		close(done)
 		return done
 	default:
@@ -190,9 +227,11 @@ func (s *DropzServer) addStream(stream grpc.ServerStream, sendFn func(heartbeat 
 
 	s.streams = append(s.streams, &streamEntry{
 		stream: stream,
+		kind:   kind,
 		done:   done,
 		send:   sendFn,
 	})
+	s.log.Debug("Stream added", "kind", kind, "streams", len(s.streams))
 	return done
 }
 
@@ -204,6 +243,7 @@ func (s *DropzServer) removeStream(stream grpc.ServerStream) {
 	for i, entry := range s.streams {
 		if entry.stream == stream {
 			s.streams = append(s.streams[:i], s.streams[i+1:]...)
+			s.log.Debug("Stream removed", "kind", entry.kind, "streams", len(s.streams))
 			return
 		}
 	}
@@ -271,8 +311,9 @@ func (s *DropzServer) forEachStream(heartbeat bool) {
 		default:
 		}
 
+		// Normal path when a client closes its Watch stream
 		if err := entry.send(heartbeat); err != nil {
-			s.log.Error("Stream send failed, removing", "err", err)
+			s.log.Debug("Stream send failed, removing", "kind", entry.kind, "err", err)
 			close(entry.done)
 			continue
 		}
@@ -296,13 +337,13 @@ func (s *DropzServer) NotifyUpdate() {
 }
 
 // watchStream is the generic Watch implementation for all stream types
-func (s *DropzServer) watchStream(stream grpc.ServerStream, sendFn func(heartbeat bool) error) error {
+func (s *DropzServer) watchStream(stream grpc.ServerStream, kind string, sendFn func(heartbeat bool) error) error {
 	// Send initial data
 	if err := sendFn(false); err != nil {
 		return err
 	}
 
-	done := s.addStream(stream, sendFn)
+	done := s.addStream(stream, kind, sendFn)
 	defer s.removeStream(stream)
 
 	select {
@@ -325,7 +366,7 @@ func (s *DropzServer) GetDiscoveredCameras(ctx context.Context, req *protocol.Ge
 
 // WatchDiscoveredCameras implements the streaming RPC
 func (s *DropzServer) WatchDiscoveredCameras(req *protocol.GetDiscoveredCamerasRequest, stream protocol.DropzService_WatchDiscoveredCamerasServer) error {
-	return s.watchStream(stream, func(heartbeat bool) error {
+	return s.watchStream(stream, "discovered", func(heartbeat bool) error {
 		if heartbeat {
 			return stream.Send(&protocol.GetDiscoveredCamerasResponse{
 				Cameras: []*protocol.DiscoveredCamera{}, NoChanges: true, Heartbeat: true,
@@ -351,7 +392,7 @@ func (s *DropzServer) GetManagedCameras(ctx context.Context, req *protocol.GetMa
 
 // WatchManagedCameras implements the streaming RPC
 func (s *DropzServer) WatchManagedCameras(req *protocol.GetManagedCamerasRequest, stream protocol.DropzService_WatchManagedCamerasServer) error {
-	return s.watchStream(stream, func(heartbeat bool) error {
+	return s.watchStream(stream, "managed", func(heartbeat bool) error {
 		if heartbeat {
 			return stream.Send(&protocol.GetManagedCamerasResponse{
 				Cameras: []*protocol.ManagedCamera{}, NoChanges: true, Heartbeat: true,
@@ -377,7 +418,7 @@ func (s *DropzServer) GetSyncQueue(ctx context.Context, req *protocol.GetSyncQue
 
 // WatchSyncQueue implements the streaming RPC
 func (s *DropzServer) WatchSyncQueue(req *protocol.GetSyncQueueRequest, stream protocol.DropzService_WatchSyncQueueServer) error {
-	return s.watchStream(stream, func(heartbeat bool) error {
+	return s.watchStream(stream, "sync_queue", func(heartbeat bool) error {
 		if heartbeat {
 			return stream.Send(&protocol.GetSyncQueueResponse{
 				Queue: []*protocol.SyncQueueEntry{}, NoChanges: true, Heartbeat: true,
@@ -393,8 +434,6 @@ func (s *DropzServer) WatchSyncQueue(req *protocol.GetSyncQueueRequest, stream p
 
 // ManageCamera implements the ManageCamera RPC method
 func (s *DropzServer) ManageCamera(ctx context.Context, req *protocol.ManageCameraRequest) (*protocol.ManageCameraResponse, error) {
-	s.log.Info("Handling ManageCamera request", "camera", req.CameraId)
-
 	managedCamera, err := s.manager.ManageCamera(req.CameraId)
 	if err != nil {
 		return nil, rpcError(err)

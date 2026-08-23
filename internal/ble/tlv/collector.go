@@ -89,14 +89,10 @@ func (fc *FragmentCollector) handleStartPacket(header *PacketHeader, payload []b
 	fragments := &MessageFragments{
 		commandID:      commandID,
 		expectedLength: header.MessageLength,
-		receivedLength: len(payload),
-		packets:        make(map[int][]byte),
+		data:           append([]byte(nil), payload...),
 		lastPacketNum:  -1,
 		startTime:      time.Now(),
 	}
-
-	fragments.packets[-1] = make([]byte, len(payload))
-	copy(fragments.packets[-1], payload)
 
 	fc.fragments[commandID] = fragments
 
@@ -120,16 +116,16 @@ func (fc *FragmentCollector) handleContinuationPacket(header *PacketHeader, payl
 		return nil, fmt.Errorf("continuation packet %d with no matching start packet", header.PacketCounter)
 	}
 
+	// A duplicated packet (stale BlueZ watcher, retransmission) fails this
+	// check and is dropped; the original stream continues undamaged.
 	if err := ValidatePacketSequence(fragments.lastPacketNum, header.PacketCounter); err != nil {
 		return nil, fmt.Errorf("packet sequence error for command 0x%02X: %w", fragments.commandID, err)
 	}
 
-	fragments.packets[header.PacketCounter] = make([]byte, len(payload))
-	copy(fragments.packets[header.PacketCounter], payload)
-	fragments.receivedLength += len(payload)
+	fragments.data = append(fragments.data, payload...)
 	fragments.lastPacketNum = header.PacketCounter
 
-	if fragments.receivedLength >= fragments.expectedLength {
+	if len(fragments.data) >= fragments.expectedLength {
 		return fc.assembleMessage(fragments)
 	}
 
@@ -137,25 +133,7 @@ func (fc *FragmentCollector) handleContinuationPacket(header *PacketHeader, payl
 }
 
 func (fc *FragmentCollector) assembleMessage(fragments *MessageFragments) (*TLVMessage, error) {
-	fullData := make([]byte, 0, fragments.expectedLength)
-
-	if startPacket, exists := fragments.packets[-1]; exists {
-		fullData = append(fullData, startPacket...)
-	} else {
-		return nil, fmt.Errorf("missing start packet for command 0x%02X", fragments.commandID)
-	}
-
-	if fragments.lastPacketNum >= 0 {
-		for i := 0; i <= fragments.lastPacketNum; i++ {
-			packetNum := i & 0x0F
-			if packet, exists := fragments.packets[packetNum]; exists {
-				fullData = append(fullData, packet...)
-			} else {
-				return nil, fmt.Errorf("missing continuation packet %d for command 0x%02X", packetNum, fragments.commandID)
-			}
-		}
-	}
-
+	fullData := fragments.data
 	if len(fullData) > fragments.expectedLength {
 		fullData = fullData[:fragments.expectedLength]
 	}
@@ -190,7 +168,7 @@ func (fc *FragmentCollector) cleanupStaleFragments() {
 						// response started arriving but never completed
 						fc.log.Debug("Stale message fragments evicted",
 							"cmd", fmt.Sprintf("0x%02X", cmdID),
-							"received", fragments.receivedLength,
+							"received", len(fragments.data),
 							"expected", fragments.expectedLength)
 					}
 				}

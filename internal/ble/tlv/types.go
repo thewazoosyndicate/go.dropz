@@ -36,14 +36,16 @@ type TLVMessage struct {
 	Timestamp time.Time // When the message was completed
 }
 
-// MessageFragments tracks fragments for a single message being reassembled
+// MessageFragments tracks fragments for a single message being reassembled.
+// Payload accumulates in arrival order: the 4-bit counter wraps after 0xF,
+// so it can only validate sequence, never index storage (a >17 packet
+// message would overwrite earlier packets in a counter-keyed map).
 type MessageFragments struct {
 	commandID      byte
-	expectedLength int            // Total expected message length
-	receivedLength int            // Bytes received so far
-	packets        map[int][]byte // packetCounter -> packet data
-	lastPacketNum  int            // Highest packet number seen
-	startTime      time.Time      // When first fragment was received
+	expectedLength int       // Total expected message length
+	data           []byte    // Payload bytes in arrival order
+	lastPacketNum  int       // Last continuation counter seen (-1 = none)
+	startTime      time.Time // When first fragment was received
 }
 
 // FragmentCollector manages message fragment collection and reassembly

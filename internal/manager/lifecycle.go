@@ -116,6 +116,10 @@ func (m *GoProManager) statusCheckWorker() {
 // startBackgroundScanner starts the background scanner
 func (m *GoProManager) startBackgroundScanner() {
 	defer m.wg.Done()
+	if !m.ble.Available() {
+		m.log.Warn("Background scanner disabled: bluetooth unavailable")
+		return
+	}
 	config := m.db.GetConfig()
 	scanInterval := time.Duration(config.ScanIntervalSeconds) * time.Second
 	scanner := discovery.NewScanner(m.ble, m.log, scanInterval)

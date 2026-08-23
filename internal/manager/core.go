@@ -61,17 +61,17 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
-	// Initialize BLE adapter
+	// Enable BLE adapter directly (not in goroutine - required by platform BLE stacks).
+	// Failure is not fatal: the library and config stay usable without Bluetooth,
+	// and CI runners have no adapter at all.
 	adapter := bluetooth.DefaultAdapter
-	if adapter == nil {
-		cancel()
-		return nil, fmt.Errorf("failed to get default Bluetooth adapter")
-	}
-
-	// Enable BLE adapter directly (not in goroutine - required by platform BLE stacks)
-	if err := adapter.Enable(); err != nil {
-		cancel()
-		return nil, fmt.Errorf("failed to enable BLE adapter: %w", err)
+	if adapter != nil {
+		if err := adapter.Enable(); err != nil {
+			log.Error("Bluetooth unavailable, camera features disabled", "err", err)
+			adapter = nil
+		}
+	} else {
+		log.Error("No default Bluetooth adapter, camera features disabled")
 	}
 
 	bleManager := ble.NewManager(adapter, log)

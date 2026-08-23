@@ -16,6 +16,10 @@ import (
 // errAlreadyConnected signals a no-op connect; callers treat it as success.
 var errAlreadyConnected = errors.New("device already connected")
 
+// ErrBluetoothUnavailable is returned by scan and connect operations when no
+// working adapter exists; the app runs degraded instead of refusing to start.
+var ErrBluetoothUnavailable = errors.New("bluetooth unavailable")
+
 const (
 	responseTimeout     = 5 * time.Second  // per-command TLV response wait
 	fragmentTimeout     = 10 * time.Second // stale multi-packet message cleanup
@@ -68,7 +72,9 @@ func parseTLVPairs(data []byte) map[byte][]byte {
 	return result
 }
 
-// NewManager creates a new BLE manager
+// NewManager creates a new BLE manager.
+// A nil adapter yields a degraded manager: scanning and connecting return
+// ErrBluetoothUnavailable so the rest of the app can run without Bluetooth.
 func NewManager(adapter *bluetooth.Adapter, log *slog.Logger) *Manager {
 	return &Manager{
 		adapter:           adapter,
@@ -76,6 +82,11 @@ func NewManager(adapter *bluetooth.Adapter, log *slog.Logger) *Manager {
 		conns:             make(map[string]*conn),
 		log:               log.With("component", "ble"),
 	}
+}
+
+// Available reports whether a working Bluetooth adapter is present.
+func (m *Manager) Available() bool {
+	return m.adapter != nil
 }
 
 // newConn creates the per-device connection state and wires push
@@ -110,6 +121,9 @@ func (m *Manager) getConn(macAddress string) *conn {
 
 // StartScanningWithCallback scans for GoPro devices with optional live discovery callback
 func (m *Manager) StartScanningWithCallback(ctx context.Context, callback DeviceDiscoveryCallback) error {
+	if m.adapter == nil {
+		return ErrBluetoothUnavailable
+	}
 	m.mutex.Lock()
 	if m.isScanning {
 		m.mutex.Unlock()
@@ -170,6 +184,9 @@ func (m *Manager) StopScanning() error {
 	m.mutex.Unlock()
 
 	m.log.Info("Stopping BLE scan")
+	if m.adapter == nil {
+		return nil
+	}
 	return m.adapter.StopScan()
 }
 
@@ -205,6 +222,10 @@ func (m *Manager) signalConnectingDone() {
 // On success, the connection is stored in conns. On failure, cleanup is done.
 // Returns errAlreadyConnected (a no-op for callers) when a connection exists.
 func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(string) error) ([]bluetooth.DeviceService, time.Time, error) {
+	if m.adapter == nil {
+		return nil, time.Time{}, ErrBluetoothUnavailable
+	}
+
 	if err := validateAddress(macAddress); err != nil {
 		return nil, time.Time{}, fmt.Errorf("invalid device address: %w", err)
 	}

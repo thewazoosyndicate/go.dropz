@@ -65,7 +65,7 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	}
 
 	if len(mediaFiles) == 0 {
-		m.log.Info("No media files found on GoPro")
+		m.log.Info("No media files found on camera")
 		return nil, nil
 	}
 
@@ -80,6 +80,7 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 
 	var downloadedFiles []string
 	skippedCount := 0
+	failedCount := 0
 
 	for _, media := range filteredMedia {
 		select {
@@ -98,7 +99,9 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 
 		dlErr := m.downloadFileWithResume(ctx, media.URL, outputPath, media.CreatedAt, media.Size)
 		if dlErr != nil {
-			m.log.Error("Failed to download media file", "file", media.Name, "err", dlErr)
+			// Per-file, skipped and continued; the summary below counts them
+			m.log.Warn("Failed to download media file", "file", media.Name, "err", dlErr)
+			failedCount++
 			continue
 		}
 
@@ -106,7 +109,11 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	}
 
 	actualDownloads := len(downloadedFiles) - skippedCount
-	m.log.Info("Download complete", "downloaded", actualDownloads, "skipped", skippedCount)
+	if failedCount > 0 {
+		m.log.Warn("Download finished with failures", "downloaded", actualDownloads, "skipped", skippedCount, "failed", failedCount)
+	} else {
+		m.log.Info("Download finished", "downloaded", actualDownloads, "skipped", skippedCount)
+	}
 	return downloadedFiles, nil
 }
 
@@ -246,7 +253,8 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 			// Parse the creation time
 			createdInt, err := file.CreatedAt.Int64()
 			if err != nil {
-				m.log.Error("Failed to parse createdAt value", "value", file.CreatedAt, "err", err)
+				// Per-item, skipped and continued
+				m.log.Warn("Failed to parse createdAt value", "file", file.Name, "value", file.CreatedAt, "err", err)
 				continue
 			}
 			createdAtTime := time.Unix(createdInt, 0)
@@ -258,7 +266,7 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 			if !isGroup {
 				sizeInt, err = file.Size.Int64()
 				if err != nil {
-					m.log.Error("Failed to parse size value", "value", file.Size, "err", err)
+					m.log.Warn("Failed to parse size value", "file", file.Name, "value", file.Size, "err", err)
 					continue
 				}
 			}
@@ -288,7 +296,6 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 		}
 	}
 
-	m.log.Debug("Media list parsed", "files", len(result))
 	return result, nil
 }
 
@@ -349,7 +356,8 @@ func (m *WiFiManager) downloadFileWithResume(ctx context.Context, url, outputPat
 		}
 
 		lastErr = err
-		m.log.Warn("Download attempt failed", "file", outputPath, "err", err)
+		// Per-attempt at Trace; the per-file Warn happens once in the caller
+		logging.Trace(m.log, "Download attempt failed", "file", outputPath, "attempt", attempt+1, "max", maxRetries, "err", err)
 	}
 
 	return fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
@@ -468,13 +476,14 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 	n, err := pr.reader.Read(p)
 	pr.current += int64(n)
 
-	// Report progress every 3 seconds
+	// Report progress every 3 seconds; numeric attrs so the JSON handler
+	// emits numbers the Electron host can use
 	if time.Since(pr.reportTime) > 3*time.Second && pr.total > 0 {
-		percentComplete := float64(pr.current) / float64(pr.total) * 100
-		pr.logger.Debug("Downloading",
+		logging.Trace(pr.logger, "Downloading",
 			"file", pr.fileName,
-			"percent", fmt.Sprintf("%.1f", percentComplete),
-			"mb", fmt.Sprintf("%.2f/%.2f", float64(pr.current)/(1024*1024), float64(pr.total)/(1024*1024)))
+			"percent", int(float64(pr.current)/float64(pr.total)*100),
+			"current_mb", pr.current/(1024*1024),
+			"total_mb", pr.total/(1024*1024))
 		pr.reportTime = time.Now()
 	}
 

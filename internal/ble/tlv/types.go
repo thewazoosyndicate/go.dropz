@@ -1,6 +1,7 @@
 package tlv
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -51,6 +52,7 @@ type FragmentCollector struct {
 	mu        sync.RWMutex
 	timeout   time.Duration
 	stopCh    chan struct{}
+	log       *slog.Logger // nil = silent; set via SetLogger
 }
 
 // ResponseTracker tracks pending command responses
@@ -58,4 +60,5 @@ type ResponseTracker struct {
 	pendingCommands map[byte]chan *TLVMessage
 	pushHandler     func(string, *TLVMessage)
 	mu              sync.RWMutex
+	log             *slog.Logger // nil = silent; set via SetLogger
 }

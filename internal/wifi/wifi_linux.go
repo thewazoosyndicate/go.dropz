@@ -31,8 +31,8 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 		"wifi-sec.psk", password)
 
 	if addOutput, addErr := addCmd.CombinedOutput(); addErr != nil {
-		m.log.Error("Failed to create connection profile", "err", addErr, "nmcli_output", string(addOutput))
-		return fmt.Errorf("failed to create WiFi connection for %s: %w", ssid, addErr)
+		return fmt.Errorf("failed to create WiFi connection for %s: %w (nmcli: %s)",
+			ssid, addErr, strings.TrimSpace(string(addOutput)))
 	}
 
 	// Try to activate, retrying while the AP becomes visible
@@ -45,7 +45,7 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 		upCmd := exec.CommandContext(ctx, "nmcli", "connection", "up", "id", connName)
 		if output, err := upCmd.CombinedOutput(); err != nil {
 			lastErr = fmt.Errorf("%v (nmcli: %s)", err, strings.TrimSpace(string(output)))
-			m.log.Debug("WiFi activation attempt failed", "attempt", attempt, "max", 10, "err", lastErr)
+			m.log.Debug("WiFi activation attempt failed", "ssid", ssid, "attempt", attempt, "max", 10, "err", lastErr)
 		} else {
 			m.log.Debug("WiFi connection activated", "connection", connName)
 			lastErr = nil
@@ -81,7 +81,6 @@ func (m *WiFiManager) Disconnect() error {
 	cmd := exec.Command("nmcli", "-t", "-f", "NAME,TYPE", "connection", "show", "--active")
 	output, err := cmd.Output()
 	if err != nil {
-		m.log.Error("Failed to get active WiFi connections", "err", err)
 		return fmt.Errorf("failed to get active connections: %w", err)
 	}
 
@@ -100,9 +99,8 @@ func (m *WiFiManager) Disconnect() error {
 				altName := fmt.Sprintf("dropz-%s", ssid)
 				cmd = exec.Command("nmcli", "connection", "down", "id", altName)
 				if altOutput, altErr := cmd.CombinedOutput(); altErr != nil {
-					m.log.Error("Failed to disconnect from WiFi network",
-						"ssid", ssid, "err", err, "nmcli_output", string(output), "alt_err", altErr, "alt_output", string(altOutput))
-					return fmt.Errorf("failed to disconnect from %s: %v (nmcli: %s)", ssid, err, strings.TrimSpace(string(output)))
+					return fmt.Errorf("failed to disconnect from %s: %v (nmcli: %s; fallback: %v, %s)",
+						ssid, err, strings.TrimSpace(string(output)), altErr, strings.TrimSpace(string(altOutput)))
 				}
 			}
 		}
@@ -116,7 +114,8 @@ func (m *WiFiManager) isConnectedTo(ssid string) bool {
 	cmd := exec.Command("nmcli", "-t", "-f", "NAME,DEVICE,STATE", "connection", "show", "--active")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		m.log.Error("Failed to check active WiFi connections", "err", err, "output", string(output))
+		// Transient during association; the caller polls this in a loop
+		m.log.Debug("Failed to check active WiFi connections", "err", err, "output", strings.TrimSpace(string(output)))
 		return false
 	}
 

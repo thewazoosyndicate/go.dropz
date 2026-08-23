@@ -39,25 +39,25 @@ func (m *Manager) pairViaDbus(macAddress string) error {
 	paired, err := device.GetProperty("org.bluez.Device1.Paired")
 	if err == nil {
 		if v, ok := paired.Value().(bool); ok && v {
-			m.log.Info("Device already paired, skipping", "device", macAddress)
+			m.log.Debug("Device already paired, skipping", "ble_addr", macAddress)
 			return nil
 		}
 	}
 
 	// Register Just Works agent
 	if err := conn.Export(justWorksAgent{}, dbus.ObjectPath(agentPath), "org.bluez.Agent1"); err != nil {
-		m.log.Warn("Failed to export pairing agent", "err", err)
+		m.log.Warn("Failed to export pairing agent", "ble_addr", macAddress, "err", err)
 	}
 
 	agentMgr := conn.Object("org.bluez", "/org/bluez")
 	call := agentMgr.Call("org.bluez.AgentManager1.RegisterAgent", 0, dbus.ObjectPath(agentPath), "NoInputNoOutput")
 	if call.Err != nil {
-		m.log.Warn("Failed to register pairing agent", "err", call.Err)
+		m.log.Warn("Failed to register pairing agent", "ble_addr", macAddress, "err", call.Err)
 	}
 	defer func() {
 		call := agentMgr.Call("org.bluez.AgentManager1.UnregisterAgent", 0, dbus.ObjectPath(agentPath))
 		if call.Err != nil {
-			m.log.Warn("Failed to unregister pairing agent", "err", call.Err)
+			m.log.Warn("Failed to unregister pairing agent", "ble_addr", macAddress, "err", call.Err)
 		}
 	}()
 
@@ -74,7 +74,7 @@ func (m *Manager) pairViaDbus(macAddress string) error {
 		conn.BusObject().Call("org.freedesktop.DBus.RemoveMatch", 0, matchRule)
 	}()
 
-	m.log.Info("Initiating D-Bus pairing", "device", macAddress)
+	m.log.Debug("Initiating D-Bus pairing", "ble_addr", macAddress)
 
 	// Fire Pair() asynchronously — it may never return if device is already connected
 	pairDone := make(chan *dbus.Call, 1)
@@ -93,7 +93,7 @@ func (m *Manager) pairViaDbus(macAddress string) error {
 			}
 			if v, exists := changed["Paired"]; exists {
 				if paired, ok := v.Value().(bool); ok && paired {
-					m.log.Info("D-Bus pairing successful", "device", macAddress)
+					m.log.Debug("D-Bus pairing successful", "ble_addr", macAddress, "via", "signal")
 					return nil
 				}
 			}
@@ -101,12 +101,12 @@ func (m *Manager) pairViaDbus(macAddress string) error {
 		case result := <-pairDone:
 			if result.Err != nil {
 				if strings.Contains(result.Err.Error(), "AlreadyExists") {
-					m.log.Info("Device already paired", "device", macAddress)
+					m.log.Debug("Device already paired", "ble_addr", macAddress, "via", "pair_call")
 					return nil
 				}
 				return fmt.Errorf("D-Bus Pair() failed: %w", result.Err)
 			}
-			m.log.Info("D-Bus pairing successful", "device", macAddress)
+			m.log.Debug("D-Bus pairing successful", "ble_addr", macAddress, "via", "pair_call")
 			return nil
 
 		case <-timeout:

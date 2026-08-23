@@ -2,6 +2,7 @@ package tlv
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -16,6 +17,13 @@ func NewFragmentCollector(timeout time.Duration) *FragmentCollector {
 	go fc.cleanupStaleFragments()
 
 	return fc
+}
+
+// SetLogger enables diagnostics for silently discarded data; nil stays silent.
+func (fc *FragmentCollector) SetLogger(log *slog.Logger) {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	fc.log = log
 }
 
 // Stop terminates the background cleanup goroutine
@@ -177,6 +185,14 @@ func (fc *FragmentCollector) cleanupStaleFragments() {
 			for cmdID, fragments := range fc.fragments {
 				if now.Sub(fragments.startTime) > fc.timeout {
 					delete(fc.fragments, cmdID)
+					if fc.log != nil {
+						// The cause behind a later command timeout: the
+						// response started arriving but never completed
+						fc.log.Debug("Stale message fragments evicted",
+							"cmd", fmt.Sprintf("0x%02X", cmdID),
+							"received", fragments.receivedLength,
+							"expected", fragments.expectedLength)
+					}
 				}
 			}
 			fc.mu.Unlock()
@@ -191,6 +207,13 @@ func NewResponseTracker() *ResponseTracker {
 	}
 }
 
+// SetLogger enables diagnostics for silently discarded data; nil stays silent.
+func (rt *ResponseTracker) SetLogger(log *slog.Logger) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.log = log
+}
+
 // RegisterCommand registers a command expecting a response
 func (rt *ResponseTracker) RegisterCommand(commandID byte) chan *TLVMessage {
 	rt.mu.Lock()
@@ -199,6 +222,11 @@ func (rt *ResponseTracker) RegisterCommand(commandID byte) chan *TLVMessage {
 	respChan := make(chan *TLVMessage, 1)
 
 	if existing, exists := rt.pendingCommands[commandID]; exists {
+		// The earlier waiter's channel closes and it sees a nil response
+		if rt.log != nil {
+			rt.log.Warn("Pending command clobbered by concurrent register",
+				"cmd", fmt.Sprintf("0x%02X", commandID))
+		}
 		close(existing)
 	}
 
@@ -235,6 +263,10 @@ func (rt *ResponseTracker) RouteResponse(macAddress string, msg *TLVMessage) boo
 		case ch <- msg:
 			return true
 		default:
+			if rt.log != nil {
+				rt.log.Debug("Response dropped, channel full",
+					"cmd", fmt.Sprintf("0x%02X", msg.CommandID))
+			}
 			return false
 		}
 	}

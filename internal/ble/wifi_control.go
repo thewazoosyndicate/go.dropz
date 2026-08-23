@@ -18,6 +18,18 @@ const (
 	WiFiAPModeBounce  WiFiAPMode = 2 // Bounce (disable then enable) WiFi Access Point
 )
 
+func (m WiFiAPMode) String() string {
+	switch m {
+	case WiFiAPModeDisable:
+		return "disable"
+	case WiFiAPModeEnable:
+		return "enable"
+	case WiFiAPModeBounce:
+		return "bounce"
+	}
+	return fmt.Sprintf("unknown(%d)", byte(m))
+}
+
 // HardwareInfo contains information from GetHardwareInfo command
 type HardwareInfo struct {
 	ModelNumber     int
@@ -30,7 +42,7 @@ type HardwareInfo struct {
 
 // SetAPControl controls the WiFi Access Point using the proper OpenGoPro command
 func (m *Manager) SetAPControl(macAddress string, mode WiFiAPMode) error {
-	m.log.Debug("Setting WiFi AP control", "mode", mode, "device", macAddress)
+	m.log.Debug("Setting WiFi AP control", "ble_addr", macAddress, "mode", mode)
 
 	// Validate mode
 	if mode > WiFiAPModeBounce {
@@ -45,7 +57,6 @@ func (m *Manager) SetAPControl(macAddress string, mode WiFiAPMode) error {
 
 	// Check response status (0x00 = success)
 	if response.Status != 0x00 {
-		m.log.Error("WiFi AP control command failed", "status", fmt.Sprintf("0x%02X", response.Status))
 		return fmt.Errorf("WiFi AP control failed: status=0x%02X", response.Status)
 	}
 
@@ -58,6 +69,7 @@ const apReadyPoll = 200 * time.Millisecond
 // AP up. The Set AP Control response only means the request was accepted;
 // the AP and DHCP server come up later (spec ble_setup "WiFi Readiness").
 func (m *Manager) WaitForWiFiAPReady(macAddress string, timeout time.Duration) error {
+	logging.Trace(m.log, "Waiting for camera WiFi AP", "ble_addr", macAddress, "timeout", timeout)
 	deadline := time.Now().Add(timeout)
 	for {
 		statuses, queryErr := m.QueryStatuses(macAddress, []byte{StatusAPMode})
@@ -100,6 +112,7 @@ func parseHardwareInfo(data []byte, log *slog.Logger) (*HardwareInfo, error) {
 
 	info := &HardwareInfo{}
 	buf := data
+	var badFields []string
 
 	// Helper function to read length-prefixed field
 	readField := func(fieldName string) ([]byte, error) {
@@ -121,7 +134,8 @@ func parseHardwareInfo(data []byte, log *slog.Logger) (*HardwareInfo, error) {
 
 	// 1. Model Number (4 bytes big-endian)
 	if modelData, err := readField("model_number"); err != nil {
-		log.Warn("Failed to read model number", "err", err)
+		logging.Trace(log, "Hardware info field unreadable", "field", "model_number", "err", err)
+		badFields = append(badFields, "model_number")
 	} else if len(modelData) == 4 {
 		info.ModelNumber = int(modelData[0])<<24 | int(modelData[1])<<16 |
 			int(modelData[2])<<8 | int(modelData[3])
@@ -129,40 +143,45 @@ func parseHardwareInfo(data []byte, log *slog.Logger) (*HardwareInfo, error) {
 
 	// 2. Model Name
 	if modelName, err := readField("model_name"); err != nil {
-		log.Warn("Failed to read model name", "err", err)
+		logging.Trace(log, "Hardware info field unreadable", "field", "model_name", "err", err)
+		badFields = append(badFields, "model_name")
 	} else {
 		info.ModelName = strings.TrimRight(string(modelName), "\x00")
 	}
 
-	// 3. Board Type/Deprecated field - skip it
+	// 3. Board Type/Deprecated field - skip it; not counted as bad, deprecated
 	if _, err := readField("board_type/deprecated"); err != nil {
-		logging.Trace(log, "Failed to skip board type/deprecated field", "err", err)
+		logging.Trace(log, "Hardware info field unreadable", "field", "board_type", "err", err)
 	}
 
 	// 4. Firmware Version
 	if firmware, err := readField("firmware_version"); err != nil {
-		log.Warn("Failed to read firmware version", "err", err)
+		logging.Trace(log, "Hardware info field unreadable", "field", "firmware_version", "err", err)
+		badFields = append(badFields, "firmware_version")
 	} else {
 		info.FirmwareVersion = strings.TrimRight(string(firmware), "\x00")
 	}
 
 	// 5. Serial Number
 	if serial, err := readField("serial_number"); err != nil {
-		log.Warn("Failed to read serial number", "err", err)
+		logging.Trace(log, "Hardware info field unreadable", "field", "serial_number", "err", err)
+		badFields = append(badFields, "serial_number")
 	} else {
 		info.SerialNumber = strings.TrimRight(string(serial), "\x00")
 	}
 
 	// 6. AP SSID
 	if ssid, err := readField("ap_ssid"); err != nil {
-		log.Warn("Failed to read AP SSID", "err", err)
+		logging.Trace(log, "Hardware info field unreadable", "field", "ap_ssid", "err", err)
+		badFields = append(badFields, "ap_ssid")
 	} else {
 		info.APSSID = strings.TrimRight(string(ssid), "\x00")
 	}
 
 	// 7. AP MAC Address
 	if mac, err := readField("ap_mac"); err != nil {
-		log.Warn("Failed to read AP MAC", "err", err)
+		logging.Trace(log, "Hardware info field unreadable", "field", "ap_mac", "err", err)
+		badFields = append(badFields, "ap_mac")
 	} else if len(mac) == 6 {
 		info.MACAddress = fmt.Sprintf("%02X:%02X:%02X:%02X:%02X:%02X",
 			mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
@@ -171,9 +190,14 @@ func parseHardwareInfo(data []byte, log *slog.Logger) (*HardwareInfo, error) {
 		info.MACAddress = strings.TrimRight(string(mac), "\x00")
 	}
 
-	// Validate we got at least the essential fields
+	// Validate we got at least the essential fields.
+	// Essential-fields failure is returned, not logged: connectBase polls
+	// this up to 10 times and per-poll Warns flooded the log.
 	if info.ModelName == "" && info.FirmwareVersion == "" {
-		return nil, fmt.Errorf("hardware info missing essential fields")
+		return nil, fmt.Errorf("hardware info missing essential fields (bad: %s)", strings.Join(badFields, ","))
+	}
+	if len(badFields) > 0 {
+		log.Warn("Hardware info parsed with unreadable fields", "fields", strings.Join(badFields, ","))
 	}
 
 	return info, nil
@@ -223,7 +247,7 @@ func (m *Manager) SetLocalDateTime(macAddress string, t time.Time) error {
 
 	if response.Status == 0x02 {
 		// Invalid parameter — camera may not support timezone variant, fall back to 0x0D
-		m.log.Debug("Camera doesn't support Set Local Date Time, falling back to Set Date Time")
+		m.log.Debug("Falling back to Set Date Time without timezone", "ble_addr", macAddress)
 		params = []byte{
 			0x07, // param length
 			byte(year >> 8), byte(year & 0xFF),
@@ -243,6 +267,6 @@ func (m *Manager) SetLocalDateTime(macAddress string, t time.Time) error {
 		return fmt.Errorf("set date/time failed: status=0x%02X", response.Status)
 	}
 
-	m.log.Info("Camera date/time set", "time", t.Format(time.RFC3339))
+	m.log.Debug("Camera date/time set", "ble_addr", macAddress, "time", t.Format(time.RFC3339))
 	return nil
 }

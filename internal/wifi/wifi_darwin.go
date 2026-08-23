@@ -9,8 +9,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
+
+// The missing helper is a static fact of the install; warn once per process,
+// not on every sync.
+var helperMissingOnce sync.Once
 
 // detectWiFiInterface finds the macOS Wi-Fi interface name (typically "en0")
 func detectWiFiInterface() (string, error) {
@@ -69,7 +74,9 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 		m.log.Debug("CoreWLAN helper connected", "output", out)
 		return nil
 	}
-	m.log.Warn("wifi_join helper not found, falling back to networksetup (unreliable on macOS 15)")
+	helperMissingOnce.Do(func() {
+		m.log.Warn("CoreWLAN helper not found, falling back to networksetup", "note", "unreliable on macOS 15")
+	})
 
 	// Try to connect, retrying while the AP becomes visible
 	var lastErr error
@@ -77,15 +84,16 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 		cmd := exec.CommandContext(ctx, "networksetup", "-setairportnetwork", iface, ssid, password)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			lastErr = fmt.Errorf("%v (%s)", err, strings.TrimSpace(string(output)))
-			m.log.Debug("WiFi connection attempt failed", "attempt", attempt, "max", 10, "err", lastErr)
+			m.log.Debug("WiFi connection attempt failed", "reason", "exit_code", "attempt", attempt, "max", 10, "err", lastErr)
 		} else {
 			out := strings.TrimSpace(string(output))
 			// networksetup may print an error message even with exit code 0
 			if out != "" && !strings.Contains(strings.ToLower(out), "error") {
 				m.log.Debug("WiFi connection command succeeded", "output", out)
 			} else if strings.Contains(strings.ToLower(out), "error") {
+				// Exit code 0 but an error message on stdout
 				lastErr = fmt.Errorf("networksetup: %s", out)
-				m.log.Debug("WiFi connection attempt failed", "attempt", attempt, "max", 10, "err", lastErr)
+				m.log.Debug("WiFi connection attempt failed", "reason", "error_output", "attempt", attempt, "max", 10, "err", lastErr)
 				time.Sleep(2 * time.Second)
 				continue
 			}
@@ -155,14 +163,15 @@ func (m *WiFiManager) Disconnect() error {
 func (m *WiFiManager) isConnectedTo(ssid string) bool {
 	iface, err := detectWiFiInterface()
 	if err != nil {
-		m.log.Error("Failed to detect Wi-Fi interface", "err", err)
+		// Transient during association; the caller polls this in a loop
+		m.log.Debug("Failed to detect WiFi interface", "err", err)
 		return false
 	}
 
 	cmd := exec.Command("networksetup", "-getairportnetwork", iface)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		m.log.Error("Failed to check WiFi connection", "err", err, "output", string(output))
+		m.log.Debug("Failed to check WiFi connection", "err", err, "output", strings.TrimSpace(string(output)))
 		return false
 	}
 

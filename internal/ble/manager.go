@@ -38,6 +38,10 @@ type conn struct {
 	// response arriving on another.
 	collectors map[string]*tlv.FragmentCollector
 	tracker    *tlv.ResponseTracker
+	// Characteristics we subscribed on. Unsubscribed at teardown: BlueZ
+	// keeps the watcher across reconnects, and a leaked one delivers every
+	// notification twice, which breaks multi-packet reassembly.
+	subscribed []bluetooth.DeviceCharacteristic
 }
 
 // Manager provides a clean, simple BLE interface for GoPro devices
@@ -390,6 +394,8 @@ func (m *Manager) discoverCharacteristics(macAddress string, services []bluetoot
 				})
 				if notifErr != nil {
 					m.log.Warn("Failed to enable notifications", "ble_addr", macAddress, "char", GetCharacteristicName(charUUID), "err", notifErr)
+				} else {
+					c.subscribed = append(c.subscribed, char)
 				}
 			}
 		}
@@ -407,6 +413,13 @@ func (m *Manager) dropConn(macAddress string) *conn {
 	m.mutex.Unlock()
 
 	if c != nil {
+		// Best effort: on a dead link the call fails fast, and the device
+		// object teardown removes the watcher anyway.
+		for _, char := range c.subscribed {
+			if err := char.EnableNotifications(nil); err != nil {
+				m.log.Debug("Unsubscribe failed", "err", err)
+			}
+		}
 		for _, collector := range c.collectors {
 			collector.Stop()
 		}

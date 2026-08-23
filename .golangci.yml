@@ -1,0 +1,20 @@
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - errorlint
+    - copyloopvar
+    - unconvert
+    - misspell
+
+issues:
+  exclude-dirs:
+    - internal/protocol # generated
+    - frontend
+    - tmp

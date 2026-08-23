@@ -68,9 +68,11 @@ for attempt in 1...20 {
     Thread.sleep(forTimeInterval: 2)
 }
 
-guard found else {
-    fputs("ERROR: \(ssid) not found after 20 scan attempts\n", stderr)
-    exit(1)
+// Not fatal: without location permission macOS redacts scan results,
+// so an invisible SSID does not prove the AP is down. Try anyway;
+// networksetup failing is the real verdict.
+if !found {
+    fputs("WARNING: \(ssid) not seen in 20 scans, trying networksetup anyway\n", stderr)
 }
 
 // Phase 2: connect via networksetup (works without entitlements)

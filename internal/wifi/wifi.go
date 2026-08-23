@@ -36,10 +36,10 @@ const (
 	// Status endpoints
 	StatusURL = "/gopro/camera/state"
 	// Media endpoints
-	MediaListURL  = "/gopro/media/list"
-	MediaInfoURL  = "/gopro/media/info"
-	ThumbnailURL  = "/gopro/media/thumbnail"
-	TurboURL      = "/gopro/media/turbo_transfer"
+	MediaListURL = "/gopro/media/list"
+	MediaInfoURL = "/gopro/media/info"
+	ThumbnailURL = "/gopro/media/thumbnail"
+	TurboURL     = "/gopro/media/turbo_transfer"
 )
 
 // WiFiManager handles WiFi operations for GoPro devices

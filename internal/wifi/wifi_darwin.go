@@ -68,15 +68,21 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 		m.log.Debug("Using CoreWLAN helper", "helper", helper, "interface", iface)
 		output, err := exec.CommandContext(ctx, helper, ssid, password, iface).CombinedOutput()
 		out := strings.TrimSpace(string(output))
-		if err != nil {
+		if err == nil {
+			m.log.Debug("CoreWLAN helper connected", "output", out)
+			return nil
+		}
+		if ctx.Err() != nil {
 			return fmt.Errorf("CoreWLAN helper failed: %w (%s)", err, out)
 		}
-		m.log.Debug("CoreWLAN helper connected", "output", out)
-		return nil
+		// Fall through: the retry loop below is a second chance, not a
+		// duplicate; helper failures include permission-gated scans.
+		m.log.Warn("CoreWLAN helper failed, falling back to networksetup", "err", err, "output", out)
+	} else {
+		helperMissingOnce.Do(func() {
+			m.log.Warn("CoreWLAN helper not found, falling back to networksetup", "note", "unreliable on macOS 15")
+		})
 	}
-	helperMissingOnce.Do(func() {
-		m.log.Warn("CoreWLAN helper not found, falling back to networksetup", "note", "unreliable on macOS 15")
-	})
 
 	// Try to connect, retrying while the AP becomes visible
 	var lastErr error

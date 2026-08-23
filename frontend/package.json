@@ -73,7 +73,13 @@
     ],
     "mac": {
       "category": "public.app-category.utilities",
-      "icon": "resources/icon.icns"
+      "icon": "resources/icon.icns",
+      "extendInfo": {
+        "NSBluetoothAlwaysUsageDescription": "Dropz connects to GoPro cameras over Bluetooth to manage and sync them.",
+        "NSBluetoothPeripheralUsageDescription": "Dropz connects to GoPro cameras over Bluetooth to manage and sync them.",
+        "NSLocationUsageDescription": "macOS requires location access to scan for the GoPro WiFi network.",
+        "NSLocationWhenInUseUsageDescription": "macOS requires location access to scan for the GoPro WiFi network."
+      }
     },
     "linux": {
       "category": "Utility",

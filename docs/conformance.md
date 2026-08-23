@@ -177,3 +177,22 @@ Validated so far:
   single sequential stream, keep turbo_enabled off (turbo loses ~20%
   on HERO11), holding BLE during transfer costs ~10% (acceptable).
   DownloadVideos warns when a whole sync sustains under 2 MB/s.
+- 2026-08-24, macOS readiness review (code only, no hardware yet):
+  all nine fixes from the macOS debug session (tmp/FIXES.md) are merged:
+  name-based dedup for random CoreBluetooth UUIDs, callback capture,
+  connect-done timing, write-with-response on darwin, CoreWLAN helper,
+  networksetup verification, 120s connect timeout, BLE address re-read
+  before sync. tinygo bluetooth v0.14.0 exposes LocalName, ServiceUUIDs,
+  ManufacturerData and ServiceData on darwin, so the FEA6 filter,
+  status flags and serial-tail assembly all work; the first 4 serial
+  chars still come from GATT as on Linux. Gaps closed this pass:
+  packaged app was missing NSBluetoothAlwaysUsageDescription (TCC kills
+  the backend on first CoreBluetooth call; dev runs hid this because
+  Terminal/Electron carry their own keys) and location keys for CoreWLAN
+  scans; wifi_join scan timeout and helper failure now degrade to
+  networksetup retries instead of failing the sync, since macOS 15
+  redacts scan results without location permission. Still hardware-only:
+  TCC prompt flow, wifi_join under location gating, pair from unbonded
+  client, Sleep on disconnect, HERO13+ paths. Known accepted limits:
+  isTransientBLEError always false on darwin (no status-check retry);
+  CI dmg is arm64 only while the Go binary is universal.

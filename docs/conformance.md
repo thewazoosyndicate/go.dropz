@@ -115,10 +115,21 @@ real-capture test vector. When SDKs disagree, the spec + Kotlin vector win.
 - 2-byte setting/status IDs (Mission 1 family) are not implemented; gate on
   Get Camera Capabilities if those models ever matter.
 
-## Follow-ups (not code fixes)
+## Hardware validation
 
-- Hardware validation needed on real cameras (HERO12 and HERO13+ on Linux,
-  any camera on macOS 15): keep-alive fix, pairing-finish framing,
-  third-party-client 0x50, advertisement parsing (bit order + serial assembly),
-  busy gating, AP-ready gate, turbo transfer, grouped media expansion, and the
-  CoreWLAN wifi_join helper path.
+Runnable harness: `make probe`, then next to a charged camera:
+
+1. `bin/ble-probe scan`
+   Dumps raw + parsed advertisements and reprints on any flag change.
+   Toggle pairing mode on the camera: the pairing flag must flip.
+   Proves: bit-order fix, serial assembly, model id.
+2. `bin/ble-probe pair "GoPro 0711"` (camera in pairing mode, unbonded client)
+   Proves: bonding, credentials read, pairing bit, and (manual check:
+   the camera's pairing screen closes by itself) RequestPairingFinish framing.
+3. `bin/ble-probe validate "GoPro 0711" -wifi -sleep`
+   Proves: readiness poll, keep-alive on GP-0074/0075, status query,
+   AP-ready gate (status 69 timing printed), WiFi join, HTTP state,
+   media list incl. group expansion, turbo transfer, Sleep.
+
+Run 2 then 3 on: HERO12 and HERO13+ on Linux; any camera on macOS 15
+(after `make wifi-helper`). Non-zero exit means a failed check.

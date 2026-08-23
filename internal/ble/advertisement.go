@@ -128,6 +128,12 @@ func assembleSerial(info AdvInfo, tail string) string {
 	return prefix + info.serialMid + tail
 }
 
+// ParseAdvertisement is the exported form for diagnostic tools (cmd/ble-probe).
+func ParseAdvertisement(result bluetooth.ScanResult) AdvInfo {
+	uuid, _ := bluetooth.ParseUUID(AdvertisementService)
+	return parseAdvertisement(result, uuid)
+}
+
 // parseAdvertisement extracts GoPro fields from a scan result.
 // Serial requires manufacturer and service data in the same result; BlueZ and
 // CoreBluetooth both aggregate scan responses, so this is the common case.

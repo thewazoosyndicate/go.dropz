@@ -1,203 +1,416 @@
+// ble-probe: hardware validation harness for the OpenGoPro conformance work.
+// Every check maps to a row in docs/conformance.md that only a real camera
+// can prove. Run on a machine with Bluetooth, next to a charged GoPro.
+//
+//	ble-probe scan [-duration 30s]     dump advertisements raw + parsed; toggle
+//	                                   pairing mode on the camera and watch bit 2
+//	ble-probe validate <name> [flags]  full checklist against a paired camera
+//	ble-probe pair <name>              first-time pairing checklist
+//
+// <name> is a case-insensitive fragment of the camera name or BLE address.
 package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/dropz/dropz/internal/ble"
+	"github.com/dropz/dropz/internal/wifi"
 	"tinygo.org/x/bluetooth"
 )
 
-func main() {
-	fmt.Println("=== GoPro BLE Manager Test ===")
-	fmt.Println("This test uses the production BLE Manager to demonstrate proper GoPro connectivity")
-	fmt.Println()
-
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	fmt.Println("✓ Logger initialized")
-
-	// Enable BLE interface
-	adapter := bluetooth.DefaultAdapter
-	must("enable adapter", adapter.Enable())
-	fmt.Println("✓ BLE adapter enabled")
-
-	// Create BLE Manager
-	bleManager := ble.NewManager(adapter, log)
-
-	// Set up metadata callback to verify it gets invoked
-	bleManager.SetMetadataCallback(func(metadata ble.CameraMetadata) {
-		fmt.Println("\n=== METADATA CALLBACK INVOKED ===")
-		fmt.Printf("✓ MAC Address: %s\n", metadata.BLEAddress)
-		fmt.Printf("✓ Model: %s (ID: %d)\n", metadata.ModelName, metadata.ModelID)
-		fmt.Printf("✓ Firmware: %s\n", metadata.FirmwareVersion)
-		fmt.Printf("✓ Serial: %s\n", metadata.SerialNumber)
-		fmt.Printf("✓ Battery: %d%%\n", metadata.BatteryLevel)
-		fmt.Printf("✓ WiFi SSID: %s\n", metadata.WiFiSSID)
-		fmt.Printf("✓ WiFi Password: %s\n", metadata.WiFiPassword)
-		fmt.Println("=================================")
-	})
-
-	fmt.Println("✓ BLE Manager created with metadata callback")
-	defer bleManager.Stop()
-
-	// Scan for GoPro devices using BLE Manager
-	fmt.Println("\nScanning for GoPro devices using BLE Manager...")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	var foundDevice *ble.Device
-	var mu sync.Mutex
-
-	// Start scanning with live callback
-	err := bleManager.StartScanningWithCallback(ctx, func(device ble.Device) {
-		mu.Lock()
-		defer mu.Unlock()
-		if foundDevice == nil {
-			foundDevice = &device
-			fmt.Printf("✓ Found GoPro: %s (%s) RSSI: %d\n",
-				device.Name, device.BLEAddress, device.RSSI)
-			cancel() // Stop scanning
-		}
-	})
-	must("start scanning", err)
-
-	// Wait for device discovery or timeout
-	<-ctx.Done()
-	bleManager.StopScanning()
-
-	mu.Lock()
-	if foundDevice == nil {
-		mu.Unlock()
-		log.Error("No GoPro devices found within 10 seconds")
-		os.Exit(1)
-	}
-	mu.Unlock()
-
-	fmt.Printf("✓ Selected device: %s (%s)\n", foundDevice.Name, foundDevice.BLEAddress)
-
-	// DEBUGGING: Use full Connect() but with detailed timeout tracking
-	fmt.Printf("\n1. Connecting to %s with timeout monitoring...\n", foundDevice.Name)
-
-	// Create a channel to track Connect() progress
-	connectDone := make(chan error, 1)
-	connectStart := time.Now()
-
-	// Run Connect() in background with progress monitoring
-	go func() {
-		fmt.Println("\n1a. Starting BLE Manager Connect() operation...")
-		err := bleManager.Connect(foundDevice.BLEAddress)
-		connectDone <- err
-	}()
-
-	// Monitor with timeout
-	select {
-	case err := <-connectDone:
-		duration := time.Since(connectStart)
-		if err != nil {
-			fmt.Printf("✗ Connect() failed after %v: %v\n", duration, err)
-			return
-		} else {
-			fmt.Printf("✓ Connect() successful after %v\n", duration)
-		}
-	case <-time.After(30 * time.Second):
-		fmt.Printf("✗ Connect() TIMEOUT after 30 seconds - Connection hung!\n")
-		fmt.Printf("   This means the issue is inside Connect() method\n")
-		fmt.Printf("   Last log was at: %v\n", time.Since(connectStart))
-		return
-	}
-
-	fmt.Println("\n--- Connect() completed successfully, now testing individual operations ---")
-
-	// Step 2: Test WiFi credentials (should work since Connect() succeeded)
-	fmt.Println("\n2. Testing WiFi credentials access...")
-	done := make(chan error, 1)
-	var ssid, password string
-
-	go func() {
-		var err error
-		ssid, password, err = bleManager.GetWifiCredentials(foundDevice.BLEAddress)
-		done <- err
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			fmt.Printf("✗ Failed to get WiFi credentials: %v\n", err)
-		} else {
-			fmt.Printf("✓ WiFi SSID: %s\n", ssid)
-			fmt.Printf("✓ WiFi Password: %s\n", password)
-			fmt.Println("✓ Application-level 'pairing' successful!")
-		}
-	case <-time.After(10 * time.Second):
-		fmt.Println("✗ GetWifiCredentials TIMEOUT (10 seconds)")
-		return
-	}
-
-	// Test additional operations
-	fmt.Println("\n3. Testing additional operations...")
-
-	// Test battery level
-	fmt.Println("\n3a. Testing GetBatteryLevel...")
-	go func() {
-		battery, err := bleManager.GetBatteryLevel(foundDevice.BLEAddress)
-		if err != nil {
-			done <- err
-		} else {
-			fmt.Printf("✓ Battery Level: %d%%\n", battery)
-			done <- nil
-		}
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			fmt.Printf("✗ GetBatteryLevel failed: %v\n", err)
-		}
-	case <-time.After(10 * time.Second):
-		fmt.Println("✗ GetBatteryLevel TIMEOUT")
-	}
-
-	// Test hardware info
-	fmt.Println("\n3b. Testing GetHardwareInfo...")
-	go func() {
-		hwInfo, err := bleManager.GetHardwareInfo(foundDevice.BLEAddress)
-		if err != nil {
-			done <- err
-		} else {
-			fmt.Printf("✓ Model: %s (ID: %d)\n", hwInfo.ModelName, hwInfo.ModelNumber)
-			fmt.Printf("✓ Firmware: %s\n", hwInfo.FirmwareVersion)
-			done <- nil
-		}
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			fmt.Printf("✗ GetHardwareInfo failed: %v\n", err)
-		}
-	case <-time.After(10 * time.Second):
-		fmt.Println("✗ GetHardwareInfo TIMEOUT")
-	}
-
-	// Cleanup using BLE Manager
-	fmt.Println("\n4. Disconnecting using BLE Manager...")
-	disconnectErr := bleManager.Disconnect(foundDevice.BLEAddress)
-	if disconnectErr != nil {
-		fmt.Printf("✗ Disconnect error: %v\n", disconnectErr)
-	} else {
-		fmt.Println("✓ Disconnected successfully")
-	}
-
-	fmt.Println("\n=== Test Complete ===")
+type report struct {
+	pass, fail, manual int
 }
 
-func must(action string, err error) {
+func (r *report) ok(name, detail string) {
+	r.pass++
+	fmt.Printf("[PASS]   %-28s %s\n", name, detail)
+}
+
+func (r *report) bad(name, detail string) {
+	r.fail++
+	fmt.Printf("[FAIL]   %-28s %s\n", name, detail)
+}
+
+func (r *report) check(name string, err error, detail string) {
 	if err != nil {
-		log.Fatalf("Failed to %s: %v", action, err)
+		r.bad(name, err.Error())
+	} else {
+		r.ok(name, detail)
 	}
+}
+
+func (r *report) note(name, detail string) {
+	fmt.Printf("[info]   %-28s %s\n", name, detail)
+}
+
+func (r *report) human(name, detail string) {
+	r.manual++
+	fmt.Printf("[MANUAL] %-28s %s\n", name, detail)
+}
+
+func (r *report) summary() int {
+	fmt.Printf("\n%d passed, %d failed, %d manual checks\n", r.pass, r.fail, r.manual)
+	if r.fail > 0 {
+		return 1
+	}
+	return 0
+}
+
+func main() {
+	if len(os.Args) < 2 {
+		usage()
+	}
+	cmd, args := os.Args[1], os.Args[2:]
+
+	adapter := bluetooth.DefaultAdapter
+	if adapter == nil {
+		fatal("no default Bluetooth adapter")
+	}
+	if err := adapter.Enable(); err != nil {
+		fatal("enable Bluetooth adapter: %v", err)
+	}
+
+	switch cmd {
+	case "scan":
+		fs := flag.NewFlagSet("scan", flag.ExitOnError)
+		duration := fs.Duration("duration", 30*time.Second, "how long to scan")
+		fs.Parse(args)
+		runScan(adapter, *duration)
+	case "validate":
+		fs := flag.NewFlagSet("validate", flag.ExitOnError)
+		doSleep := fs.Bool("sleep", false, "send Sleep on disconnect")
+		doWifi := fs.Bool("wifi", false, "also join the camera AP and run HTTP checks")
+		fs.Parse(args)
+		if fs.NArg() != 1 {
+			usage()
+		}
+		os.Exit(runValidate(adapter, fs.Arg(0), *doSleep, *doWifi))
+	case "pair":
+		fs := flag.NewFlagSet("pair", flag.ExitOnError)
+		fs.Parse(args)
+		if fs.NArg() != 1 {
+			usage()
+		}
+		os.Exit(runPair(adapter, fs.Arg(0)))
+	default:
+		usage()
+	}
+}
+
+func usage() {
+	fmt.Fprintln(os.Stderr, "usage: ble-probe scan [-duration 30s]")
+	fmt.Fprintln(os.Stderr, "       ble-probe validate <name-fragment> [-sleep] [-wifi]")
+	fmt.Fprintln(os.Stderr, "       ble-probe pair <name-fragment>")
+	os.Exit(2)
+}
+
+func fatal(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", a...)
+	os.Exit(1)
+}
+
+func verboseLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+}
+
+// rawScan runs a direct adapter scan and calls sighting for each GoPro
+// advertisement. Return true from sighting to stop the scan early.
+func rawScan(adapter *bluetooth.Adapter, timeout time.Duration, sighting func(bluetooth.ScanResult, ble.AdvInfo) bool) error {
+	goProUUID, _ := bluetooth.ParseUUID(ble.AdvertisementService)
+	var once sync.Once
+	stop := func() { once.Do(func() { adapter.StopScan() }) }
+
+	timer := time.AfterFunc(timeout, stop)
+	defer timer.Stop()
+
+	return adapter.Scan(func(a *bluetooth.Adapter, result bluetooth.ScanResult) {
+		isGoPro := result.HasServiceUUID(goProUUID) ||
+			strings.Contains(strings.ToLower(result.LocalName()), "gopro")
+		if !isGoPro {
+			return
+		}
+		if sighting(result, ble.ParseAdvertisement(result)) {
+			stop()
+		}
+	})
+}
+
+func matches(result bluetooth.ScanResult, fragment string) bool {
+	f := strings.ToLower(fragment)
+	return strings.Contains(strings.ToLower(result.LocalName()), f) ||
+		strings.Contains(strings.ToLower(result.Address.String()), f)
+}
+
+func flagString(info ble.AdvInfo) string {
+	onOff := func(b bool) string {
+		if b {
+			return "ON"
+		}
+		return "off"
+	}
+	return fmt.Sprintf("processor=%s wifiAP=%s pairing=%s newMedia=%s model=%d schema=%d serial=%q",
+		onOff(info.ProcessorOn), onOff(info.WiFiAPOn), onOff(info.PairingMode),
+		onOff(info.NewMedia), info.ModelID, info.SchemaVersion, info.SerialNumber)
+}
+
+func dumpRaw(result bluetooth.ScanResult) {
+	for _, md := range result.ManufacturerData() {
+		fmt.Printf("         manufacturer (company 0x%04X): % X\n", md.CompanyID, md.Data)
+	}
+	for _, sd := range result.ServiceData() {
+		fmt.Printf("         service data (%s): % X\n", sd.UUID.String(), sd.Data)
+	}
+}
+
+// runScan watches advertisements and reprints a camera whenever its flags
+// change. Toggling pairing mode on the camera must flip the pairing flag;
+// that is the live proof of the LSB-first bit fix.
+func runScan(adapter *bluetooth.Adapter, duration time.Duration) {
+	fmt.Printf("Scanning for %v. Toggle pairing mode on a camera and watch the pairing flag.\n\n", duration)
+	last := map[string]string{}
+	err := rawScan(adapter, duration, func(result bluetooth.ScanResult, info ble.AdvInfo) bool {
+		addr := result.Address.String()
+		line := flagString(info)
+		if last[addr] == line {
+			return false
+		}
+		last[addr] = line
+		fmt.Printf("%s  %s  rssi=%d\n", time.Now().Format("15:04:05"), result.LocalName(), result.RSSI)
+		fmt.Printf("         addr: %s\n", addr)
+		dumpRaw(result)
+		fmt.Printf("         %s\n\n", line)
+		return false
+	})
+	if err != nil {
+		fatal("scan failed: %v", err)
+	}
+	if len(last) == 0 {
+		fmt.Println("No GoPro advertisements seen. Is a camera awake nearby?")
+		os.Exit(1)
+	}
+}
+
+// findCamera scans until a camera matching fragment is seen.
+func findCamera(adapter *bluetooth.Adapter, fragment string, timeout time.Duration) (bluetooth.ScanResult, ble.AdvInfo, error) {
+	var found bluetooth.ScanResult
+	var adv ble.AdvInfo
+	var seen bool
+	err := rawScan(adapter, timeout, func(result bluetooth.ScanResult, info ble.AdvInfo) bool {
+		if !matches(result, fragment) {
+			return false
+		}
+		// Keep scanning briefly if the serial has not assembled yet:
+		// manufacturer and service data can arrive in separate results.
+		if seen && info.SerialNumber == "" {
+			return false
+		}
+		found, adv, seen = result, info, true
+		return info.SerialNumber != ""
+	})
+	if err != nil {
+		return found, adv, err
+	}
+	if !seen {
+		return found, adv, fmt.Errorf("no camera matching %q seen within %v", fragment, timeout)
+	}
+	return found, adv, nil
+}
+
+func runValidate(adapter *bluetooth.Adapter, fragment string, doSleep, doWifi bool) int {
+	r := &report{}
+	fmt.Printf("=== dropz hardware validation ===\n\n")
+
+	result, adv, err := findCamera(adapter, fragment, 30*time.Second)
+	if err != nil {
+		r.bad("discovery", err.Error())
+		return r.summary()
+	}
+	addr := result.Address.String()
+	r.ok("discovery", fmt.Sprintf("%s (%s) rssi=%d", result.LocalName(), addr, result.RSSI))
+	dumpRaw(result)
+	r.note("advertisement", flagString(adv))
+	if !adv.Valid {
+		r.bad("adv manufacturer data", "no GoPro manufacturer data parsed (company 0x02F2 missing?)")
+	}
+	if adv.SerialNumber == "" {
+		r.note("adv serial", "not assembled (schema 2 with hashed id_hash is normal; schema 3 should assemble)")
+	}
+
+	manager := ble.NewManager(adapter, verboseLogger())
+	defer manager.Stop()
+
+	// Connect exercises the spec's readiness gate (hardware info poll),
+	// notification subscriptions, 0x50, date/time, AP enable, credentials.
+	start := time.Now()
+	err = manager.Connect(addr)
+	r.check("connect + readiness", err, fmt.Sprintf("full setup in %v", time.Since(start).Round(time.Millisecond)))
+	if err != nil {
+		return r.summary()
+	}
+
+	hw, err := manager.GetHardwareInfo(addr)
+	if err != nil {
+		r.bad("hardware info", err.Error())
+	} else {
+		r.ok("hardware info", fmt.Sprintf("%s model=%d fw=%s serial=%s", hw.ModelName, hw.ModelNumber, hw.FirmwareVersion, hw.SerialNumber))
+		switch {
+		case adv.SerialNumber == "":
+			r.note("serial cross-check", "skipped: advertisement serial not assembled")
+		case adv.SerialNumber == hw.SerialNumber:
+			r.ok("serial cross-check", "advertisement serial matches GATT serial: identity fix proven")
+		default:
+			r.bad("serial cross-check", fmt.Sprintf("adv %q != gatt %q", adv.SerialNumber, hw.SerialNumber))
+		}
+		if adv.Valid && adv.ModelID != 0 && hw.ModelNumber != 0 && adv.ModelID != hw.ModelNumber {
+			r.bad("model cross-check", fmt.Sprintf("adv model %d != gatt model %d", adv.ModelID, hw.ModelNumber))
+		}
+	}
+
+	start = time.Now()
+	r.check("keep-alive", manager.KeepAlive(addr),
+		fmt.Sprintf("LED=66 on GP-0074 answered success on GP-0075 in %v", time.Since(start).Round(time.Millisecond)))
+
+	statuses, err := manager.QueryStatuses(addr, []byte{
+		ble.StatusSystemBusy, ble.StatusEncoding, ble.StatusSDCardStatus,
+		ble.StatusSDCardRemainingKB, ble.StatusBatteryPercentage,
+	})
+	if err != nil {
+		r.bad("status query", err.Error())
+	} else {
+		var missing []string
+		for _, id := range []byte{ble.StatusSystemBusy, ble.StatusEncoding, ble.StatusSDCardStatus, ble.StatusSDCardRemainingKB, ble.StatusBatteryPercentage} {
+			if _, ok := statuses[id]; !ok {
+				missing = append(missing, fmt.Sprintf("%d", id))
+			}
+		}
+		detail := fmt.Sprintf("busy=%v encoding=%v sd=%v battery=%v", statuses[ble.StatusSystemBusy], statuses[ble.StatusEncoding], statuses[ble.StatusSDCardStatus], statuses[ble.StatusBatteryPercentage])
+		if len(missing) > 0 {
+			r.bad("status query", "missing status IDs: "+strings.Join(missing, ","))
+		} else {
+			r.ok("status query", detail)
+		}
+	}
+
+	start = time.Now()
+	r.check("wifi AP ready (status 69)", manager.WaitForWiFiAPReady(addr, 15*time.Second),
+		fmt.Sprintf("AP up after %v", time.Since(start).Round(time.Millisecond)))
+
+	if doWifi {
+		validateWifi(r, manager, addr)
+	} else {
+		r.note("wifi checks", "skipped; rerun with -wifi to validate join, media list, turbo")
+	}
+
+	if doSleep {
+		r.check("sleep on disconnect", manager.Disconnect(addr), "Sleep 0x05 accepted (camera screen should turn off)")
+	} else {
+		manager.DisconnectQuietly(addr)
+		r.note("disconnect", "quiet (no Sleep); rerun with -sleep to validate Sleep")
+	}
+	return r.summary()
+}
+
+func validateWifi(r *report, manager *ble.Manager, addr string) {
+	ssid, password, err := manager.GetWifiCredentials(addr)
+	if err != nil || ssid == "" || password == "" {
+		r.bad("wifi credentials", fmt.Sprintf("ssid=%q err=%v", ssid, err))
+		return
+	}
+	r.ok("wifi credentials", "ssid "+ssid)
+
+	wm := wifi.NewWiFiManager(verboseLogger())
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	start := time.Now()
+	if err := wm.Connect(ctx, ssid, password); err != nil {
+		r.bad("wifi join", err.Error())
+		return
+	}
+	r.ok("wifi join", fmt.Sprintf("joined %s in %v", ssid, time.Since(start).Round(time.Second)))
+	defer func() {
+		if err := wm.Disconnect(); err != nil {
+			r.note("wifi leave", err.Error())
+		}
+	}()
+
+	if _, err := wm.GetCameraStatus(ctx); err != nil {
+		r.bad("http state", err.Error())
+	} else {
+		r.ok("http state", "GET /gopro/camera/state answered")
+	}
+
+	files, err := wm.ListMedia(ctx)
+	if err != nil {
+		r.bad("media list", err.Error())
+	} else {
+		var expanded int
+		for _, f := range files {
+			if f.Size == 0 {
+				expanded++
+			}
+		}
+		r.ok("media list", fmt.Sprintf("%d files (%d expanded group members)", len(files), expanded))
+	}
+
+	if err := wm.SetTurboTransfer(ctx, true); err != nil {
+		r.note("turbo transfer", "not supported or refused: "+err.Error())
+	} else {
+		err := wm.SetTurboTransfer(ctx, false)
+		r.check("turbo transfer", err, "enabled and disabled (camera briefly showed transfer UI)")
+	}
+}
+
+func runPair(adapter *bluetooth.Adapter, fragment string) int {
+	r := &report{}
+	fmt.Printf("=== dropz pairing validation ===\n")
+	fmt.Printf("Put the camera in pairing mode first: Connections > Connect Device > Quick App.\n\n")
+
+	result, adv, err := findCamera(adapter, fragment, 60*time.Second)
+	if err != nil {
+		r.bad("discovery", err.Error())
+		return r.summary()
+	}
+	addr := result.Address.String()
+	r.ok("discovery", fmt.Sprintf("%s (%s)", result.LocalName(), addr))
+	dumpRaw(result)
+	r.note("advertisement", flagString(adv))
+
+	if adv.PairingMode {
+		r.ok("pairing flag (bit 2)", "camera advertises pairing mode: bit-order fix proven live")
+	} else {
+		r.bad("pairing flag (bit 2)", "camera is on the pairing screen but bit 2 is unset; bit parsing is wrong (or camera is not in pairing mode)")
+	}
+
+	manager := ble.NewManager(adapter, verboseLogger())
+	defer manager.Stop()
+
+	start := time.Now()
+	err = manager.ConnectForPairing(addr)
+	r.check("pairing connect", err, fmt.Sprintf("bond + setup in %v", time.Since(start).Round(time.Millisecond)))
+	if err != nil {
+		return r.summary()
+	}
+	defer manager.DisconnectQuietly(addr)
+
+	ssid, password, err := manager.GetWifiCredentials(addr)
+	if err != nil || ssid == "" || password == "" {
+		r.bad("credentials after bond", fmt.Sprintf("ssid=%q err=%v", ssid, err))
+	} else {
+		r.ok("credentials after bond", "ssid "+ssid)
+	}
+
+	// RequestPairingFinish is fire-and-forget; only the camera UI shows it.
+	time.Sleep(3 * time.Second)
+	r.human("pairing screen", "the camera's pairing screen must have closed by itself: that proves the RequestPairingFinish framing fix")
+
+	return r.summary()
 }

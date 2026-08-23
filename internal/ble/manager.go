@@ -709,8 +709,14 @@ func (m *Manager) GetBatteryLevel(macAddress string) (int, error) {
 // Settings characteristic; it was previously sent to the Command
 // characteristic, which cameras reject.
 func (m *Manager) KeepAlive(macAddress string) error {
-	_, err := m.sendSetting(macAddress, SettingKeepAlive, []byte{0x01, KeepAliveValue})
-	return err
+	resp, err := m.sendSetting(macAddress, SettingKeepAlive, []byte{0x01, KeepAliveValue})
+	if err != nil {
+		return err
+	}
+	if resp.Status != 0 {
+		return fmt.Errorf("keep-alive returned status %d", resp.Status)
+	}
+	return nil
 }
 
 // Sleep puts the device to sleep

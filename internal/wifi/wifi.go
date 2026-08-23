@@ -200,6 +200,12 @@ func (m *WiFiManager) GetCameraStatus(ctx context.Context) (map[string]interface
 }
 
 // getMediaList retrieves the list of media files from a GoPro device via HTTP API
+// ListMedia returns the parsed media list without downloading anything.
+// Used by diagnostic tools (cmd/ble-probe).
+func (m *WiFiManager) ListMedia(ctx context.Context) ([]MediaFile, error) {
+	return m.getMediaList(ctx)
+}
+
 func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 	url := fmt.Sprintf("%s%s", GoProBaseURL, MediaListURL)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)

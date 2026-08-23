@@ -11,6 +11,11 @@ build:
 	@mkdir -p bin
 	go build $(LDFLAGS) -o bin/dropz cmd/dropz/main.go
 
+# Hardware validation harness; see docs/conformance.md "Hardware validation"
+probe:
+	@mkdir -p bin
+	go build -o bin/ble-probe cmd/ble-probe/main.go
+
 proto:
 	@echo "Generating protobuf code..."
 	@mkdir -p internal/protocol

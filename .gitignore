@@ -25,13 +25,7 @@ go.work.sum
 .env
 
 # other files
-bin/dropz
-bin/dropz.exe
-bin/dropz.dmg
-bin/dropz.app
-bin/dropz.app.zip
-bin/dropz.app.tar.gz
-bin/dropz.app.tar.xz
+bin/
 
 data/dropz.json
 

@@ -70,11 +70,11 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 	adapter := bluetooth.DefaultAdapter
 	if adapter != nil {
 		if err := adapter.Enable(); err != nil {
-			mlog.Error("Bluetooth unavailable, camera features disabled", "err", err)
+			mlog.Warn("Bluetooth unavailable, camera features disabled", "err", err)
 			adapter = nil
 		}
 	} else {
-		mlog.Error("No default Bluetooth adapter, camera features disabled")
+		mlog.Warn("No default Bluetooth adapter, camera features disabled")
 	}
 
 	bleManager := ble.NewManager(adapter, log)
@@ -165,7 +165,6 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 		if !ok || !cs.Status.IsManaged || cs.Status.IsPaired || cs.Status.IsPairing {
 			return
 		}
-		mlog.Info("Camera in pairing mode, starting pairing", "camera", cs.Camera.Name)
 		go func() {
 			if _, err := manager.PairCamera(cameraID); err != nil {
 				mlog.Warn("Advertised pairing failed", "camera", cs.Camera.Name, "err", err)
@@ -180,10 +179,10 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 		if !ok || cam.CameraState.Status.IsSyncing {
 			return
 		}
-		mlog.Info("Camera advertises new media, triggering status check", "camera", cam.CameraState.Camera.Name)
 		select {
 		case manager.statusCheckRequest <- cameraID:
 		default:
+			mlog.Debug("Status check request dropped, queue full", cam.CameraState.LogAttrs()...)
 		}
 	})
 
@@ -196,10 +195,10 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 		if !ok || cam.CameraState.Status.IsSyncing {
 			return
 		}
-		mlog.Info("Camera reappeared, triggering status check", "camera", cam.CameraState.Camera.Name, "gone_for", wasGoneFor)
 		select {
 		case manager.statusCheckRequest <- cameraID:
 		default:
+			mlog.Debug("Status check request dropped, queue full", cam.CameraState.LogAttrs()...)
 		}
 	})
 
@@ -259,16 +258,16 @@ func (m *GoProManager) ManageCamera(cameraID string) (*model.ManagedCamera, erro
 		cs.Status.IsManaged = true
 	})
 
-	m.log.Info("Camera added to managed pool", "camera", cameraID)
+	m.log.Info("Camera added to managed pool", cs.LogAttrs()...)
 	m.notify()
 
 	config := m.db.GetConfig()
 	if config.PairModeEnabled && !cs.Status.IsPaired {
-		m.log.Info("Pair mode enabled, starting pairing", "camera", cs.Camera.Name)
+		m.log.Debug("Pair mode enabled, starting pairing", cs.LogAttrs()...)
 		// Async so the gRPC handler doesn't block behind pairingMu for 30s+
 		go func() {
 			if _, err := m.PairCamera(cameraID); err != nil {
-				m.log.Warn("Auto-pairing failed", "camera", cs.Camera.Name, "err", err)
+				m.log.Warn("Auto-pairing failed", append(cs.LogAttrs(), "err", err)...)
 			}
 		}()
 	} else if cs.Status.IsReachable && cs.Status.IsPaired {
@@ -291,7 +290,7 @@ func (m *GoProManager) ManageCamera(cameraID string) (*model.ManagedCamera, erro
 
 // UnmanageCamera removes a camera from the managed pool
 func (m *GoProManager) UnmanageCamera(cameraID string) error {
-	_, found := m.db.GetCameraByID(cameraID)
+	cs, found := m.db.GetCameraByID(cameraID)
 	if !found {
 		return fmt.Errorf("%w: %s", model.ErrCameraNotFound, cameraID)
 	}
@@ -300,7 +299,7 @@ func (m *GoProManager) UnmanageCamera(cameraID string) error {
 		cs.Status.IsManaged = false
 	})
 
-	m.log.Info("Camera removed from managed pool", "camera", cameraID)
+	m.log.Info("Camera removed from managed pool", cs.LogAttrs()...)
 	m.notify()
 
 	return nil
@@ -317,7 +316,7 @@ func (m *GoProManager) BLEOperation(ctx context.Context, critical bool, operatio
 		}
 
 		if errors.Is(opErr, context.Canceled) && critical {
-			m.log.Info("Retrying critical BLE operation", "attempt", opTry+1, "max", 3)
+			m.log.Debug("Retrying critical BLE operation", "attempt", opTry+1, "max", 3)
 			time.Sleep(3 * time.Second)
 			continue
 		} else if errors.Is(opErr, context.Canceled) || errors.Is(opErr, context.DeadlineExceeded) {
@@ -332,12 +331,14 @@ func (m *GoProManager) BLEOperation(ctx context.Context, critical bool, operatio
 
 		return opErr
 	}
+	// Exhaustion carries the retried-3-times context the caller cannot know
+	m.log.Warn("BLE operation retries exhausted", "attempts", 3, "err", opErr)
 	return opErr
 }
 
 // ResetTransientStates resets transient camera states (is_syncing, is_pairing) on startup
 func (m *GoProManager) ResetTransientStates() {
-	m.log.Info("Resetting transient camera states on startup")
+	m.log.Debug("Resetting transient camera states on startup")
 	err := m.db.ResetTransientStates()
 	if err != nil {
 		m.log.Error("Failed to reset transient camera states", "err", err)
@@ -363,6 +364,7 @@ func (m *GoProManager) PairCamera(cameraID string) (*model.ManagedCamera, error)
 		select {
 		case m.statusCheckRequest <- cameraID:
 		default:
+			m.log.Debug("Status check request dropped, queue full", cs.LogAttrs()...)
 		}
 	}
 

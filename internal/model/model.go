@@ -94,6 +94,12 @@ type CameraWithState struct {
 	Metadata CameraMetadata `json:"metadata"`
 }
 
+// LogAttrs is the standard camera identity pair for slog calls: stable ID
+// plus display name, so lines join across subsystems.
+func (c *CameraWithState) LogAttrs() []any {
+	return []any{"camera_id", c.Camera.ID, "camera", c.Camera.Name}
+}
+
 // InManagedPool reports whether the camera belongs in the Managed pool.
 func (c *CameraWithState) InManagedPool() bool {
 	return c.Status.IsPaired && c.Status.IsManaged

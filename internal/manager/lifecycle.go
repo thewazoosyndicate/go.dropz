@@ -28,26 +28,21 @@ func (m *GoProManager) Start() error {
 
 // Stop stops the GoPro manager service
 func (m *GoProManager) Stop() {
-	m.log.Info("GoPro manager shutdown initiated")
+	m.log.Debug("GoPro manager stopping")
 
 	// Stop BLE first so active operations finish cleanly before context cancel
-	m.log.Debug("Shutdown", "phase", "stopping_ble")
 	m.ble.Stop()
-
-	m.log.Debug("Shutdown", "phase", "cancelling_context")
 	m.cancel()
-
-	m.log.Debug("Shutdown", "phase", "waiting_for_goroutines")
 	m.wg.Wait()
 
-	m.log.Info("GoPro manager shutdown complete")
+	m.log.Info("GoPro manager stopped")
 }
 
 // deviceManager periodically processes the sync queue and schedules status checks.
 // BLE-heavy work runs in statusCheckWorker so a slow camera never stalls this loop.
 func (m *GoProManager) deviceManager() {
 	defer m.wg.Done()
-	defer m.log.Debug("Device manager goroutine finished.")
+	defer m.log.Debug("Device manager stopped")
 
 	syncTicker := time.NewTicker(syncQueueInterval)
 	defer syncTicker.Stop()
@@ -63,12 +58,9 @@ func (m *GoProManager) deviceManager() {
 	unreachableTicker := time.NewTicker(unreachableInterval)
 	defer unreachableTicker.Stop()
 
-	m.log.Info("Starting device manager")
-
 	for {
 		select {
 		case <-m.ctx.Done():
-			m.log.Debug("Device manager stopping due to context cancellation.")
 			return
 		case <-syncTicker.C:
 			m.syncCoordinator.ProcessSyncQueue()
@@ -81,7 +73,8 @@ func (m *GoProManager) deviceManager() {
 			if newInterval != statusInterval {
 				statusInterval = newInterval
 				statusCheckTicker.Reset(statusInterval)
-				m.log.Info("Status check interval updated", "interval", statusInterval)
+				// The setting change itself is logged where it happens (config.go)
+				m.log.Debug("Status check ticker reset", "interval", statusInterval)
 			}
 		case <-statusCheckTicker.C:
 			if m.db.GetConfig().StatusCheckIntervalSeconds > 0 {
@@ -101,7 +94,7 @@ func (m *GoProManager) deviceManager() {
 // statusCheckWorker serializes BLE status checks off the deviceManager loop.
 func (m *GoProManager) statusCheckWorker() {
 	defer m.wg.Done()
-	defer m.log.Debug("Status check worker finished.")
+	defer m.log.Debug("Status check worker stopped")
 
 	for {
 		select {
@@ -117,7 +110,8 @@ func (m *GoProManager) statusCheckWorker() {
 func (m *GoProManager) startBackgroundScanner() {
 	defer m.wg.Done()
 	if !m.ble.Available() {
-		m.log.Warn("Background scanner disabled: bluetooth unavailable")
+		// Already warned once at construction; this is just the consequence
+		m.log.Debug("Background scanner disabled, bluetooth unavailable")
 		return
 	}
 	config := m.db.GetConfig()

@@ -26,7 +26,7 @@ func (m *GoProManager) CreateGroup(name string, cameraIDs []string) (*model.Grou
 		return nil, fmt.Errorf("failed to create group: %w", err)
 	}
 
-	m.log.Info("Created group", "group", name, "cameras", len(cameraIDs))
+	m.log.Info("Group created", "group_id", group.ID, "group", name, "cameras", len(cameraIDs))
 	return group, nil
 }
 
@@ -49,7 +49,7 @@ func (m *GoProManager) UpdateGroup(groupID, name string, cameraIDs []string) (*m
 		return nil, fmt.Errorf("failed to update group: %w", err)
 	}
 
-	m.log.Info("Updated group", "group", name, "cameras", len(cameraIDs))
+	m.log.Info("Group updated", "group_id", groupID, "group", name, "cameras", len(cameraIDs))
 	return group, nil
 }
 
@@ -64,7 +64,7 @@ func (m *GoProManager) DeleteGroup(groupID string) error {
 		return fmt.Errorf("failed to delete group: %w", err)
 	}
 
-	m.log.Info("Deleted group", "group", group.Name)
+	m.log.Info("Group deleted", "group_id", groupID, "group", group.Name)
 	return nil
 }
 
@@ -85,13 +85,17 @@ func (m *GoProManager) LoadGroup(groupID string) error {
 		inGroup := groupCameras[id]
 
 		if inGroup && !cam.Status.IsManaged {
-			m.ManageCamera(id)
+			if _, err := m.ManageCamera(id); err != nil {
+				m.log.Warn("Failed to manage camera during group load", "group_id", groupID, "camera_id", id, "err", err)
+			}
 		} else if !inGroup && cam.Status.IsManaged {
-			m.UnmanageCamera(id)
+			if err := m.UnmanageCamera(id); err != nil {
+				m.log.Warn("Failed to unmanage camera during group load", "group_id", groupID, "camera_id", id, "err", err)
+			}
 		}
 	}
 
-	m.log.Info("Loaded group", "group", group.Name, "cameras", len(group.CameraIDs))
+	m.log.Info("Group loaded", "group_id", groupID, "group", group.Name, "cameras", len(group.CameraIDs))
 	m.notify()
 	return nil
 }

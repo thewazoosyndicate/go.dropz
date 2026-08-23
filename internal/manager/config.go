@@ -14,7 +14,13 @@ func (m *GoProManager) GetConfig() model.Config {
 
 // UpdateConfig updates the configuration
 func (m *GoProManager) UpdateConfig(config model.Config) error {
-	return m.db.UpdateConfig(config)
+	if err := m.db.UpdateConfig(config); err != nil {
+		return err
+	}
+	m.log.Info("Config replaced", "sync_enabled", config.SyncEnabled,
+		"pair_mode_enabled", config.PairModeEnabled, "log_level", config.LogLevel,
+		"destination_folder", config.DestinationFolder)
+	return nil
 }
 
 // setting describes one named config field: read, validate+write, and
@@ -107,13 +113,17 @@ var settings = map[string]setting{
 }
 
 // applyLogLevel applies the configured log level to the live logger.
+// The change itself is logged by the caller (Setting updated / reset).
 func (m *GoProManager) applyLogLevel(level string) {
 	if m.logLevel == nil {
 		return
 	}
-	if parsed, err := logging.ParseLevel(level); err == nil {
-		m.logLevel.Set(parsed)
+	parsed, err := logging.ParseLevel(level)
+	if err != nil {
+		m.log.Warn("Invalid log level not applied", "value", level, "err", err)
+		return
 	}
+	m.logLevel.Set(parsed)
 }
 
 // GetSetting gets a specific setting value
@@ -134,6 +144,7 @@ func (m *GoProManager) UpdateSetting(settingName string, value interface{}) (mod
 	if !ok {
 		return config, fmt.Errorf("unknown setting: %s", settingName)
 	}
+	old := def.get(&config)
 	if err := def.set(&config, settingName, value); err != nil {
 		return config, err
 	}
@@ -144,6 +155,7 @@ func (m *GoProManager) UpdateSetting(settingName string, value interface{}) (mod
 	if err := m.db.UpdateConfig(config); err != nil {
 		return config, fmt.Errorf("failed to update config: %w", err)
 	}
+	m.log.Info("Setting updated", "setting", settingName, "old", old, "new", def.get(&config))
 	return config, nil
 }
 
@@ -169,6 +181,7 @@ func (m *GoProManager) ResetSetting(settingName string) (model.Config, error) {
 	if err := m.db.UpdateConfig(config); err != nil {
 		return config, fmt.Errorf("failed to update config: %w", err)
 	}
+	m.log.Info("Setting reset to default", "setting", settingName)
 	return config, nil
 }
 

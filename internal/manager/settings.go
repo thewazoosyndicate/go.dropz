@@ -153,6 +153,7 @@ func (m *GoProManager) ApplyCameraSettings(cameraID string, changes map[int32]in
 				failed[id] = err.Error()
 			}
 		}
+		firstPassFailed := len(failed)
 		// Retry pass: a value rejected earlier may be valid now that the
 		// settings it depends on changed.
 		for _, id := range ids {
@@ -167,9 +168,15 @@ func (m *GoProManager) ApplyCameraSettings(cameraID string, changes map[int32]in
 		for _, id := range ids {
 			results = append(results, model.SettingApplyResult{ID: id, Error: failed[id]})
 		}
+		for id, msg := range failed {
+			m.log.Warn("Setting rejected by camera", "camera_id", cameraID,
+				"setting", id, "name", settingLabel(byte(id)), "err", msg)
+		}
+		m.log.Info("Camera settings applied", "camera_id", cameraID,
+			"applied", len(ids)-len(failed), "failed", len(failed), "retried", firstPassFailed-len(failed))
 
 		if _, err := m.refreshSettingsLocked(cameraID, bleAddress); err != nil {
-			m.log.Warn("Settings refresh after apply failed", "camera", cameraID, "err", err)
+			m.log.Warn("Settings refresh after apply failed", "camera_id", cameraID, "err", err)
 		}
 		return nil
 	})
@@ -192,15 +199,20 @@ func (m *GoProManager) ApplyGroupSettings(groupID string, changes map[int32]int6
 	}
 
 	results := make([]model.GroupSettingsResult, 0, len(group.CameraIDs))
+	failedCameras := 0
 	for _, cameraID := range group.CameraIDs {
 		r := model.GroupSettingsResult{CameraID: cameraID}
 		applied, err := m.ApplyCameraSettings(cameraID, changes)
 		if err != nil {
+			m.log.Warn("Group settings skipped camera", "group_id", groupID, "camera_id", cameraID, "err", err)
 			r.Error = err.Error()
+			failedCameras++
 		} else {
 			r.Results = applied
 		}
 		results = append(results, r)
 	}
+	m.log.Info("Group settings applied", "group_id", groupID, "group", group.Name,
+		"cameras", len(group.CameraIDs), "failed", failedCameras)
 	return results, nil
 }

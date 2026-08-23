@@ -501,20 +501,21 @@ func (db *Store) UpdateCameraByID(cameraID string, mutate func(*model.CameraWith
 	return fmt.Errorf("%w: %s", model.ErrCameraNotFound, cameraID)
 }
 
-// MarkCamerasUnreachableBefore marks all cameras last seen before cutoff as unreachable.
-// Reachability is ephemeral: memory only, no file write.
-func (db *Store) MarkCamerasUnreachableBefore(cutoff time.Time) (bool, error) {
+// MarkCamerasUnreachableBefore marks all cameras last seen before cutoff as
+// unreachable and returns the identities that changed, so the caller can log
+// the departure transition. Reachability is ephemeral: memory only, no file write.
+func (db *Store) MarkCamerasUnreachableBefore(cutoff time.Time) []model.Camera {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
-	changed := false
+	var changed []model.Camera
 	for _, cs := range db.cameraStates {
 		if cs.Status.LastSeen.Before(cutoff) && cs.Status.IsReachable {
 			cs.Status.IsReachable = false
-			changed = true
+			changed = append(changed, cs.Camera)
 		}
 	}
-	return changed, nil
+	return changed
 }
 
 // updateCameraStatusByID looks up by Camera.ID (immune to re-keying).

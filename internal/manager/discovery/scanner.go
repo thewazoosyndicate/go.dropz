@@ -29,7 +29,7 @@ func NewScanner(ble *ble.Manager, log *slog.Logger, scanInterval time.Duration) 
 
 // StartBackgroundScanner starts the background scanner with live device processing
 func (s *Scanner) StartBackgroundScanner(ctx context.Context, processDeviceFunc func(ble.Device)) {
-	s.log.Debug("Starting background scanner")
+	s.log.Debug("Starting background scanner", "interval", s.scanInterval)
 	s.processDeviceFunc = processDeviceFunc
 
 	// Create a ticker for regular scan intervals
@@ -59,7 +59,7 @@ func (s *Scanner) StartBackgroundScanner(ctx context.Context, processDeviceFunc 
 	for {
 		select {
 		case <-ctx.Done():
-			s.log.Debug("Background scanner stopping due to context cancellation.")
+			s.log.Debug("Background scanner stopping due to context cancellation")
 			if cancelContinuousScan != nil {
 				cancelContinuousScan()
 			}
@@ -80,7 +80,9 @@ func (s *Scanner) StartBackgroundScanner(ctx context.Context, processDeviceFunc 
 		case <-watchdogTicker.C:
 			// Check if scanning is active, if not restart it
 			if !scanInProgress.Load() {
-				s.log.Debug("Watchdog restarting scan")
+				// The scan loop died without the ticker noticing: an anomaly,
+				// unlike the routine post-connect restart above
+				s.log.Warn("Scanner watchdog restarting scan")
 				// Cancel any existing scan and create a new context
 				if cancelContinuousScan != nil {
 					cancelContinuousScan()
@@ -100,6 +102,12 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 	defer scanInProgress.Store(false)
 
 	logging.Trace(s.log, "Starting continuous BLE scanning process")
+
+	// First failure and recovery are logged once; retries back off silently
+	// so a dead adapter cannot flood the rotating log.
+	const maxRetryDelay = time.Minute
+	retryDelay := 2 * time.Second
+	scanFailing := false
 
 	// Loop until context is canceled or other conditions stop the scan
 	for {
@@ -125,17 +133,26 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 
 		if err != nil {
 			cancel() // Always cancel the context
-			s.log.Error("Failed to start BLE scan", "err", err)
+			if !scanFailing {
+				s.log.Warn("Failed to start BLE scan, retrying with backoff", "err", err)
+				scanFailing = true
+			}
 
-			// Only short pause before retrying
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(1 * time.Second):
-				// Continue with retry
+			case <-time.After(retryDelay):
+			}
+			if retryDelay *= 2; retryDelay > maxRetryDelay {
+				retryDelay = maxRetryDelay
 			}
 			continue
 		}
+		if scanFailing {
+			s.log.Info("BLE scan recovered")
+			scanFailing = false
+		}
+		retryDelay = 2 * time.Second
 
 		logging.Trace(s.log, "BLE scan started, waiting for completion")
 

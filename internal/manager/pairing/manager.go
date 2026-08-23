@@ -45,7 +45,7 @@ func (pm *Manager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 	bleAddress := cs.Camera.BLEAddress
 	name := cs.Camera.Name
 
-	pm.log.Info("Starting pairing process", "camera", name)
+	pm.log.Info("Pairing started", cs.LogAttrs()...)
 
 	pm.db.UpdateCameraPairingStatusByID(cameraID, true)
 	pm.notifier()
@@ -56,8 +56,6 @@ func (pm *Manager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 	var verifiedPairingState bool
 
 	bleErr := pm.bleOperation(ctx, true, func() error {
-		pm.log.Info("Connecting for pairing", "device", bleAddress)
-
 		if err := pm.ble.ConnectForPairing(bleAddress); err != nil {
 			return fmt.Errorf("failed to connect: %w", err)
 		}
@@ -68,10 +66,9 @@ func (pm *Manager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 		cam, exists := pm.db.GetCameraByID(cameraID)
 		isPaired := exists && cam.Camera.WiFiSSID != "" && cam.Camera.WiFiPassword != ""
 
-		if isPaired {
-			pm.log.Info("Pairing verified: WiFi credentials received")
-		} else {
-			pm.log.Warn("Pairing completed but WiFi credentials not available yet")
+		if !isPaired {
+			// A bond without credentials cannot sync; user must retry
+			pm.log.Warn("Pairing completed but WiFi credentials not received", "camera", name)
 		}
 
 		// Only record paired when credentials were actually read; a bond
@@ -81,14 +78,14 @@ func (pm *Manager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 		verifiedPairingState = isPaired
 
 		if err := pm.ble.DisconnectQuietly(bleAddress); err != nil {
-			pm.log.Warn("Failed to disconnect from camera", "err", err)
+			pm.log.Warn("Failed to disconnect after pairing", "camera", name, "err", err)
 		}
 
 		return nil
 	})
 
 	if bleErr != nil {
-		pm.log.Error("BLE pairing operation failed", "camera", name, "err", bleErr)
+		// Returned wrapped; callers own the failure log
 		pm.db.UpdateCameraPairingStatusByID(cameraID, false)
 		pm.db.SetCameraPairedByID(cameraID, false)
 		pm.notifier()
@@ -105,6 +102,6 @@ func (pm *Manager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 		}
 	}
 
-	pm.log.Info("Pairing completed", "camera", name, "paired", verifiedPairingState)
+	pm.log.Info("Pairing completed", append(cs.LogAttrs(), "paired", verifiedPairingState)...)
 	return managedCamera, nil
 }

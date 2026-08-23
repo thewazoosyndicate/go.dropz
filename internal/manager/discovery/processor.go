@@ -107,14 +107,17 @@ func (p *Processor) createNewCamera(dev ble.Device) {
 	}
 
 	if err := p.db.AddOrUpdateDiscoveredCamera(discoveredCamera); err != nil {
-		p.log.Error("Failed to add discovered camera", "err", err)
+		p.log.Error("Failed to add discovered camera", "camera", dev.Name, "ble_addr", dev.BLEAddress, "err", err)
+		return
 	}
+	p.log.Info("Camera discovered", "camera_id", cameraState.Camera.ID, "camera", dev.Name,
+		"ble_addr", dev.BLEAddress, "serial", dev.SerialNumber)
 }
 
 // updateExistingCamera atomically updates an existing camera entry.
 func (p *Processor) updateExistingCamera(dbKey string, dev ble.Device) {
 	var wasGoneFor time.Duration
-	var cameraID string
+	var cameraID, cameraName string
 	wasUnreachable := false
 	enteredPairingMode := false
 	newMediaAppeared := false
@@ -128,14 +131,15 @@ func (p *Processor) updateExistingCamera(dbKey string, dev ble.Device) {
 
 		// Update BLE address in case it changed (macOS assigns random UUIDs)
 		if cs.Camera.BLEAddress != dev.BLEAddress {
-			p.log.Info("Camera BLE address changed", "camera", cs.Camera.Name,
+			// Routine on macOS, which rotates identifiers
+			p.log.Debug("Camera BLE address changed", "camera", cs.Camera.Name,
 				"old", cs.Camera.BLEAddress, "new", dev.BLEAddress)
 			cs.Camera.BLEAddress = dev.BLEAddress
 			durable = true
 		}
 
 		if cs.Camera.Name == "" || (!strings.Contains(cs.Camera.Name, "GoPro") && strings.Contains(dev.Name, "GoPro")) {
-			p.log.Debug("Camera name updated", "key", dbKey, "old", cs.Camera.Name, "new", dev.Name)
+			p.log.Debug("Camera name updated", "camera_id", cs.Camera.ID, "old", cs.Camera.Name, "new", dev.Name)
 			cs.Camera.Name = dev.Name
 			durable = true
 		}
@@ -153,7 +157,7 @@ func (p *Processor) updateExistingCamera(dbKey string, dev ble.Device) {
 		if !cs.Status.IsReachable {
 			wasGoneFor = time.Since(cs.Status.LastSeen)
 			wasUnreachable = true
-			p.log.Info("Camera reachable again", "camera", cs.Camera.Name, "gone_for", wasGoneFor)
+			p.log.Info("Camera reachable again", append(cs.LogAttrs(), "gone_for", wasGoneFor)...)
 			cs.Status.IsReachable = true
 		}
 
@@ -165,10 +169,11 @@ func (p *Processor) updateExistingCamera(dbKey string, dev ble.Device) {
 
 		cs.Camera.RSSI = dev.RSSI
 		cs.Status.LastSeen = time.Now()
+		cameraName = cs.Camera.Name
 		return durable
 	})
 	if err != nil {
-		p.log.Error("Failed to update discovered camera", "err", err)
+		p.log.Error("Failed to update discovered camera", "camera", dev.Name, "ble_addr", dev.BLEAddress, "err", err)
 		return
 	}
 
@@ -184,13 +189,13 @@ func (p *Processor) updateExistingCamera(dbKey string, dev ble.Device) {
 		p.onCameraReappeared(cameraID, wasGoneFor)
 	}
 	if enteredPairingMode {
-		p.log.Info("Camera entered pairing mode", "camera", dbKey)
+		p.log.Info("Camera entered pairing mode", "camera_id", cameraID, "camera", cameraName)
 		if p.onPairingModeDetected != nil {
 			p.onPairingModeDetected(cameraID)
 		}
 	}
 	if newMediaAppeared && p.onNewMediaAdvertised != nil {
-		p.log.Info("Camera advertises new media", "camera", dbKey)
+		p.log.Info("Camera advertises new media", "camera_id", cameraID, "camera", cameraName)
 		p.onNewMediaAdvertised(cameraID)
 	}
 }
@@ -198,11 +203,11 @@ func (p *Processor) updateExistingCamera(dbKey string, dev ble.Device) {
 // MarkUnreachableDevicesBackground marks cameras as unreachable from background tasks.
 func (p *Processor) MarkUnreachableDevicesBackground(inactivityTimeout time.Duration, notifier func()) {
 	cutoff := time.Now().Add(-inactivityTimeout)
-	changed, err := p.db.MarkCamerasUnreachableBefore(cutoff)
-	if err != nil {
-		p.log.Error("Failed to save camera state changes", "err", err)
+	changed := p.db.MarkCamerasUnreachableBefore(cutoff)
+	for _, cam := range changed {
+		p.log.Info("Camera unreachable", "camera_id", cam.ID, "camera", cam.Name, "timeout", inactivityTimeout)
 	}
-	if changed && notifier != nil {
+	if len(changed) > 0 && notifier != nil {
 		notifier()
 	}
 }

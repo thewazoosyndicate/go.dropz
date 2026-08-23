@@ -30,6 +30,7 @@ func (m *GoProManager) enqueueStatusChecks() {
 		select {
 		case m.statusCheckRequest <- cs.Camera.ID:
 		default:
+			m.log.Debug("Status check request dropped, queue full", cs.LogAttrs()...)
 		}
 	}
 }
@@ -38,7 +39,7 @@ func (m *GoProManager) enqueueStatusChecks() {
 func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 	cs, ok := m.db.GetCameraByID(cameraID)
 	if !ok {
-		m.log.Warn("Status check: camera not found", "camera", cameraID)
+		m.log.Warn("Camera not found for status check", "camera_id", cameraID)
 		return
 	}
 	if !cs.Status.IsReachable || cs.Status.IsSyncing || cs.Status.IsPairing {
@@ -52,7 +53,7 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 	var syncQueued bool
 
 	if err := m.ble.ConnectForStatusCheck(bleAddress); err != nil {
-		m.log.Debug("Status check connect failed", "camera", cs.Camera.Name, "err", err)
+		m.log.Debug("Status check connect failed", append(cs.LogAttrs(), "err", err)...)
 		return
 	}
 
@@ -66,7 +67,7 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 		ble.StatusEncoding,
 	})
 	if err != nil {
-		m.log.Debug("Status check query failed", "camera", cs.Camera.Name, "err", err)
+		m.log.Debug("Status check query failed", append(cs.LogAttrs(), "err", err)...)
 		m.ble.Disconnect(bleAddress)
 		return
 	}
@@ -75,7 +76,8 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 
 	// A busy or recording camera must not be put to sleep.
 	if cameraInUse(statuses) {
-		m.log.Info("Camera busy or recording, leaving it awake", "camera", cs.Camera.Name)
+		// Fires on every poll while recording, hence Debug
+		m.log.Debug("Camera busy or recording, leaving it awake", cs.LogAttrs()...)
 		m.ble.DisconnectQuietly(bleAddress)
 		return
 	}
@@ -89,7 +91,8 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 	if needsReconnectToSleep {
 		m.ble.DisconnectQuietly(bleAddress)
 		if err := m.ble.ConnectForStatusCheck(bleAddress); err != nil {
-			m.log.Debug("Sleep reconnect failed", "camera", cs.Camera.Name, "err", err)
+			// Camera stays awake; next status check will retry the sleep
+			m.log.Debug("Sleep reconnect failed, camera left awake", append(cs.LogAttrs(), "err", err)...)
 			return
 		}
 	}
@@ -157,8 +160,8 @@ func (m *GoProManager) processStatusResults(cs *model.CameraWithState, statuses 
 		}
 	})
 
-	m.log.Debug("Status check result", "camera", cs.Camera.Name,
-		"battery", newBattery, "photos", newPhotos, "videos", newVideos, "sd", newSDStatus, "remaining_kb", newRemainingKB)
+	m.log.Debug("Status check result", append(cs.LogAttrs(),
+		"battery", newBattery, "photos", newPhotos, "videos", newVideos, "sd", newSDStatus, "remaining_kb", newRemainingKB)...)
 
 	// Detect new media via count increase OR SD card space decrease (>10MB).
 	// Space decrease catches quick-capture footage where counts aren't updated.
@@ -170,8 +173,8 @@ func (m *GoProManager) processStatusResults(cs *model.CameraWithState, statuses 
 		return false
 	}
 
-	m.log.Info("New media detected, queuing sync", "camera", cs.Camera.Name,
-		"photos_old", oldPhotos, "photos_new", newPhotos, "videos_old", oldVideos, "videos_new", newVideos)
+	m.log.Info("New media detected, queuing sync", append(cs.LogAttrs(),
+		"photos_old", oldPhotos, "photos_new", newPhotos, "videos_old", oldVideos, "videos_new", newVideos)...)
 
 	m.db.AddSyncQueueEntry(&model.SyncQueueEntry{
 		CameraID:         cs.Camera.ID,

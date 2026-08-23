@@ -668,9 +668,12 @@ func (m *Manager) GetBatteryLevel(macAddress string) (int, error) {
 	return 0, fmt.Errorf("battery percentage not found in response")
 }
 
-// KeepAlive sends a keep-alive to prevent the camera from auto-sleeping
+// KeepAlive sends a keep-alive to prevent the camera from auto-sleeping.
+// Per OpenGoPro this is the LED setting (91) set to 66, written to the
+// Settings characteristic; it was previously sent to the Command
+// characteristic, which cameras reject.
 func (m *Manager) KeepAlive(macAddress string) error {
-	_, err := m.sendCommand(macAddress, CmdKeepAlive, []byte{0x01, 0x42})
+	_, err := m.sendSetting(macAddress, SettingKeepAlive, []byte{0x01, KeepAliveValue})
 	return err
 }
 
@@ -771,6 +774,10 @@ func (m *Manager) sendQuery(macAddress string, queryID byte, data []byte) (Respo
 	return m.sendMessage(macAddress, CharQuery, queryID, data, tlv.BuildQueryPacket)
 }
 
+func (m *Manager) sendSetting(macAddress string, settingID byte, data []byte) (Response, error) {
+	return m.sendMessage(macAddress, CharSettings, settingID, data, tlv.BuildCommandPacket)
+}
+
 func (m *Manager) handleNotification(macAddress string, data []byte) {
 	c := m.getConn(macAddress)
 	if c == nil {
@@ -787,10 +794,12 @@ func (m *Manager) handleNotification(macAddress string, data []byte) {
 	}
 }
 
-// buildProtobufPacket builds a protobuf-style packet: [FeatureID][data...]
-// Used for Network Management commands (GP-0091) which don't use TLV framing.
+// buildProtobufPacket frames a protobuf message: packet header + [FeatureID][ActionID][protobuf].
+// Protobuf messages use the same packetization as TLV commands (OpenGoPro
+// data_protocol); the header was previously missing, so cameras parsed the
+// feature ID byte as a length header and dropped the message.
 func buildProtobufPacket(featureID byte, data []byte) []byte {
-	return append([]byte{featureID}, data...)
+	return tlv.BuildTLVPackets(append([]byte{featureID}, data...))
 }
 
 // SendPairingFinish sends the RequestPairingFinish protobuf command (Feature 0x03, Action 0x01)

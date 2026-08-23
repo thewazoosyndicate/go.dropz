@@ -159,9 +159,11 @@ func parseHardwareInfo(data []byte, log *slog.Logger) (*HardwareInfo, error) {
 	return info, nil
 }
 
-// SetThirdPartyClient identifies this client as a third-party app to the camera
+// SetThirdPartyClient identifies this client as a third-party app to the camera.
+// Command 0x50 (SET_THIRD_PARTY_CLIENT_INFO); 0x6B was used before and is
+// not in the OpenGoPro command table.
 func (m *Manager) SetThirdPartyClient(macAddress string) error {
-	_, err := m.sendCommand(macAddress, CmdRegisterClient, nil)
+	_, err := m.sendCommand(macAddress, CmdSetThirdPartyInfo, nil)
 	if err != nil {
 		return fmt.Errorf("failed to set third party client: %w", err)
 	}

@@ -38,9 +38,11 @@ const (
 	CmdSetLocalDateTime = 0x0F // Set date/time with timezone + DST
 	CmdSetAPControl     = 0x17 // Control WiFi Access Point
 	CmdGetHardwareInfo  = 0x3C
-	CmdKeepAlive        = 0x5B // Keep camera awake during transfers
-	// Not a spec-defined TLV command; empirically works as raw byte to register as third-party client
-	CmdRegisterClient = 0x6B
+	// Keep-alive is a SETTING write (LED=66) to GP-0074, not a command.
+	// See OpenGoPro state_management: "Set Setting 91 (LED) to 66".
+	SettingKeepAlive     = 0x5B
+	KeepAliveValue       = 0x42 // LED special value 66
+	CmdSetThirdPartyInfo = 0x50 // SET_THIRD_PARTY_CLIENT_INFO per OpenGoPro id_tables
 
 	// Query IDs
 	QueryGetStatus               = 0x13

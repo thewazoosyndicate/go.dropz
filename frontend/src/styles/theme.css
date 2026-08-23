@@ -83,6 +83,13 @@ h1, h2, h3, h4, h5, h6 {
   background: #555;
 }
 
+/* Logo SVGs are white-dominant art drawn for the dark theme;
+   invert them on light so they stay visible */
+:root:not([data-theme="dark"]) img[src$="logo.svg"],
+:root:not([data-theme="dark"]) img[src$="3_dropz.svg"] {
+  filter: invert(1) hue-rotate(180deg);
+}
+
 /* Animations */
 @keyframes pulse {
   0% { opacity: 0.7; }

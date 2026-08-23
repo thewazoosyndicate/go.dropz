@@ -142,10 +142,14 @@ function startGoBinary() {
 
 // Create the main application window
 function createWindow() {
+  // process.resourcesPath points inside node_modules/electron until packaged
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.png')
+    : path.join(__dirname, '..', 'resources', 'icon.png');
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 800,
-    icon: path.join(process.resourcesPath, 'icon.png'),
+    icon: iconPath,
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,

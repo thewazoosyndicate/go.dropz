@@ -24,6 +24,53 @@ jobs:
       - name: Test (race)
         run: go test -race ./...
 
+      # Boots the real binary and makes a gRPC call.
+      # Catches wiring bugs unit tests cannot (a corrupted protobuf
+      # descriptor once panicked at startup with all tests green).
+      # Runners have no Bluetooth; the binary degrades and serves anyway.
+      - name: Smoke test
+        run: |
+          go build -o bin/dropz cmd/dropz/main.go
+          DROPZ_BIN=bin/dropz go test -tags smoke -v ./internal/smoketest
+
+  # The darwin files (cbgo BLE, wifi helper exec) cannot cross-compile
+  # from Linux: cbgo needs macOS CGO. This is the only pre-merge check
+  # that compiles them.
+  test-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (race)
+        run: go test -race ./...
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: cd frontend && npm ci
+
+      - name: Build
+        run: cd frontend && npx vite build
+
   lint:
     runs-on: ubuntu-latest
     steps:

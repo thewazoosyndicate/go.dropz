@@ -38,7 +38,7 @@ func (m *GoProManager) enqueueStatusChecks() {
 func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 	cs, ok := m.db.GetCameraByID(cameraID)
 	if !ok {
-		m.log.Warnf("Status check: camera %s not found", cameraID)
+		m.log.Warn("Status check: camera not found", "camera", cameraID)
 		return
 	}
 	if !cs.Status.IsReachable || cs.Status.IsSyncing || cs.Status.IsPairing {
@@ -52,7 +52,7 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 	var syncQueued bool
 
 	if err := m.ble.ConnectForStatusCheck(bleAddress); err != nil {
-		m.log.Debugf("Status check connect failed for %s: %v", cs.Camera.Name, err)
+		m.log.Debug("Status check connect failed", "camera", cs.Camera.Name, "err", err)
 		return
 	}
 
@@ -64,7 +64,7 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 		ble.StatusSDCardRemainingKB,
 	})
 	if err != nil {
-		m.log.Debugf("Status check query failed for %s: %v", cs.Camera.Name, err)
+		m.log.Debug("Status check query failed", "camera", cs.Camera.Name, "err", err)
 		m.ble.Disconnect(bleAddress)
 		return
 	}
@@ -80,7 +80,7 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 	if needsReconnectToSleep {
 		m.ble.DisconnectQuietly(bleAddress)
 		if err := m.ble.ConnectForStatusCheck(bleAddress); err != nil {
-			m.log.Debugf("Sleep reconnect failed for %s: %v", cs.Camera.Name, err)
+			m.log.Debug("Sleep reconnect failed", "camera", cs.Camera.Name, "err", err)
 			return
 		}
 	}
@@ -148,8 +148,8 @@ func (m *GoProManager) processStatusResults(cs *model.CameraWithState, statuses 
 		}
 	})
 
-	m.log.Debugf("Status check %s: battery=%d%% photos=%d videos=%d sd=%d remaining=%dKB",
-		cs.Camera.Name, newBattery, newPhotos, newVideos, newSDStatus, newRemainingKB)
+	m.log.Debug("Status check result", "camera", cs.Camera.Name,
+		"battery", newBattery, "photos", newPhotos, "videos", newVideos, "sd", newSDStatus, "remaining_kb", newRemainingKB)
 
 	// Detect new media via count increase OR SD card space decrease (>10MB).
 	// Space decrease catches quick-capture footage where counts aren't updated.
@@ -161,8 +161,8 @@ func (m *GoProManager) processStatusResults(cs *model.CameraWithState, statuses 
 		return false
 	}
 
-	m.log.Infof("New media detected on %s (photos: %d→%d, videos: %d→%d), queuing sync",
-		cs.Camera.Name, oldPhotos, newPhotos, oldVideos, newVideos)
+	m.log.Info("New media detected, queuing sync", "camera", cs.Camera.Name,
+		"photos_old", oldPhotos, "photos_new", newPhotos, "videos_old", oldVideos, "videos_new", newVideos)
 
 	m.db.AddSyncQueueEntry(&model.SyncQueueEntry{
 		CameraID:         cs.Camera.ID,

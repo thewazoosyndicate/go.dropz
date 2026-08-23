@@ -3,12 +3,12 @@ package pairing
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/dropz/dropz/internal/ble"
 	"github.com/dropz/dropz/internal/model"
 	"github.com/dropz/dropz/internal/store"
-	"github.com/sirupsen/logrus"
 )
 
 const pairingTimeout = 30 * time.Second
@@ -19,17 +19,17 @@ type BLEOperation func(ctx context.Context, critical bool, op func() error) erro
 type Manager struct {
 	db           *store.Store
 	ble          *ble.Manager
-	log          *logrus.Logger
+	log          *slog.Logger
 	ctx          context.Context
 	bleOperation BLEOperation
 	notifier     func()
 }
 
-func NewManager(ctx context.Context, db *store.Store, ble *ble.Manager, log *logrus.Logger, bleOperation BLEOperation, notifier func()) *Manager {
+func NewManager(ctx context.Context, db *store.Store, ble *ble.Manager, log *slog.Logger, bleOperation BLEOperation, notifier func()) *Manager {
 	return &Manager{
 		db:           db,
 		ble:          ble,
-		log:          log,
+		log:          log.With("component", "pairing"),
 		ctx:          ctx,
 		bleOperation: bleOperation,
 		notifier:     notifier,
@@ -45,7 +45,7 @@ func (pm *Manager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 	bleAddress := cs.Camera.BLEAddress
 	name := cs.Camera.Name
 
-	pm.log.Infof("Starting pairing process for camera %s", name)
+	pm.log.Info("Starting pairing process", "camera", name)
 
 	pm.db.UpdateCameraPairingStatusByID(cameraID, true)
 	pm.notifier()
@@ -56,7 +56,7 @@ func (pm *Manager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 	var verifiedPairingState bool
 
 	bleErr := pm.bleOperation(ctx, true, func() error {
-		pm.log.Infof("Connecting to device %s for pairing", bleAddress)
+		pm.log.Info("Connecting for pairing", "device", bleAddress)
 
 		if err := pm.ble.ConnectForPairing(bleAddress); err != nil {
 			return fmt.Errorf("failed to connect: %w", err)
@@ -69,9 +69,9 @@ func (pm *Manager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 		isPaired := exists && cam.Camera.WiFiSSID != "" && cam.Camera.WiFiPassword != ""
 
 		if isPaired {
-			pm.log.Infof("Pairing verified — WiFi credentials received")
+			pm.log.Info("Pairing verified: WiFi credentials received")
 		} else {
-			pm.log.Warnf("Pairing completed but WiFi credentials not available yet")
+			pm.log.Warn("Pairing completed but WiFi credentials not available yet")
 		}
 
 		// Only record paired when credentials were actually read; a bond
@@ -81,14 +81,14 @@ func (pm *Manager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 		verifiedPairingState = isPaired
 
 		if err := pm.ble.DisconnectQuietly(bleAddress); err != nil {
-			pm.log.Warnf("Failed to disconnect from camera: %v", err)
+			pm.log.Warn("Failed to disconnect from camera", "err", err)
 		}
 
 		return nil
 	})
 
 	if bleErr != nil {
-		pm.log.Errorf("BLE pairing operation failed: %v", bleErr)
+		pm.log.Error("BLE pairing operation failed", "camera", name, "err", bleErr)
 		pm.db.UpdateCameraPairingStatusByID(cameraID, false)
 		pm.db.SetCameraPairedByID(cameraID, false)
 		pm.notifier()
@@ -105,6 +105,6 @@ func (pm *Manager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 		}
 	}
 
-	pm.log.Infof("Camera %s pairing completed. isPaired=%v", name, verifiedPairingState)
+	pm.log.Info("Pairing completed", "camera", name, "paired", verifiedPairingState)
 	return managedCamera, nil
 }

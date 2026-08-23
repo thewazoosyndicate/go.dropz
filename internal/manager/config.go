@@ -2,10 +2,9 @@ package manager
 
 import (
 	"fmt"
-	"strings"
 
+	"github.com/dropz/dropz/internal/logging"
 	"github.com/dropz/dropz/internal/model"
-	"github.com/sirupsen/logrus"
 )
 
 // GetConfig returns the current configuration
@@ -85,7 +84,7 @@ func stringSetting(field func(*model.Config) *string, validate func(string) erro
 }
 
 func validateLogLevel(v string) error {
-	if _, err := logrus.ParseLevel(strings.ToLower(v)); err != nil {
+	if !logging.ValidLevel(v) {
 		return fmt.Errorf("invalid log_level: expected one of trace, debug, info, warn, error, fatal")
 	}
 	return nil
@@ -109,8 +108,11 @@ var settings = map[string]setting{
 
 // applyLogLevel applies the configured log level to the live logger.
 func (m *GoProManager) applyLogLevel(level string) {
-	if parsed, err := logrus.ParseLevel(level); err == nil {
-		m.log.SetLevel(parsed)
+	if m.logLevel == nil {
+		return
+	}
+	if parsed, err := logging.ParseLevel(level); err == nil {
+		m.logLevel.Set(parsed)
 	}
 }
 

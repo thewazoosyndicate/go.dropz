@@ -2,26 +2,27 @@ package discovery
 
 import (
 	"context"
+	"log/slog"
 	"sync/atomic"
 	"time"
 
 	"github.com/dropz/dropz/internal/ble"
-	"github.com/sirupsen/logrus"
+	"github.com/dropz/dropz/internal/logging"
 )
 
 // Scanner handles background scanning operations
 type Scanner struct {
 	ble               *ble.Manager
-	log               *logrus.Logger
+	log               *slog.Logger
 	scanInterval      time.Duration
 	processDeviceFunc func(ble.Device) // callback for processing individual devices
 }
 
 // NewScanner creates a new scanner
-func NewScanner(ble *ble.Manager, log *logrus.Logger, scanInterval time.Duration) *Scanner {
+func NewScanner(ble *ble.Manager, log *slog.Logger, scanInterval time.Duration) *Scanner {
 	return &Scanner{
 		ble:          ble,
-		log:          log,
+		log:          log.With("component", "scanner"),
 		scanInterval: scanInterval,
 	}
 }
@@ -98,7 +99,7 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 	scanInProgress.Store(true)
 	defer scanInProgress.Store(false)
 
-	s.log.Tracef("Starting continuous BLE scanning process with live device callbacks")
+	logging.Trace(s.log, "Starting continuous BLE scanning process")
 
 	// Loop until context is canceled or other conditions stop the scan
 	for {
@@ -114,7 +115,7 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 		// This ensures we keep getting RSSI updates without frequent restarts
 		scanCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 
-		s.log.Trace("Starting BLE scan cycle with live device processing...")
+		logging.Trace(s.log, "Starting BLE scan cycle")
 
 		err := s.ble.StartScanningWithCallback(scanCtx, func(device ble.Device) {
 			if s.processDeviceFunc != nil {
@@ -124,7 +125,7 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 
 		if err != nil {
 			cancel() // Always cancel the context
-			s.log.Errorf("Failed to start BLE scan: %v", err)
+			s.log.Error("Failed to start BLE scan", "err", err)
 
 			// Only short pause before retrying
 			select {
@@ -136,7 +137,7 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 			continue
 		}
 
-		s.log.Tracef("BLE scan started with live processing, waiting for scan to complete...")
+		logging.Trace(s.log, "BLE scan started, waiting for completion")
 
 		scanDone := s.ble.ScanDone()
 
@@ -144,7 +145,7 @@ func (s *Scanner) startContinuousScan(ctx context.Context, scanInProgress *atomi
 		select {
 		case <-scanCtx.Done():
 			if scanCtx.Err() != context.Canceled {
-				s.log.Tracef("Scan cycle completed (5 minute timeout)")
+				logging.Trace(s.log, "Scan cycle completed (5 minute timeout)")
 			}
 		case <-ctx.Done():
 			cancel()

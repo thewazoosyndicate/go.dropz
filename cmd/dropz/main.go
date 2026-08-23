@@ -3,15 +3,14 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 
+	"github.com/dropz/dropz/internal/logging"
 	"github.com/dropz/dropz/internal/manager"
 	"github.com/dropz/dropz/internal/server"
-	"github.com/sirupsen/logrus"
 )
 
 // getDefaultPath expands home directory and returns the full path
@@ -26,7 +25,8 @@ var (
 	dataDir     = flag.String("data-dir", getDefaultPath(".dropz/data"), "Directory for storing data")
 	videoDir    = flag.String("video-dir", getDefaultPath("Videos"), "Directory for storing downloaded videos")
 	logDir      = flag.String("log-dir", getDefaultPath(".dropz/logs"), "Directory for storing logs")
-	logLevel    = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+	logLevel    = flag.String("log-level", "info", "Log level (trace, debug, info, warn, error)")
+	logFormat   = flag.String("log-format", "text", "Log format (text, json); json is meant for the Electron host")
 	serverAddr  = flag.String("server-addr", "127.0.0.1:50051", "gRPC server address")
 	showVersion = flag.Bool("version", false, "Show version and exit")
 	pairMode    = flag.Bool("pair-mode", true, "Enable automatic pairing mode")
@@ -39,59 +39,6 @@ var (
 	appVersion = "dev"
 	buildTime  = "unknown"
 )
-
-type logFormatter struct{}
-
-func (f *logFormatter) Format(entry *logrus.Entry) ([]byte, error) {
-	var levelPrefix string
-	switch entry.Level {
-	case logrus.TraceLevel:
-		levelPrefix = "[TRACE] "
-	case logrus.DebugLevel:
-		levelPrefix = "[DEBUG] "
-	case logrus.InfoLevel:
-		levelPrefix = "[INFO] "
-	case logrus.WarnLevel:
-		levelPrefix = "[WARN] "
-	case logrus.ErrorLevel:
-		levelPrefix = "[ERROR] "
-	case logrus.FatalLevel:
-		levelPrefix = "[FATAL] "
-	case logrus.PanicLevel:
-		levelPrefix = "[PANIC] "
-	}
-
-	timestamp := entry.Time.Format("2006/01/02 15:04:05")
-	fields := ""
-	for k, v := range entry.Data {
-		fields += " " + k + "=" + fmt.Sprintf("%v", v)
-	}
-	return []byte(timestamp + " " + levelPrefix + entry.Message + fields + "\n"), nil
-}
-
-func initLogger(level, filePath string) (*logrus.Logger, error) {
-	log := logrus.New()
-	log.SetFormatter(&logFormatter{})
-
-	logLevel, err := logrus.ParseLevel(level)
-	if err != nil {
-		return nil, err
-	}
-	log.SetLevel(logLevel)
-
-	if filePath != "" {
-		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-			return nil, err
-		}
-		file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			return nil, err
-		}
-		log.SetOutput(io.MultiWriter(os.Stderr, file))
-	}
-
-	return log, nil
-}
 
 func main() {
 	flag.Parse()
@@ -111,18 +58,23 @@ func main() {
 
 	// Initialize logger
 	logFile := filepath.Join(*logDir, "dropz.log")
-	log, err := initLogger(*logLevel, logFile)
+	log, levelVar, err := logging.New(logging.Options{
+		Level:    *logLevel,
+		Format:   *logFormat,
+		FilePath: logFile,
+	})
 	if err != nil {
 		fmt.Printf("Failed to initialize logger: %v\n", err)
 		os.Exit(1)
 	}
-	log.Infof("Starting dropz version %s", appVersion)
+	log.Info("Starting dropz", "version", appVersion)
 
 	// Initialize GoPro manager
 	dbPath := filepath.Join(*dataDir, "dropz.db")
-	goProManager, err := manager.NewGoProManager(dbPath, *videoDir, log)
+	goProManager, err := manager.NewGoProManager(dbPath, *videoDir, log, levelVar)
 	if err != nil {
-		log.Fatalf("Failed to initialize GoPro manager: %v", err)
+		log.Error("Failed to initialize GoPro manager", "err", err)
+		os.Exit(1)
 	}
 
 	// Reset transient camera states (is_syncing, is_pairing) on startup
@@ -155,41 +107,37 @@ func main() {
 	// Only update config if at least one setting was explicitly changed
 	if configChanged {
 		if err := goProManager.UpdateConfig(config); err != nil {
-			log.Warnf("Failed to apply config settings from command line: %v", err)
+			log.Warn("Failed to apply config settings from command line", "err", err)
 		}
 	}
 
 	// Apply persisted log level (CLI flag takes priority if explicitly set)
-	if level, err := logrus.ParseLevel(config.LogLevel); err == nil {
-		log.SetLevel(level)
+	if level, err := logging.ParseLevel(config.LogLevel); err == nil {
+		levelVar.Set(level)
 	}
 
 	// Start GoPro manager
 	if err := goProManager.Start(); err != nil {
-		log.Fatalf("Failed to start GoPro manager: %v", err)
+		log.Error("Failed to start GoPro manager", "err", err)
+		os.Exit(1)
 	}
 
 	// Initialize and start gRPC server
 	dropzServer := server.NewDropzServer(goProManager, log)
 	if err := dropzServer.Start(*serverAddr); err != nil {
-		log.Fatalf("Failed to start gRPC server: %v", err)
+		log.Error("Failed to start gRPC server", "err", err)
+		os.Exit(1)
 	}
 
-	log.Infof("dropz is running. Press Ctrl+C to exit.")
+	log.Info("dropz is running. Press Ctrl+C to exit.")
 
 	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	receivedSignal := <-sigChan
-	log.Infof("Received signal: %s. Shutting down...", receivedSignal)
+	log.Info("Shutting down on signal", "signal", receivedSignal.String())
 
-	log.Info("Attempting to stop Dropz server...")
 	dropzServer.Stop()
-	log.Info("Dropz server stop requested.")
-
-	log.Info("Attempting to stop GoPro manager...")
 	goProManager.Stop()
-	log.Info("GoPro manager stop requested.")
-
-	log.Info("dropz has been shut down.")
+	log.Info("dropz has been shut down")
 }

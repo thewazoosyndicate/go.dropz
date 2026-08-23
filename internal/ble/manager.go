@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/dropz/dropz/internal/ble/tlv"
-	"github.com/sirupsen/logrus"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -40,7 +40,7 @@ type Manager struct {
 	discoveredDevices map[string]*Device // discovered devices during scanning
 	conns             map[string]*conn   // active connections by MAC address
 	mutex             sync.RWMutex
-	log               *logrus.Logger
+	log               *slog.Logger
 	isScanning        bool
 	scanDone          chan struct{}                                        // closed when StopScanning() is called
 	connectingDone    chan struct{}                                        // closed when connect finishes, so scanner waits
@@ -69,12 +69,12 @@ func parseTLVPairs(data []byte) map[byte][]byte {
 }
 
 // NewManager creates a new BLE manager
-func NewManager(adapter *bluetooth.Adapter, log *logrus.Logger) *Manager {
+func NewManager(adapter *bluetooth.Adapter, log *slog.Logger) *Manager {
 	return &Manager{
 		adapter:           adapter,
 		discoveredDevices: make(map[string]*Device),
 		conns:             make(map[string]*conn),
-		log:               log,
+		log:               log.With("component", "ble"),
 	}
 }
 
@@ -144,7 +144,7 @@ func (m *Manager) StartScanningWithCallback(ctx context.Context, callback Device
 			})
 			if scanErr != nil {
 				// Backoff so a dead adapter doesn't turn this into a spin loop
-				m.log.Warnf("BLE scan failed: %v", scanErr)
+				m.log.Warn("BLE scan failed", "err", scanErr)
 				time.Sleep(scanRetryBackoff)
 			}
 			// loop to restart scanning if still enabled
@@ -210,7 +210,7 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 	}
 
 	if m.getConn(macAddress) != nil {
-		m.log.Debugf("Device %s already connected", macAddress)
+		m.log.Debug("Device already connected", "device", macAddress)
 		return nil, time.Time{}, errAlreadyConnected
 	}
 
@@ -232,7 +232,7 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 		return nil, time.Time{}, parseErr
 	}
 
-	m.log.Debugf("Connecting to GoPro device: %s", macAddress)
+	m.log.Debug("Connecting to GoPro device", "device", macAddress)
 
 	// Retry loop: full disconnect+reconnect between attempts (BlueZ won't
 	// recover a stale GATT handle, so re-calling DiscoverServices is useless).
@@ -242,7 +242,7 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 
 	for retry := 0; retry < ServiceDiscoveryRetries; retry++ {
 		if retry > 0 {
-			m.log.Debugf("Retry %d/%d: disconnecting and reconnecting...", retry+1, ServiceDiscoveryRetries)
+			m.log.Debug("Reconnecting for service discovery retry", "attempt", retry+1, "max", ServiceDiscoveryRetries)
 			if connected {
 				device.Disconnect()
 				connected = false
@@ -254,11 +254,11 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 		var connErr error
 		device, connErr = m.adapter.Connect(addr, bluetooth.ConnectionParams{})
 		if connErr != nil {
-			m.log.Warnf("Connection attempt %d failed: %v", retry+1, connErr)
+			m.log.Warn("Connection attempt failed", "attempt", retry+1, "err", connErr)
 			continue
 		}
 		connected = true
-		m.log.Debugf("BLE connected (attempt %d), elapsed=%v", retry+1, time.Since(connectStart))
+		m.log.Debug("BLE connected", "attempt", retry+1, "elapsed", time.Since(connectStart))
 
 		c := m.newConn(macAddress, &device)
 		m.mutex.Lock()
@@ -267,7 +267,7 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 
 		if preDiscoveryHook != nil {
 			if hookErr := preDiscoveryHook(macAddress); hookErr != nil {
-				m.log.Warnf("Pre-discovery hook failed: %v", hookErr)
+				m.log.Warn("Pre-discovery hook failed", "err", hookErr)
 			}
 		}
 
@@ -275,12 +275,12 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 
 		var discoverErr error
 		services, discoverErr = device.DiscoverServices(nil)
-		m.log.Debugf("Service discovery result: %d services, err=%v, elapsed=%v", len(services), discoverErr, time.Since(connectStart))
+		m.log.Debug("Service discovery result", "services", len(services), "err", discoverErr, "elapsed", time.Since(connectStart))
 
 		if discoverErr == nil && len(services) > 0 {
 			break
 		}
-		m.log.Warnf("Service discovery attempt %d failed: %v", retry+1, discoverErr)
+		m.log.Warn("Service discovery attempt failed", "attempt", retry+1, "err", discoverErr)
 	}
 
 	if len(services) == 0 {
@@ -299,7 +299,7 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 func (m *Manager) discoverCharacteristics(macAddress string, services []bluetooth.DeviceService, serviceFilter map[string]bool, cacheChars map[string]bool, notifyChars map[string]bool, connectStart time.Time) {
 	c := m.getConn(macAddress)
 	if c == nil {
-		m.log.Warnf("Characteristic discovery skipped: %s not connected", macAddress)
+		m.log.Warn("Characteristic discovery skipped: not connected", "device", macAddress)
 		return
 	}
 
@@ -311,7 +311,7 @@ func (m *Manager) discoverCharacteristics(macAddress string, services []bluetoot
 
 		chars, charErr := service.DiscoverCharacteristics(nil)
 		if charErr != nil {
-			m.log.Warnf("Failed to discover characteristics for service %s: %v", serviceUUID, charErr)
+			m.log.Warn("Failed to discover characteristics", "service", serviceUUID, "err", charErr)
 			continue
 		}
 
@@ -326,7 +326,7 @@ func (m *Manager) discoverCharacteristics(macAddress string, services []bluetoot
 					m.handleNotification(macAddress, data)
 				})
 				if notifErr != nil {
-					m.log.Warnf("Failed to enable notifications for %s: %v", GetCharacteristicName(charUUID), notifErr)
+					m.log.Warn("Failed to enable notifications", "char", GetCharacteristicName(charUUID), "err", notifErr)
 				}
 			}
 		}
@@ -334,7 +334,7 @@ func (m *Manager) discoverCharacteristics(macAddress string, services []bluetoot
 	}
 
 	m.signalConnectingDone()
-	m.log.Debugf("Characteristic discovery complete, elapsed=%v", time.Since(connectStart))
+	m.log.Debug("Characteristic discovery complete", "elapsed", time.Since(connectStart))
 }
 
 // dropConn removes connection state for a device and stops its collector.
@@ -400,14 +400,14 @@ func (m *Manager) connectBase(macAddress string) (hwInfo *HardwareInfo, err erro
 		time.Sleep(time.Second)
 	}
 
-	m.log.Debugf("Camera ready, elapsed=%v", time.Since(connectStart))
+	m.log.Debug("Camera ready", "elapsed", time.Since(connectStart))
 
 	if tpErr := m.SetThirdPartyClient(macAddress); tpErr != nil {
-		m.log.Warnf("Failed to set third party client flag: %v", tpErr)
+		m.log.Warn("Failed to set third party client flag", "err", tpErr)
 	}
 
 	if dtErr := m.SetLocalDateTime(macAddress, time.Now()); dtErr != nil {
-		m.log.Warnf("Failed to set camera date/time: %v", dtErr)
+		m.log.Warn("Failed to set camera date/time", "err", dtErr)
 	}
 
 	return hwInfo, nil
@@ -441,7 +441,7 @@ func (m *Manager) finishConnection(macAddress string, hwInfo *HardwareInfo, ssid
 
 	battery, err := m.GetBatteryLevel(macAddress)
 	if err != nil {
-		m.log.Warnf("Failed to read battery level: %v", err)
+		m.log.Warn("Failed to read battery level", "err", err)
 	} else {
 		metadata.BatteryLevel = battery
 	}
@@ -519,7 +519,7 @@ func (m *Manager) Connect(macAddress string) (err error) {
 	}
 
 	if regErr := m.RegisterStatusUpdates(macAddress, []byte{StatusBatteryPercentage}); regErr != nil {
-		m.log.Warnf("Failed to register status push notifications: %v", regErr)
+		m.log.Warn("Failed to register status push notifications", "err", regErr)
 	}
 
 	ssid, password, credErr := m.GetWifiCredentials(macAddress)
@@ -538,7 +538,7 @@ func (m *Manager) ConnectForPairing(macAddress string) (err error) {
 	// D-Bus bonding runs between connect and service discovery on each attempt
 	services, connectStart, connErr := m.connectAndDiscover(macAddress, func(addr string) error {
 		if pairErr := m.pairViaDbus(addr); pairErr != nil {
-			m.log.Warnf("D-Bus pairing failed: %v", pairErr)
+			m.log.Warn("D-Bus pairing failed", "err", pairErr)
 		}
 		return nil
 	})
@@ -567,14 +567,14 @@ func (m *Manager) ConnectForPairing(macAddress string) (err error) {
 	// Fire-and-forget — camera never responds to 0x03
 	go func() {
 		if err := m.SendPairingFinish(macAddress); err != nil {
-			m.log.Debugf("SendPairingFinish (best-effort): %v", err)
+			m.log.Debug("SendPairingFinish (best-effort)", "err", err)
 		}
 	}()
 
 	// Read WiFi credentials (now accessible after D-Bus bonding)
 	ssid, password, credErr := m.GetWifiCredentials(macAddress)
 	if credErr != nil {
-		m.log.Warnf("Failed to read WiFi credentials during pairing: %v", credErr)
+		m.log.Warn("Failed to read WiFi credentials during pairing", "err", credErr)
 	}
 
 	if ssid != "" && password != "" {
@@ -597,7 +597,7 @@ func (m *Manager) ConnectForPairing(macAddress string) (err error) {
 		}
 	}
 
-	m.log.Debugf("Pairing connection ready, elapsed=%v", time.Since(connectStart))
+	m.log.Debug("Pairing connection ready", "elapsed", time.Since(connectStart))
 	return nil
 }
 
@@ -608,9 +608,9 @@ func (m *Manager) Disconnect(macAddress string) error {
 	}
 
 	if err := m.Sleep(macAddress); err != nil {
-		m.log.Debugf("Sleep failed for %s: %v", macAddress, err)
+		m.log.Debug("Sleep failed", "device", macAddress, "err", err)
 	} else {
-		m.log.Debugf("Sleep command succeeded for %s", macAddress)
+		m.log.Debug("Sleep command succeeded", "device", macAddress)
 	}
 
 	if c := m.dropConn(macAddress); c != nil {
@@ -713,7 +713,7 @@ func (m *Manager) addDiscoveredDevice(result bluetooth.ScanResult) {
 			LastSeen:   now,
 		}
 		m.discoveredDevices[macAddress] = device
-		m.log.Infof("Discovered new GoPro device: %s (%s) RSSI:%d", device.Name, device.BLEAddress, device.RSSI)
+		m.log.Info("Discovered new GoPro device", "name", device.Name, "device", device.BLEAddress, "rssi", device.RSSI)
 		deviceCopy = *device
 	}
 	callback := m.discoveryCallback
@@ -758,7 +758,7 @@ func (m *Manager) sendMessage(macAddress string, charUUID string, id byte, data 
 			Data:   message.Payload,
 		}, nil
 	case <-time.After(responseTimeout):
-		m.log.Warnf("0x%02X timed out after %v", id, responseTimeout)
+		m.log.Warn("Command timed out", "id", fmt.Sprintf("0x%02X", id), "timeout", responseTimeout)
 		return Response{}, fmt.Errorf("timeout waiting for response to 0x%02X", id)
 	}
 }
@@ -779,10 +779,10 @@ func (m *Manager) handleNotification(macAddress string, data []byte) {
 
 	message, err := c.collector.ProcessFragment(data)
 	if err != nil {
-		m.log.Debugf("Error processing TLV fragment (raw %x): %v", data, err)
+		m.log.Debug("Error processing TLV fragment", "raw", fmt.Sprintf("%x", data), "err", err)
 	} else if message != nil {
 		if !c.tracker.RouteResponse(macAddress, message) {
-			m.log.Debugf("Unrouted notification: cmd=0x%02x status=%d len=%d", message.CommandID, message.Status, len(message.Payload))
+			m.log.Debug("Unrouted notification", "cmd", fmt.Sprintf("0x%02x", message.CommandID), "status", message.Status, "len", len(message.Payload))
 		}
 	}
 }
@@ -869,7 +869,7 @@ func (m *Manager) Stop() error {
 
 	for _, macAddress := range addresses {
 		if err := m.Disconnect(macAddress); err != nil {
-			m.log.Warnf("Failed to disconnect from %s: %v", macAddress, err)
+			m.log.Warn("Failed to disconnect", "device", macAddress, "err", err)
 		}
 	}
 

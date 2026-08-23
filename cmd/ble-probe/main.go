@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/dropz/dropz/internal/ble"
-	"github.com/sirupsen/logrus"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -17,7 +18,7 @@ func main() {
 	fmt.Println("This test uses the production BLE Manager to demonstrate proper GoPro connectivity")
 	fmt.Println()
 
-	log := logrus.New()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	fmt.Println("✓ Logger initialized")
 
 	// Enable BLE interface
@@ -72,7 +73,8 @@ func main() {
 	mu.Lock()
 	if foundDevice == nil {
 		mu.Unlock()
-		log.Fatal("No GoPro devices found within 10 seconds")
+		log.Error("No GoPro devices found within 10 seconds")
+		os.Exit(1)
 	}
 	mu.Unlock()
 
@@ -196,6 +198,6 @@ func main() {
 
 func must(action string, err error) {
 	if err != nil {
-		log.Fatalf("Failed to %s: %v\n", action, err)
+		log.Fatalf("Failed to %s: %v", action, err)
 	}
 }

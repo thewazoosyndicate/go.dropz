@@ -2,10 +2,11 @@ package ble
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"github.com/dropz/dropz/internal/logging"
 )
 
 // WiFiAPMode represents the WiFi Access Point control modes
@@ -29,7 +30,7 @@ type HardwareInfo struct {
 
 // SetAPControl controls the WiFi Access Point using the proper OpenGoPro command
 func (m *Manager) SetAPControl(macAddress string, mode WiFiAPMode) error {
-	m.log.Debugf("Setting WiFi AP control: mode=%d device=%s", mode, macAddress)
+	m.log.Debug("Setting WiFi AP control", "mode", mode, "device", macAddress)
 
 	// Validate mode
 	if mode > WiFiAPModeBounce {
@@ -44,7 +45,7 @@ func (m *Manager) SetAPControl(macAddress string, mode WiFiAPMode) error {
 
 	// Check response status (0x00 = success)
 	if response.Status != 0x00 {
-		m.log.Errorf("WiFi AP control command failed with status: 0x%02X", response.Status)
+		m.log.Error("WiFi AP control command failed", "status", fmt.Sprintf("0x%02X", response.Status))
 		return fmt.Errorf("WiFi AP control failed: status=0x%02X", response.Status)
 	}
 
@@ -72,7 +73,7 @@ func (m *Manager) GetHardwareInfo(macAddress string) (*HardwareInfo, error) {
 }
 
 // parseHardwareInfo parses the hardware info response using OpenGoPro's sequential length-prefixed format
-func parseHardwareInfo(data []byte, log *logrus.Logger) (*HardwareInfo, error) {
+func parseHardwareInfo(data []byte, log *slog.Logger) (*HardwareInfo, error) {
 	if len(data) < 2 {
 		return nil, fmt.Errorf("hardware info response too short: %d bytes", len(data))
 	}
@@ -100,7 +101,7 @@ func parseHardwareInfo(data []byte, log *logrus.Logger) (*HardwareInfo, error) {
 
 	// 1. Model Number (4 bytes big-endian)
 	if modelData, err := readField("model_number"); err != nil {
-		log.Warnf("Failed to read model number: %v", err)
+		log.Warn("Failed to read model number", "err", err)
 	} else if len(modelData) == 4 {
 		info.ModelNumber = int(modelData[0])<<24 | int(modelData[1])<<16 |
 			int(modelData[2])<<8 | int(modelData[3])
@@ -108,40 +109,40 @@ func parseHardwareInfo(data []byte, log *logrus.Logger) (*HardwareInfo, error) {
 
 	// 2. Model Name
 	if modelName, err := readField("model_name"); err != nil {
-		log.Warnf("Failed to read model name: %v", err)
+		log.Warn("Failed to read model name", "err", err)
 	} else {
 		info.ModelName = strings.TrimRight(string(modelName), "\x00")
 	}
 
 	// 3. Board Type/Deprecated field - skip it
 	if _, err := readField("board_type/deprecated"); err != nil {
-		log.Tracef("Failed to skip board type/deprecated field: %v", err)
+		logging.Trace(log, "Failed to skip board type/deprecated field", "err", err)
 	}
 
 	// 4. Firmware Version
 	if firmware, err := readField("firmware_version"); err != nil {
-		log.Warnf("Failed to read firmware version: %v", err)
+		log.Warn("Failed to read firmware version", "err", err)
 	} else {
 		info.FirmwareVersion = strings.TrimRight(string(firmware), "\x00")
 	}
 
 	// 5. Serial Number
 	if serial, err := readField("serial_number"); err != nil {
-		log.Warnf("Failed to read serial number: %v", err)
+		log.Warn("Failed to read serial number", "err", err)
 	} else {
 		info.SerialNumber = strings.TrimRight(string(serial), "\x00")
 	}
 
 	// 6. AP SSID
 	if ssid, err := readField("ap_ssid"); err != nil {
-		log.Warnf("Failed to read AP SSID: %v", err)
+		log.Warn("Failed to read AP SSID", "err", err)
 	} else {
 		info.APSSID = strings.TrimRight(string(ssid), "\x00")
 	}
 
 	// 7. AP MAC Address
 	if mac, err := readField("ap_mac"); err != nil {
-		log.Warnf("Failed to read AP MAC: %v", err)
+		log.Warn("Failed to read AP MAC", "err", err)
 	} else if len(mac) == 6 {
 		info.MACAddress = fmt.Sprintf("%02X:%02X:%02X:%02X:%02X:%02X",
 			mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
@@ -220,6 +221,6 @@ func (m *Manager) SetLocalDateTime(macAddress string, t time.Time) error {
 		return fmt.Errorf("set date/time failed: status=0x%02X", response.Status)
 	}
 
-	m.log.Infof("Camera date/time set to %s", t.Format(time.RFC3339))
+	m.log.Info("Camera date/time set", "time", t.Format(time.RFC3339))
 	return nil
 }

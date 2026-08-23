@@ -33,7 +33,7 @@ func detectWiFiInterface() (string, error) {
 
 // Connect connects to a GoPro WiFi network using macOS networksetup
 func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error {
-	m.log.Debugf("Connecting to WiFi network: ssid=%s", ssid)
+	m.log.Debug("Connecting to WiFi network", "ssid", ssid)
 
 	iface, err := detectWiFiInterface()
 	if err != nil {
@@ -46,15 +46,15 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 		cmd := exec.CommandContext(ctx, "networksetup", "-setairportnetwork", iface, ssid, password)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			lastErr = fmt.Errorf("%v (%s)", err, strings.TrimSpace(string(output)))
-			m.log.Debugf("WiFi connection attempt %d/10 failed: %v", attempt, lastErr)
+			m.log.Debug("WiFi connection attempt failed", "attempt", attempt, "max", 10, "err", lastErr)
 		} else {
 			out := strings.TrimSpace(string(output))
 			// networksetup may print an error message even with exit code 0
 			if out != "" && !strings.Contains(strings.ToLower(out), "error") {
-				m.log.Debugf("WiFi connection command succeeded: %s", out)
+				m.log.Debug("WiFi connection command succeeded", "output", out)
 			} else if strings.Contains(strings.ToLower(out), "error") {
 				lastErr = fmt.Errorf("networksetup: %s", out)
-				m.log.Debugf("WiFi connection attempt %d/10 failed: %v", attempt, lastErr)
+				m.log.Debug("WiFi connection attempt failed", "attempt", attempt, "max", 10, "err", lastErr)
 				time.Sleep(2 * time.Second)
 				continue
 			}
@@ -114,7 +114,7 @@ func (m *WiFiManager) Disconnect() error {
 	// Remove from preferred networks to disassociate
 	cmd = exec.Command("networksetup", "-removepreferredwirelessnetwork", iface, ssid)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		m.log.Warnf("Failed to remove preferred network %s: %v (%s)", ssid, err, strings.TrimSpace(string(output)))
+		m.log.Warn("Failed to remove preferred network", "ssid", ssid, "err", err, "output", strings.TrimSpace(string(output)))
 	}
 
 	return nil
@@ -124,14 +124,14 @@ func (m *WiFiManager) Disconnect() error {
 func (m *WiFiManager) isConnectedTo(ssid string) bool {
 	iface, err := detectWiFiInterface()
 	if err != nil {
-		m.log.Errorf("Failed to detect Wi-Fi interface: %v", err)
+		m.log.Error("Failed to detect Wi-Fi interface", "err", err)
 		return false
 	}
 
 	cmd := exec.Command("networksetup", "-getairportnetwork", iface)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		m.log.Errorf("Failed to check WiFi connection: error=%v output=%s", err, string(output))
+		m.log.Error("Failed to check WiFi connection", "err", err, "output", string(output))
 		return false
 	}
 

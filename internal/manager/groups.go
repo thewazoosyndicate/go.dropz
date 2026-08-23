@@ -26,7 +26,7 @@ func (m *GoProManager) CreateGroup(name string, cameraIDs []string) (*model.Grou
 		return nil, fmt.Errorf("failed to create group: %w", err)
 	}
 
-	m.log.Infof("Created group %s with %d cameras", name, len(cameraIDs))
+	m.log.Info("Created group", "group", name, "cameras", len(cameraIDs))
 	return group, nil
 }
 
@@ -49,7 +49,7 @@ func (m *GoProManager) UpdateGroup(groupID, name string, cameraIDs []string) (*m
 		return nil, fmt.Errorf("failed to update group: %w", err)
 	}
 
-	m.log.Infof("Updated group %s with %d cameras", name, len(cameraIDs))
+	m.log.Info("Updated group", "group", name, "cameras", len(cameraIDs))
 	return group, nil
 }
 
@@ -64,7 +64,7 @@ func (m *GoProManager) DeleteGroup(groupID string) error {
 		return fmt.Errorf("failed to delete group: %w", err)
 	}
 
-	m.log.Infof("Deleted group %s", group.Name)
+	m.log.Info("Deleted group", "group", group.Name)
 	return nil
 }
 
@@ -91,7 +91,7 @@ func (m *GoProManager) LoadGroup(groupID string) error {
 		}
 	}
 
-	m.log.Infof("Loaded group %s (%d cameras)", group.Name, len(group.CameraIDs))
+	m.log.Info("Loaded group", "group", group.Name, "cameras", len(group.CameraIDs))
 	m.notify()
 	return nil
 }

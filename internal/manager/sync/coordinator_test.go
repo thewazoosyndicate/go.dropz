@@ -2,13 +2,14 @@ package sync
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/dropz/dropz/internal/model"
 	"github.com/dropz/dropz/internal/store"
-	"github.com/sirupsen/logrus"
 )
 
 func newTestCoordinator(t *testing.T) (*Coordinator, *store.Store) {
@@ -17,8 +18,7 @@ func newTestCoordinator(t *testing.T) (*Coordinator, *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	log := logrus.New()
-	log.SetLevel(logrus.PanicLevel)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	c := NewCoordinator(context.Background(), st, nil, log, func() {}, nil)
 	return c, st
 }

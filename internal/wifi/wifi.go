@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -12,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"github.com/dropz/dropz/internal/logging"
 )
 
 // Shared HTTP client for downloads — transport-level timeouts only,
@@ -40,13 +41,13 @@ const (
 
 // WiFiManager handles WiFi operations for GoPro devices
 type WiFiManager struct {
-	log *logrus.Logger
+	log *slog.Logger
 }
 
 // NewWiFiManager creates a new WiFi manager
-func NewWiFiManager(log *logrus.Logger) *WiFiManager {
+func NewWiFiManager(log *slog.Logger) *WiFiManager {
 	return &WiFiManager{
-		log: log,
+		log: log.With("component", "wifi"),
 	}
 }
 
@@ -73,7 +74,7 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	cutoffTime := time.Now().AddDate(0, 0, -daysInPast)
 	filteredMedia := filterMediaByDate(mediaFiles, cutoffTime)
 
-	m.log.Infof("Found %d media files (%d within last %d days)", len(mediaFiles), len(filteredMedia), daysInPast)
+	m.log.Info("Media list fetched", "total", len(mediaFiles), "in_window", len(filteredMedia), "days", daysInPast)
 
 	var downloadedFiles []string
 	skippedCount := 0
@@ -95,7 +96,7 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 
 		dlErr := m.downloadFileWithResume(ctx, media.URL, outputPath, media.CreatedAt, media.Size)
 		if dlErr != nil {
-			m.log.Errorf("Failed to download %s: %v", media.Name, dlErr)
+			m.log.Error("Failed to download media file", "file", media.Name, "err", dlErr)
 			continue
 		}
 
@@ -103,7 +104,7 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	}
 
 	actualDownloads := len(downloadedFiles) - skippedCount
-	m.log.Infof("Download complete: %d downloaded, %d skipped", actualDownloads, skippedCount)
+	m.log.Info("Download complete", "downloaded", actualDownloads, "skipped", skippedCount)
 	return downloadedFiles, nil
 }
 
@@ -212,7 +213,7 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 			// Parse the creation time
 			createdInt, err := file.CreatedAt.Int64()
 			if err != nil {
-				m.log.Errorf("Failed to parse createdAt value %q: %v", file.CreatedAt, err)
+				m.log.Error("Failed to parse createdAt value", "value", file.CreatedAt, "err", err)
 				continue
 			}
 			createdAtTime := time.Unix(createdInt, 0)
@@ -220,7 +221,7 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 			// Parse the file size
 			sizeInt, err := file.Size.Int64()
 			if err != nil {
-				m.log.Errorf("Failed to parse size value %q: %v", file.Size, err)
+				m.log.Error("Failed to parse size value", "value", file.Size, "err", err)
 				continue
 			}
 
@@ -236,7 +237,7 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 		}
 	}
 
-	m.log.Debugf("Media list: %d files", len(result))
+	m.log.Debug("Media list parsed", "files", len(result))
 	return result, nil
 }
 
@@ -248,7 +249,7 @@ func (m *WiFiManager) downloadFileWithResume(ctx context.Context, url, outputPat
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			m.log.Tracef("Retrying download (attempt %d/%d) for %s", attempt+1, maxRetries, outputPath)
+			logging.Trace(m.log, "Retrying download", "attempt", attempt+1, "max", maxRetries, "file", outputPath)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -263,7 +264,7 @@ func (m *WiFiManager) downloadFileWithResume(ctx context.Context, url, outputPat
 		}
 
 		lastErr = err
-		m.log.Warnf("Download failed for %s: %v", outputPath, err)
+		m.log.Warn("Download attempt failed", "file", outputPath, "err", err)
 	}
 
 	return fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
@@ -278,7 +279,7 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 	fileInfo, err := os.Stat(tempFilePath)
 	if err == nil {
 		startOffset = fileInfo.Size()
-		m.log.Tracef("Resuming download of %s from offset %d", outputPath, startOffset)
+		logging.Trace(m.log, "Resuming download", "file", outputPath, "offset", startOffset)
 	}
 
 	// Create/open the file for appending
@@ -296,7 +297,7 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 
 	// If file is already complete, just rename it
 	if startOffset == totalSize {
-		m.log.Tracef("File %s is already complete", outputPath)
+		logging.Trace(m.log, "File already complete", "file", outputPath)
 		return os.Rename(tempFilePath, outputPath)
 	}
 
@@ -354,7 +355,7 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 	{
 		fi, err := os.Stat(outputPath)
 		if err != nil {
-			m.log.Warnf("Failed to stat downloaded file %s: %v", outputPath, err)
+			m.log.Warn("Failed to stat downloaded file", "file", outputPath, "err", err)
 		} else if fi.Size() != totalSize {
 			return fmt.Errorf("file size verification failed for %s: expected %d bytes, got %d bytes", outputPath, totalSize, fi.Size())
 		}
@@ -362,7 +363,7 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 
 	// Set the file timestamps to match the creation time
 	if err := os.Chtimes(outputPath, createdAt, createdAt); err != nil {
-		m.log.Warnf("Failed to set file timestamps for %s: %v", outputPath, err)
+		m.log.Warn("Failed to set file timestamps", "file", outputPath, "err", err)
 	}
 
 	return nil
@@ -375,7 +376,7 @@ type progressReader struct {
 	current    int64
 	reportTime time.Time
 	fileName   string
-	logger     *logrus.Logger
+	logger     *slog.Logger
 }
 
 func (pr *progressReader) Read(p []byte) (int, error) {
@@ -385,11 +386,10 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 	// Report progress every 3 seconds
 	if time.Since(pr.reportTime) > 3*time.Second {
 		percentComplete := float64(pr.current) / float64(pr.total) * 100
-		pr.logger.Debugf("Downloading %s: %.1f%% complete (%.2f MB / %.2f MB)",
-			pr.fileName,
-			percentComplete,
-			float64(pr.current)/(1024*1024),
-			float64(pr.total)/(1024*1024))
+		pr.logger.Debug("Downloading",
+			"file", pr.fileName,
+			"percent", fmt.Sprintf("%.1f", percentComplete),
+			"mb", fmt.Sprintf("%.2f/%.2f", float64(pr.current)/(1024*1024), float64(pr.total)/(1024*1024)))
 		pr.reportTime = time.Now()
 	}
 

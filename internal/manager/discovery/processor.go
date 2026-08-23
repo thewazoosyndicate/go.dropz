@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"log/slog"
 	"strings"
 	"time"
 
@@ -8,21 +9,20 @@ import (
 	"github.com/dropz/dropz/internal/model"
 	"github.com/dropz/dropz/internal/store"
 	"github.com/google/uuid"
-	"github.com/sirupsen/logrus"
 )
 
 // Processor handles discovery processing operations
 type Processor struct {
 	db                 *store.Store
-	log                *logrus.Logger
+	log                *slog.Logger
 	onCameraReappeared func(cameraID string, wasGoneFor time.Duration)
 }
 
 // NewProcessor creates a new processor
-func NewProcessor(db *store.Store, log *logrus.Logger) *Processor {
+func NewProcessor(db *store.Store, log *slog.Logger) *Processor {
 	return &Processor{
 		db:  db,
-		log: log,
+		log: log.With("component", "discovery"),
 	}
 }
 
@@ -82,7 +82,7 @@ func (p *Processor) createNewCamera(name, bleAddress string, rssi int32) {
 	}
 
 	if err := p.db.AddOrUpdateDiscoveredCamera(discoveredCamera); err != nil {
-		p.log.Errorf("Failed to add discovered camera: %v", err)
+		p.log.Error("Failed to add discovered camera", "err", err)
 	}
 }
 
@@ -106,7 +106,7 @@ func (p *Processor) updateExistingCamera(dbKey, bleAddress, name string, rssi in
 		}
 
 		if cs.Camera.Name == "" || (!strings.Contains(cs.Camera.Name, "GoPro") && strings.Contains(name, "GoPro")) {
-			p.log.Debugf("Name updated for %s: '%s' to '%s'", dbKey, cs.Camera.Name, name)
+			p.log.Debug("Camera name updated", "key", dbKey, "old", cs.Camera.Name, "new", name)
 			cs.Camera.Name = name
 			durable = true
 		}
@@ -114,7 +114,7 @@ func (p *Processor) updateExistingCamera(dbKey, bleAddress, name string, rssi in
 		if !cs.Status.IsReachable {
 			wasGoneFor = time.Since(cs.Status.LastSeen)
 			wasUnreachable = true
-			p.log.Infof("Marking camera %s as reachable again (was gone for %v)", cs.Camera.Name, wasGoneFor)
+			p.log.Info("Camera reachable again", "camera", cs.Camera.Name, "gone_for", wasGoneFor)
 			cs.Status.IsReachable = true
 		}
 
@@ -123,7 +123,7 @@ func (p *Processor) updateExistingCamera(dbKey, bleAddress, name string, rssi in
 		return durable
 	})
 	if err != nil {
-		p.log.Errorf("Failed to update discovered camera: %v", err)
+		p.log.Error("Failed to update discovered camera", "err", err)
 		return
 	}
 
@@ -137,7 +137,7 @@ func (p *Processor) MarkUnreachableDevicesBackground(inactivityTimeout time.Dura
 	cutoff := time.Now().Add(-inactivityTimeout)
 	changed, err := p.db.MarkCamerasUnreachableBefore(cutoff)
 	if err != nil {
-		p.log.Errorf("Failed to save camera state changes: %v", err)
+		p.log.Error("Failed to save camera state changes", "err", err)
 	}
 	if changed && notifier != nil {
 		notifier()

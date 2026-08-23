@@ -1,6 +1,8 @@
 package manager
 
 import (
+	"io"
+	"log/slog"
 	"path/filepath"
 	"testing"
 	"time"
@@ -8,7 +10,6 @@ import (
 	"github.com/dropz/dropz/internal/ble"
 	"github.com/dropz/dropz/internal/model"
 	"github.com/dropz/dropz/internal/store"
-	"github.com/sirupsen/logrus"
 )
 
 func newTestManager(t *testing.T) *GoProManager {
@@ -17,8 +18,7 @@ func newTestManager(t *testing.T) *GoProManager {
 	if err != nil {
 		t.Fatal(err)
 	}
-	log := logrus.New()
-	log.SetLevel(logrus.PanicLevel)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return &GoProManager{db: st, log: log}
 }
 

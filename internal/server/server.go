@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
 
 	"github.com/dropz/dropz/internal/model"
 	"github.com/dropz/dropz/internal/protocol"
-	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -70,7 +70,7 @@ type streamEntry struct {
 type DropzServer struct {
 	protocol.UnimplementedDropzServiceServer
 	manager Manager
-	log     *logrus.Logger
+	log     *slog.Logger
 	server  *grpc.Server
 
 	// All streams tracked uniformly
@@ -86,11 +86,11 @@ type DropzServer struct {
 }
 
 // NewDropzServer creates a new DropzServer
-func NewDropzServer(manager Manager, log *logrus.Logger) *DropzServer {
+func NewDropzServer(manager Manager, log *slog.Logger) *DropzServer {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &DropzServer{
 		manager:             manager,
-		log:                 log,
+		log:                 log.With("component", "server"),
 		heartbeatInterval:   10 * time.Second,
 		streamUpdateChannel: make(chan struct{}, 10),
 		ctx:                 ctx,
@@ -131,7 +131,7 @@ func (s *DropzServer) Start(address string) error {
 	)
 	protocol.RegisterDropzServiceServer(s.server, s)
 
-	s.log.WithFields(logrus.Fields{"address": address}).Info("gRPC server started")
+	s.log.Info("gRPC server started", "address", address)
 
 	s.wg.Add(2)
 	go s.streamUpdateHandler()
@@ -139,7 +139,7 @@ func (s *DropzServer) Start(address string) error {
 
 	go func() {
 		if err := s.server.Serve(listener); err != nil {
-			s.log.Error("gRPC server error", "error", err)
+			s.log.Error("gRPC server error", "err", err)
 		}
 	}()
 
@@ -264,7 +264,7 @@ func (s *DropzServer) forEachStream(heartbeat bool) {
 		}
 
 		if err := entry.send(heartbeat); err != nil {
-			s.log.Errorf("Stream send failed, removing: %v", err)
+			s.log.Error("Stream send failed, removing", "err", err)
 			close(entry.done)
 			continue
 		}
@@ -385,7 +385,7 @@ func (s *DropzServer) WatchSyncQueue(req *protocol.GetSyncQueueRequest, stream p
 
 // ManageCamera implements the ManageCamera RPC method
 func (s *DropzServer) ManageCamera(ctx context.Context, req *protocol.ManageCameraRequest) (*protocol.ManageCameraResponse, error) {
-	s.log.WithFields(logrus.Fields{"camera_id": req.CameraId}).Info("Handling ManageCamera request")
+	s.log.Info("Handling ManageCamera request", "camera", req.CameraId)
 
 	managedCamera, err := s.manager.ManageCamera(req.CameraId)
 	if err != nil {

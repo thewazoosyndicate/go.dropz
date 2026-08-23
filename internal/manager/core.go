@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"log/slog"
 	"mime"
 	"os"
 	"path/filepath"
@@ -19,7 +20,6 @@ import (
 	syncpkg "github.com/dropz/dropz/internal/manager/sync"
 	"github.com/dropz/dropz/internal/model"
 	"github.com/dropz/dropz/internal/store"
-	"github.com/sirupsen/logrus"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -28,7 +28,8 @@ type GoProManager struct {
 	// Core dependencies
 	db       *store.Store
 	ble      *ble.Manager
-	log      *logrus.Logger
+	log      *slog.Logger
+	logLevel *slog.LevelVar
 	notifier func()
 
 	// Runtime control
@@ -51,7 +52,7 @@ type GoProManager struct {
 }
 
 // NewGoProManager creates a new GoPro manager instance
-func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProManager, error) {
+func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *slog.LevelVar) (*GoProManager, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	db, err := store.New(dbPath)
@@ -100,7 +101,7 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 		// Re-key from BLE address to serial number once serial is known
 		if metadata.SerialNumber != "" && cam.DBKey != metadata.SerialNumber {
 			if err := db.RekeyCamera(cam.DBKey, metadata.SerialNumber); err != nil {
-				log.Warnf("Failed to re-key camera to serial %s: %v", metadata.SerialNumber, err)
+				log.Warn("Failed to re-key camera to serial", "serial", metadata.SerialNumber, "err", err)
 			}
 		}
 	})
@@ -117,7 +118,8 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 		cancel:               cancel,
 		ble:                  bleManager,
 		db:                   db,
-		log:                  log,
+		log:                  log.With("component", "manager"),
+		logLevel:             logLevel,
 		immediateSyncTrigger: make(chan struct{}, 1),
 		statusCheckRequest:   make(chan string, 8),
 	}
@@ -143,7 +145,7 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 			if err := db.UpdateCameraByID(cam.CameraState.Camera.ID, func(cs *model.CameraWithState) {
 				cs.Metadata.BatteryLevel = int32(value[0])
 			}); err != nil {
-				log.Errorf("Failed to update battery from push notification: %v", err)
+				log.Error("Failed to update battery from push notification", "err", err)
 			}
 			manager.notify()
 		}
@@ -158,7 +160,7 @@ func NewGoProManager(dbPath, destinationDir string, log *logrus.Logger) (*GoProM
 		if !ok || cam.CameraState.Status.IsSyncing {
 			return
 		}
-		log.Infof("Camera %s reappeared after %v, triggering status check", cam.CameraState.Camera.Name, wasGoneFor)
+		log.Info("Camera reappeared, triggering status check", "camera", cam.CameraState.Camera.Name, "gone_for", wasGoneFor)
 		select {
 		case manager.statusCheckRequest <- cameraID:
 		default:
@@ -221,16 +223,16 @@ func (m *GoProManager) ManageCamera(cameraID string) (*model.ManagedCamera, erro
 		cs.Status.IsManaged = true
 	})
 
-	m.log.Infof("Camera %s added to managed pool", cameraID)
+	m.log.Info("Camera added to managed pool", "camera", cameraID)
 	m.notify()
 
 	config := m.db.GetConfig()
 	if config.PairModeEnabled && !cs.Status.IsPaired {
-		m.log.Infof("Pair mode enabled, starting pairing for camera %s", cs.Camera.Name)
+		m.log.Info("Pair mode enabled, starting pairing", "camera", cs.Camera.Name)
 		// Async so the gRPC handler doesn't block behind pairingMu for 30s+
 		go func() {
 			if _, err := m.PairCamera(cameraID); err != nil {
-				m.log.Warnf("Auto-pairing failed for camera %s: %v", cs.Camera.Name, err)
+				m.log.Warn("Auto-pairing failed", "camera", cs.Camera.Name, "err", err)
 			}
 		}()
 	} else if cs.Status.IsReachable && cs.Status.IsPaired {
@@ -262,7 +264,7 @@ func (m *GoProManager) UnmanageCamera(cameraID string) error {
 		cs.Status.IsManaged = false
 	})
 
-	m.log.Infof("Camera %s removed from managed pool", cameraID)
+	m.log.Info("Camera removed from managed pool", "camera", cameraID)
 	m.notify()
 
 	return nil
@@ -279,7 +281,7 @@ func (m *GoProManager) BLEOperation(ctx context.Context, critical bool, operatio
 		}
 
 		if errors.Is(opErr, context.Canceled) && critical {
-			m.log.Infof("Waiting 3 seconds before retrying critical operation attempt %d/3", opTry+1)
+			m.log.Info("Retrying critical BLE operation", "attempt", opTry+1, "max", 3)
 			time.Sleep(3 * time.Second)
 			continue
 		} else if errors.Is(opErr, context.Canceled) || errors.Is(opErr, context.DeadlineExceeded) {
@@ -287,7 +289,7 @@ func (m *GoProManager) BLEOperation(ctx context.Context, critical bool, operatio
 		}
 
 		if isTransientBLEError(opErr) {
-			m.log.Warnf("Transient BLE error: %v, retrying in %ds", opErr, (opTry+1)*3)
+			m.log.Warn("Transient BLE error, retrying", "err", opErr, "backoff_s", (opTry+1)*3)
 			time.Sleep(time.Duration(opTry+1) * 3 * time.Second)
 			continue
 		}
@@ -302,7 +304,7 @@ func (m *GoProManager) ResetTransientStates() {
 	m.log.Info("Resetting transient camera states on startup")
 	err := m.db.ResetTransientStates()
 	if err != nil {
-		m.log.Errorf("Failed to reset transient camera states: %v", err)
+		m.log.Error("Failed to reset transient camera states", "err", err)
 	}
 }
 
@@ -370,7 +372,7 @@ func (m *GoProManager) GetVideosByCamera(cameraID string, startDate, endDate tim
 
 	entries, err := os.ReadDir(config.DestinationFolder)
 	if err != nil {
-		m.log.Warnf("Cannot read destination folder %s: %v", config.DestinationFolder, err)
+		m.log.Warn("Cannot read destination folder", "folder", config.DestinationFolder, "err", err)
 		return []*model.VideoFile{}, 0
 	}
 

@@ -14,7 +14,7 @@ const (
 
 // Start starts the GoPro manager service
 func (m *GoProManager) Start() error {
-	m.log.Info("GoPro manager starting: mode=service version=1.0")
+	m.log.Info("GoPro manager starting")
 
 	m.ResetTransientStates()
 
@@ -28,19 +28,19 @@ func (m *GoProManager) Start() error {
 
 // Stop stops the GoPro manager service
 func (m *GoProManager) Stop() {
-	m.log.Info("GoPro manager shutdown: phase=initiated")
+	m.log.Info("GoPro manager shutdown initiated")
 
 	// Stop BLE first so active operations finish cleanly before context cancel
-	m.log.Debug("GoPro manager shutdown: phase=stopping_ble")
+	m.log.Debug("Shutdown", "phase", "stopping_ble")
 	m.ble.Stop()
 
-	m.log.Debug("GoPro manager shutdown: phase=cancelling_context")
+	m.log.Debug("Shutdown", "phase", "cancelling_context")
 	m.cancel()
 
-	m.log.Debug("GoPro manager shutdown: phase=waiting_for_goroutines")
+	m.log.Debug("Shutdown", "phase", "waiting_for_goroutines")
 	m.wg.Wait()
 
-	m.log.Info("GoPro manager shutdown: phase=completed status=success")
+	m.log.Info("GoPro manager shutdown complete")
 }
 
 // deviceManager periodically processes the sync queue and schedules status checks.
@@ -81,7 +81,7 @@ func (m *GoProManager) deviceManager() {
 			if newInterval != statusInterval {
 				statusInterval = newInterval
 				statusCheckTicker.Reset(statusInterval)
-				m.log.Infof("Status check interval updated to %v", statusInterval)
+				m.log.Info("Status check interval updated", "interval", statusInterval)
 			}
 		case <-statusCheckTicker.C:
 			if m.db.GetConfig().StatusCheckIntervalSeconds > 0 {

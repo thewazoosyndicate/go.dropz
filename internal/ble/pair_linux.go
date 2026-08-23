@@ -39,25 +39,25 @@ func (m *Manager) pairViaDbus(macAddress string) error {
 	paired, err := device.GetProperty("org.bluez.Device1.Paired")
 	if err == nil {
 		if v, ok := paired.Value().(bool); ok && v {
-			m.log.Infof("Device %s already paired, skipping", macAddress)
+			m.log.Info("Device already paired, skipping", "device", macAddress)
 			return nil
 		}
 	}
 
 	// Register Just Works agent
 	if err := conn.Export(justWorksAgent{}, dbus.ObjectPath(agentPath), "org.bluez.Agent1"); err != nil {
-		m.log.Warnf("Failed to export pairing agent: %v", err)
+		m.log.Warn("Failed to export pairing agent", "err", err)
 	}
 
 	agentMgr := conn.Object("org.bluez", "/org/bluez")
 	call := agentMgr.Call("org.bluez.AgentManager1.RegisterAgent", 0, dbus.ObjectPath(agentPath), "NoInputNoOutput")
 	if call.Err != nil {
-		m.log.Warnf("Failed to register pairing agent: %v", call.Err)
+		m.log.Warn("Failed to register pairing agent", "err", call.Err)
 	}
 	defer func() {
 		call := agentMgr.Call("org.bluez.AgentManager1.UnregisterAgent", 0, dbus.ObjectPath(agentPath))
 		if call.Err != nil {
-			m.log.Warnf("Failed to unregister pairing agent: %v", call.Err)
+			m.log.Warn("Failed to unregister pairing agent", "err", call.Err)
 		}
 	}()
 
@@ -74,7 +74,7 @@ func (m *Manager) pairViaDbus(macAddress string) error {
 		conn.BusObject().Call("org.freedesktop.DBus.RemoveMatch", 0, matchRule)
 	}()
 
-	m.log.Infof("Initiating D-Bus pairing with %s", macAddress)
+	m.log.Info("Initiating D-Bus pairing", "device", macAddress)
 
 	// Fire Pair() asynchronously — it may never return if device is already connected
 	pairDone := make(chan *dbus.Call, 1)
@@ -93,7 +93,7 @@ func (m *Manager) pairViaDbus(macAddress string) error {
 			}
 			if v, exists := changed["Paired"]; exists {
 				if paired, ok := v.Value().(bool); ok && paired {
-					m.log.Infof("D-Bus pairing successful for %s", macAddress)
+					m.log.Info("D-Bus pairing successful", "device", macAddress)
 					return nil
 				}
 			}
@@ -101,12 +101,12 @@ func (m *Manager) pairViaDbus(macAddress string) error {
 		case result := <-pairDone:
 			if result.Err != nil {
 				if strings.Contains(result.Err.Error(), "AlreadyExists") {
-					m.log.Infof("Device %s already paired", macAddress)
+					m.log.Info("Device already paired", "device", macAddress)
 					return nil
 				}
 				return fmt.Errorf("D-Bus Pair() failed: %w", result.Err)
 			}
-			m.log.Infof("D-Bus pairing successful for %s", macAddress)
+			m.log.Info("D-Bus pairing successful", "device", macAddress)
 			return nil
 
 		case <-timeout:

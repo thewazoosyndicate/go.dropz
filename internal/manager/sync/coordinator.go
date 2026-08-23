@@ -3,16 +3,17 @@ package sync
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/dropz/dropz/internal/ble"
+	"github.com/dropz/dropz/internal/logging"
 	"github.com/dropz/dropz/internal/model"
 	"github.com/dropz/dropz/internal/store"
 	"github.com/dropz/dropz/internal/wifi"
-	"github.com/sirupsen/logrus"
 )
 
 // Sync priority constants
@@ -46,7 +47,7 @@ type SyncTask struct {
 type Coordinator struct {
 	db           *store.Store
 	ble          *ble.Manager
-	log          *logrus.Logger
+	log          *slog.Logger
 	activeTasks  map[string]*SyncTask
 	mutex        sync.RWMutex
 	notifier     func()
@@ -56,11 +57,11 @@ type Coordinator struct {
 }
 
 // NewCoordinator creates a new sync coordinator
-func NewCoordinator(ctx context.Context, db *store.Store, ble *ble.Manager, log *logrus.Logger, notifier func(), bleOperation BLEOperation) *Coordinator {
+func NewCoordinator(ctx context.Context, db *store.Store, ble *ble.Manager, log *slog.Logger, notifier func(), bleOperation BLEOperation) *Coordinator {
 	return &Coordinator{
 		db:           db,
 		ble:          ble,
-		log:          log,
+		log:          log.With("component", "sync"),
 		activeTasks:  make(map[string]*SyncTask),
 		notifier:     notifier,
 		bleOperation: bleOperation,
@@ -76,7 +77,7 @@ func (c *Coordinator) ProcessSyncQueue() {
 		return
 	}
 
-	c.log.Trace("Processing sync queue")
+	logging.Trace(c.log, "Processing sync queue")
 	for _, entry := range c.db.GetSyncQueue() {
 		task, ok := c.tryClaimCamera(entry)
 		if !ok {
@@ -102,34 +103,34 @@ func (c *Coordinator) tryClaimCamera(entry *model.SyncQueueEntry) (*SyncTask, bo
 	defer c.mutex.Unlock()
 
 	if _, exists := c.activeTasks[entry.CameraID]; exists {
-		c.log.Tracef("Camera %s is already being synced, skipping", entry.CameraID)
+		logging.Trace(c.log, "Camera already being synced, skipping", "camera", entry.CameraID)
 		return nil, false
 	}
 
 	camera, found := c.db.GetCameraByID(entry.CameraID)
 	if !found {
-		c.log.Warnf("Camera %s not found, removing from sync queue", entry.CameraID)
+		c.log.Warn("Camera not found, removing from sync queue", "camera", entry.CameraID)
 		c.db.RemoveSyncQueueEntry(entry.CameraID)
 		return nil, false
 	}
 
 	if !camera.Status.IsManaged || !camera.Status.IsPaired {
-		c.log.Warnf("Camera %s is not managed+paired, removing from sync queue", camera.Camera.Name)
+		c.log.Warn("Camera not managed+paired, removing from sync queue", "camera", camera.Camera.Name)
 		c.db.RemoveSyncQueueEntry(entry.CameraID)
 		return nil, false
 	}
 
 	if !camera.Status.IsReachable {
-		c.log.Tracef("Camera %s is not reachable, skipping sync", entry.CameraID)
+		logging.Trace(c.log, "Camera not reachable, skipping sync", "camera", entry.CameraID)
 		return nil, false
 	}
 
 	if camera.Status.IsSyncing {
-		c.log.Tracef("Camera %s is already marked as syncing, skipping", entry.CameraID)
+		logging.Trace(c.log, "Camera already marked syncing, skipping", "camera", entry.CameraID)
 		return nil, false
 	}
 
-	c.log.Infof("Starting sync for camera %s", camera.Camera.Name)
+	c.log.Info("Starting sync", "camera", camera.Camera.Name)
 	c.db.UpdateCameraSyncingStatusByID(camera.Camera.ID, true)
 
 	taskCtx, taskCancel := context.WithCancel(c.ctx)
@@ -157,7 +158,7 @@ func (c *Coordinator) ForceSync(cameraID string) (*model.SyncQueueEntry, error) 
 
 	for _, entry := range c.db.GetSyncQueue() {
 		if entry.CameraID == cameraID {
-			c.log.Infof("Camera %s is already in the sync queue", camera.Camera.Name)
+			c.log.Info("Camera already in sync queue", "camera", camera.Camera.Name)
 			return entry, nil
 		}
 	}
@@ -175,7 +176,7 @@ func (c *Coordinator) ForceSync(cameraID string) (*model.SyncQueueEntry, error) 
 	}
 
 	c.db.ResetSyncStatusByID(cameraID)
-	c.log.Infof("Added camera %s to sync queue", camera.Camera.Name)
+	c.log.Info("Added camera to sync queue", "camera", camera.Camera.Name)
 	c.notifier()
 
 	return syncEntry, nil
@@ -188,7 +189,7 @@ func (c *Coordinator) CancelSync(cameraID string) error {
 		return fmt.Errorf("%w: %s", model.ErrCameraNotFound, cameraID)
 	}
 
-	c.log.Infof("Canceling sync for camera %s", camera.Camera.Name)
+	c.log.Info("Canceling sync", "camera", camera.Camera.Name)
 
 	c.mutex.Lock()
 	task, exists := c.activeTasks[cameraID]
@@ -202,7 +203,7 @@ func (c *Coordinator) CancelSync(cameraID string) error {
 
 	c.db.RemoveSyncQueueEntry(cameraID)
 	c.db.UpdateCameraSyncingStatusByID(cameraID, false)
-	c.log.Infof("Cancelled sync for camera %s", camera.Camera.Name)
+	c.log.Info("Cancelled sync", "camera", camera.Camera.Name)
 	c.notifier()
 
 	return nil
@@ -226,11 +227,11 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		c.notifier()
 	}()
 
-	c.log.Infof("Syncing camera %s (%s)", task.CameraName, task.BLEAddress)
+	c.log.Info("Syncing camera", "camera", task.CameraName, "device", task.BLEAddress)
 
 	camera, found := c.db.GetCameraByID(task.CameraID)
 	if !found {
-		c.log.Errorf("Cannot sync camera %s: not found in database", task.CameraID)
+		c.log.Error("Cannot sync camera: not found in database", "camera", task.CameraID)
 		return
 	}
 
@@ -243,7 +244,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		syncEntry.ProgressPercent = percent
 		c.updateSyncQueueEntrySafely(task, syncEntry)
 		c.notifier()
-		c.log.Infof("Sync for camera %s: %s (%d%%)", task.CameraName, operation, percent)
+		c.log.Info("Sync progress", "camera", task.CameraName, "operation", operation, "percent", percent)
 	}
 
 	config := c.db.GetConfig()
@@ -258,7 +259,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 	})
 	if connErr != nil {
 		updateProgress("BLE Connection Failed", syncEntry.ProgressPercent)
-		c.log.Errorf("Failed to connect to camera via BLE: %v", connErr)
+		c.log.Error("Failed to connect to camera via BLE", "camera", task.CameraName, "err", connErr)
 		c.db.SetLastSyncErrorByID(task.CameraID, "BLE connection failed")
 		return
 	}
@@ -268,7 +269,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 			return c.ble.Disconnect(task.BLEAddress)
 		})
 		if disconnectErr != nil {
-			c.log.Warnf("Failed to disconnect from BLE after sync: %v", disconnectErr)
+			c.log.Warn("Failed to disconnect from BLE after sync", "err", disconnectErr)
 		}
 	}()
 
@@ -284,7 +285,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 				return
 			case <-ticker.C:
 				if err := c.ble.KeepAlive(task.BLEAddress); err != nil {
-					c.log.Debugf("Keep-alive failed: %v", err)
+					c.log.Debug("Keep-alive failed", "err", err)
 				}
 			}
 		}
@@ -301,17 +302,17 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 	connWifiErr := wifiManager.Connect(wifiCtx, camera.Camera.WiFiSSID, camera.Camera.WiFiPassword)
 	if connWifiErr != nil {
 		updateProgress("WiFi Connection Failed", syncEntry.ProgressPercent)
-		c.log.Errorf("Failed to connect to camera WiFi: %v", connWifiErr)
+		c.log.Error("Failed to connect to camera WiFi", "camera", task.CameraName, "err", connWifiErr)
 		c.db.SetLastSyncErrorByID(task.CameraID, "WiFi connection failed")
 		return
 	}
 
-	c.log.Infof("WiFi connected to camera %s (SSID: %s)", camera.Camera.Name, camera.Camera.WiFiSSID)
+	c.log.Info("WiFi connected to camera", "camera", camera.Camera.Name, "ssid", camera.Camera.WiFiSSID)
 
 	defer func() {
 		disconnectErr := wifiManager.Disconnect()
 		if disconnectErr != nil {
-			c.log.Warnf("Failed to disconnect from WiFi: %v", disconnectErr)
+			c.log.Warn("Failed to disconnect from WiFi", "err", disconnectErr)
 		}
 	}()
 
@@ -325,11 +326,11 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		}
 		if attempt == apiReadyAttempts {
 			updateProgress("GoPro API unreachable", syncEntry.ProgressPercent)
-			c.log.Errorf("GoPro HTTP API not reachable after %d attempts: %v", attempt, err)
+			c.log.Error("GoPro HTTP API not reachable", "attempts", attempt, "err", err)
 			c.db.SetLastSyncErrorByID(task.CameraID, "GoPro API unreachable")
 			return
 		}
-		c.log.Debugf("GoPro API not ready (attempt %d/%d): %v", attempt, apiReadyAttempts, err)
+		c.log.Debug("GoPro API not ready", "attempt", attempt, "max", apiReadyAttempts, "err", err)
 		time.Sleep(apiReadyDelay)
 	}
 
@@ -338,7 +339,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 
 	if err := os.MkdirAll(config.DestinationFolder, 0755); err != nil {
 		updateProgress("Failed to create destination folder", syncEntry.ProgressPercent)
-		c.log.Errorf("Failed to create destination folder: %v", err)
+		c.log.Error("Failed to create destination folder", "err", err)
 		c.db.SetLastSyncErrorByID(task.CameraID, "Failed to create destination folder")
 		return
 	}
@@ -346,7 +347,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 	cameraFolder := filepath.Join(config.DestinationFolder, camera.Camera.WiFiSSID)
 	if err := os.MkdirAll(cameraFolder, 0755); err != nil {
 		updateProgress("Failed to create camera folder", syncEntry.ProgressPercent)
-		c.log.Errorf("Failed to create camera-specific folder: %v", err)
+		c.log.Error("Failed to create camera-specific folder", "err", err)
 		c.db.SetLastSyncErrorByID(task.CameraID, "Failed to create camera folder")
 		return
 	}
@@ -357,17 +358,17 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 	downloadedFiles, err := wifiManager.DownloadVideos(downloadCtx, cameraFolder, int(config.DaysThreshold))
 	if err != nil {
 		updateProgress("Media Download Failed", syncEntry.ProgressPercent)
-		c.log.Errorf("Failed to download media: %v", err)
+		c.log.Error("Failed to download media", "camera", task.CameraName, "err", err)
 		c.db.SetLastSyncErrorByID(task.CameraID, "Media download failed")
 		return
 	}
 
-	c.log.Infof("Download complete for camera %s: %d files downloaded", camera.Camera.Name, len(downloadedFiles))
+	c.log.Info("Download complete", "camera", camera.Camera.Name, "files", len(downloadedFiles))
 
 	// Step 5: Finalize — defer handles IsSyncing=false, queue cleanup, and notification
 	c.db.MarkCameraSyncedByID(task.CameraID)
 	c.db.SetLastSyncErrorByID(task.CameraID, "")
-	c.log.Infof("Camera %s synced successfully, %d files downloaded", task.CameraName, len(downloadedFiles))
+	c.log.Info("Camera synced successfully", "camera", task.CameraName, "files", len(downloadedFiles))
 }
 
 // updateSyncQueueEntrySafely updates the sync queue entry only if the task hasn't been cancelled
@@ -377,7 +378,7 @@ func (c *Coordinator) updateSyncQueueEntrySafely(task *SyncTask, syncEntry *mode
 		select {
 		case <-task.Ctx.Done():
 			// Task has been cancelled, don't update the database
-			c.log.Debugf("Skipping sync queue update for cancelled task: %s", task.CameraID)
+			c.log.Debug("Skipping sync queue update for cancelled task", "camera", task.CameraID)
 			return nil
 		default:
 			// Task is still active, proceed with update

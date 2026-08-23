@@ -17,18 +17,16 @@ export function updateDevice(device) {
   if (!device?.macAddress) return;
   allDevices[device.macAddress] = device;
 
-  const isDiscovered = !device.isPaired || !device.isManaged;
-  const isManaged = device.isReachable && device.isPaired && device.isManaged;
+  // Pool membership mirrors the backend (InManagedPool): paired + managed.
+  // Reachability must not decide membership; a managed camera that is
+  // asleep or briefly out of range stays on its card as "unreachable".
+  const inManagedPool = device.isPaired && device.isManaged;
 
-  if (isDiscovered) {
-    discoveredDevices[device.macAddress] = device;
-  } else {
-    delete discoveredDevices[device.macAddress];
-  }
-
-  if (isManaged) {
+  if (inManagedPool) {
     managedDevices[device.macAddress] = device;
+    delete discoveredDevices[device.macAddress];
   } else {
+    discoveredDevices[device.macAddress] = device;
     delete managedDevices[device.macAddress];
   }
 }

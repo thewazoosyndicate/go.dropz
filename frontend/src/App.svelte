@@ -12,8 +12,6 @@
   import { cleanupStaleDevices } from './lib/stores/devices.svelte.js';
 
   const { ipcRenderer } = window.require('electron');
-  const path = window.require('path');
-  const { shouldFilterLogMessage } = window.require(path.join(window.__appRoot, 'src', 'log-filters'));
 
   let grpcReadyResolve;
   let grpcReady = new Promise(resolve => { grpcReadyResolve = resolve; });
@@ -36,12 +34,15 @@
     addLog(`Service error: ${msg}`, 'error');
   });
 
-  ipcRenderer.on('go-binary-log', (event, log) => {
-    if (shouldFilterLogMessage(log)) return;
-    const style = log.includes('[ERROR]') || log.includes('[FATAL]') ? 'error' :
-                  log.includes('[WARN]') ? 'warn' : 'info';
-    const msg = log.replace(/^\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}\s+/, '');
-    addLog(`[Go] ${msg}`, style, 'go');
+  const levelStyles = { ERROR: 'error', WARN: 'warn', DEBUG: 'debug', TRACE: 'debug' };
+
+  ipcRenderer.on('go-binary-log', (event, entry) => {
+    const style = levelStyles[entry.level] || 'info';
+    const attrs = Object.entries(entry.attrs || {})
+      .map(([k, v]) => `${k}=${v}`)
+      .join(' ');
+    const prefix = entry.component ? `[${entry.component}] ` : '';
+    addLog(`${prefix}${entry.msg}${attrs ? ' ' + attrs : ''}`, style, 'go');
   });
 
   // Start streaming when gRPC is ready

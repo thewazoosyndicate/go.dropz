@@ -3,7 +3,6 @@ const path = require('path');
 const log = require('electron-log');
 const fs = require('fs');
 const { spawn } = require('child_process');
-const { shouldFilterLogMessage } = require('./log-filters');
 
 // GPU workarounds for Linux AppImage compatibility
 app.commandLine.appendSwitch('disable-gpu-vsync');
@@ -24,14 +23,27 @@ let goBinary;
 let isQuitting = false;
 let grpcReady = false;
 
-function checkGrpcReady(line) {
-  if (!grpcReady && line.includes('gRPC server started')) {
+function checkGrpcReady(entry) {
+  if (!grpcReady && entry.msg === 'gRPC server started') {
     grpcReady = true;
     log.info('gRPC server ready, notifying renderer');
     if (mainWindow && mainWindow.webContents) {
       mainWindow.webContents.send('go-binary-status', { running: true });
     }
   }
+}
+
+// Parse one slog JSON line from the Go backend into a structured entry.
+// Non-JSON lines (library prints, panic traces) pass through as raw text.
+function parseGoLogLine(line) {
+  if (line.startsWith('{')) {
+    try {
+      const obj = JSON.parse(line);
+      const { time, level, msg, component, ...attrs } = obj;
+      return { time, level: (level || 'INFO').toUpperCase(), msg: msg || '', component: component || '', attrs };
+    } catch (_) { /* fall through */ }
+  }
+  return { time: new Date().toISOString(), level: 'INFO', msg: line, component: '', attrs: {} };
 }
 
 // Get the path to the Go binary based on the platform
@@ -69,8 +81,9 @@ function startGoBinary() {
       NODE_ENV: app.isPackaged ? 'production' : 'development'
     }));
     
-    const childProcess = spawn(binaryPath, [], {
-      // Pass environment variables if needed
+    // JSON logs: the backend owns its rotating file; we only parse and
+    // forward lines to the renderer, never write them to a second file.
+    const childProcess = spawn(binaryPath, ['--log-format=json'], {
       env: { ...process.env, NODE_ENV: app.isPackaged ? 'production' : 'development' }
     });
     
@@ -81,14 +94,13 @@ function startGoBinary() {
       if (!output) return;
       output.split('\n').forEach(line => {
         const trimmedLine = line.trim();
-        if (!trimmedLine || shouldFilterLogMessage(trimmedLine)) return;
+        if (!trimmedLine) return;
 
-        log.info(`[Go] ${trimmedLine}`);
-
-        checkGrpcReady(trimmedLine);
+        const entry = parseGoLogLine(trimmedLine);
+        checkGrpcReady(entry);
 
         if (mainWindow && mainWindow.webContents) {
-          mainWindow.webContents.send('go-binary-log', trimmedLine);
+          mainWindow.webContents.send('go-binary-log', entry);
         }
       });
     }
@@ -232,9 +244,4 @@ ipcMain.on('open-folder-dialog', (event) => {
   }).catch(err => {
     log.error(`Error showing folder dialog: ${err.message}`);
   });
-});
-
-// IPC handler for debug logs from renderer
-ipcMain.on('debug-log', (event, message) => {
-  log.info(`[RENDERER DEBUG] ${message}`);
 });

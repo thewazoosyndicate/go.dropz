@@ -161,6 +161,7 @@
   }
 
   .log-entry.error { color: var(--danger-color); }
+  .log-entry.debug { color: var(--text-secondary); opacity: 0.8; }
   .log-entry.warn  { color: var(--warning-color); }
 
   .log-time {

@@ -87,7 +87,9 @@ func main() {
 		fs := flag.NewFlagSet("scan", flag.ExitOnError)
 		duration := fs.Duration("duration", 30*time.Second, "how long to scan")
 		level := logLevelFlag(fs)
-		fs.Parse(args)
+		if len(parseAnyOrder(fs, args)) != 0 {
+			usage()
+		}
 		initLogger(*level)
 		runScan(adapter, *duration)
 	case "validate":
@@ -96,38 +98,54 @@ func main() {
 		doWifi := fs.Bool("wifi", false, "also join the camera AP and run HTTP checks")
 		doSpeed := fs.Bool("speed", false, "with -wifi: measure throughput turbo off vs on")
 		level := logLevelFlag(fs)
-		fs.Parse(args)
+		positional := parseAnyOrder(fs, args)
 		initLogger(*level)
-		if fs.NArg() != 1 {
+		if len(positional) != 1 {
 			usage()
 		}
-		os.Exit(runValidate(adapter, fs.Arg(0), *doSleep, *doWifi, *doSpeed))
+		os.Exit(runValidate(adapter, positional[0], *doSleep, *doWifi, *doSpeed))
 	case "pair":
 		fs := flag.NewFlagSet("pair", flag.ExitOnError)
 		level := logLevelFlag(fs)
-		fs.Parse(args)
+		positional := parseAnyOrder(fs, args)
 		initLogger(*level)
-		if fs.NArg() != 1 {
+		if len(positional) != 1 {
 			usage()
 		}
-		os.Exit(runPair(adapter, fs.Arg(0)))
+		os.Exit(runPair(adapter, positional[0]))
 	case "settings":
 		fs := flag.NewFlagSet("settings", flag.ExitOnError)
 		level := logLevelFlag(fs)
-		fs.Parse(args)
+		positional := parseAnyOrder(fs, args)
 		initLogger(*level)
-		if fs.NArg() != 1 {
+		if len(positional) != 1 {
 			usage()
 		}
-		os.Exit(runSettings(adapter, fs.Arg(0)))
+		os.Exit(runSettings(adapter, positional[0]))
 	default:
 		usage()
 	}
 }
 
+// parseAnyOrder parses flags wherever they appear and returns positional
+// args. Stdlib flag stops at the first non-flag, so "validate 8614 -wifi"
+// would otherwise silently ignore the flags.
+func parseAnyOrder(fs *flag.FlagSet, args []string) []string {
+	var positional []string
+	for {
+		fs.Parse(args)
+		rest := fs.Args()
+		if len(rest) == 0 {
+			return positional
+		}
+		positional = append(positional, rest[0])
+		args = rest[1:]
+	}
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: ble-probe scan [-duration 30s]")
-	fmt.Fprintln(os.Stderr, "       ble-probe validate <name-fragment> [-sleep] [-wifi]")
+	fmt.Fprintln(os.Stderr, "       ble-probe validate <name-fragment> [-sleep] [-wifi] [-speed]")
 	fmt.Fprintln(os.Stderr, "       ble-probe pair <name-fragment>")
 	fmt.Fprintln(os.Stderr, "       ble-probe settings <name-fragment>")
 	os.Exit(2)

@@ -49,11 +49,31 @@ func (m *Manager) SetAPControl(macAddress string, mode WiFiAPMode) error {
 		return fmt.Errorf("WiFi AP control failed: status=0x%02X", response.Status)
 	}
 
-	if mode == WiFiAPModeEnable || mode == WiFiAPModeBounce {
-		time.Sleep(2 * time.Second)
-	}
-
 	return nil
+}
+
+const apReadyPoll = 200 * time.Millisecond
+
+// WaitForWiFiAPReady polls AP Mode (status 69) until the camera reports its
+// AP up. The Set AP Control response only means the request was accepted;
+// the AP and DHCP server come up later (spec ble_setup "WiFi Readiness").
+func (m *Manager) WaitForWiFiAPReady(macAddress string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		statuses, queryErr := m.QueryStatuses(macAddress, []byte{StatusAPMode})
+		if queryErr == nil {
+			if v, ok := statuses[StatusAPMode]; ok && len(v) > 0 && v[0] != 0 {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			if queryErr != nil {
+				return fmt.Errorf("wifi AP not ready after %v: %w", timeout, queryErr)
+			}
+			return fmt.Errorf("wifi AP not ready after %v", timeout)
+		}
+		time.Sleep(apReadyPoll)
+	}
 }
 
 // GetHardwareInfo retrieves hardware information from the camera

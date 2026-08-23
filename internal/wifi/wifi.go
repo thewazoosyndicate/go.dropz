@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +38,7 @@ const (
 	// Media endpoints
 	MediaListURL = "/gopro/media/list"
 	MediaInfoURL = "/gopro/media/info"
+	TurboURL     = "/gopro/media/turbo_transfer"
 )
 
 // WiFiManager handles WiFi operations for GoPro devices
@@ -106,6 +108,31 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	actualDownloads := len(downloadedFiles) - skippedCount
 	m.log.Info("Download complete", "downloaded", actualDownloads, "skipped", skippedCount)
 	return downloadedFiles, nil
+}
+
+// SetTurboTransfer toggles Turbo Transfer, the faster WiFi offload mode.
+// Spec: enable only during media offload, disable afterwards. Unsupported
+// cameras answer 501; callers should treat failure as non-fatal.
+func (m *WiFiManager) SetTurboTransfer(ctx context.Context, enable bool) error {
+	p := "0"
+	if enable {
+		p = "1"
+	}
+	url := fmt.Sprintf("%s%s?p=%s", GoProBaseURL, TurboURL, p)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("turbo transfer request failed: %s", resp.Status)
+	}
+	return nil
 }
 
 // GoProMediaList represents the JSON response from the GoPro media list API
@@ -218,11 +245,16 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 			}
 			createdAtTime := time.Unix(createdInt, 0)
 
-			// Parse the file size
-			sizeInt, err := file.Size.Int64()
-			if err != nil {
-				m.log.Error("Failed to parse size value", "value", file.Size, "err", err)
-				continue
+			// For grouped items (burst, time lapse) "s" is the member count,
+			// not bytes (spec media list schema); per-member sizes are unknown.
+			isGroup := file.GroupID != ""
+			var sizeInt int64
+			if !isGroup {
+				sizeInt, err = file.Size.Int64()
+				if err != nil {
+					m.log.Error("Failed to parse size value", "value", file.Size, "err", err)
+					continue
+				}
 			}
 
 			// Build the download URL - using directory from media and filename
@@ -234,11 +266,58 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 				CreatedAt: createdAtTime,
 				Size:      sizeInt,
 			})
+
+			// A grouped entry only lists its first member; the siblings must
+			// be extrapolated from b..l skipping m (spec media list schema).
+			if isGroup {
+				for _, member := range expandGroupMembers(file.Name, file.FirstID, file.LastID, file.MissingIDs) {
+					result = append(result, MediaFile{
+						Name:      member,
+						URL:       fmt.Sprintf("%s/videos/DCIM/%s/%s", GoProBaseURL, media.Directory, member),
+						CreatedAt: createdAtTime,
+						Size:      0,
+					})
+				}
+			}
 		}
 	}
 
 	m.log.Debug("Media list parsed", "files", len(result))
 	return result, nil
+}
+
+// expandGroupMembers returns the sibling filenames of a grouped media item.
+// Names follow GXXXYYYY.EXT: chars 1-3 are the group id, chars 4-7 the member
+// id. The listed item is skipped; missing ids (deleted members) are skipped.
+func expandGroupMembers(name, firstID, lastID string, missingIDs []string) []string {
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	if len(base) != 8 || (base[0] != 'G' && base[0] != 'g') {
+		return nil
+	}
+	first, err1 := strconv.Atoi(firstID)
+	last, err2 := strconv.Atoi(lastID)
+	if err1 != nil || err2 != nil || last < first || last-first > 9999 {
+		return nil
+	}
+	missing := make(map[int]bool, len(missingIDs))
+	for _, id := range missingIDs {
+		if v, err := strconv.Atoi(id); err == nil {
+			missing[v] = true
+		}
+	}
+	var members []string
+	for id := first; id <= last; id++ {
+		if missing[id] {
+			continue
+		}
+		member := fmt.Sprintf("%s%04d%s", base[:4], id, ext)
+		if member == name {
+			continue
+		}
+		members = append(members, member)
+	}
+	return members
 }
 
 // downloadFileWithResume downloads a file with resume capability.
@@ -296,7 +375,7 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 	defer file.Close()
 
 	// If file is already complete, just rename it
-	if startOffset == totalSize {
+	if totalSize > 0 && startOffset == totalSize {
 		logging.Trace(m.log, "File already complete", "file", outputPath)
 		return os.Rename(tempFilePath, outputPath)
 	}
@@ -356,7 +435,7 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 		fi, err := os.Stat(outputPath)
 		if err != nil {
 			m.log.Warn("Failed to stat downloaded file", "file", outputPath, "err", err)
-		} else if fi.Size() != totalSize {
+		} else if totalSize > 0 && fi.Size() != totalSize {
 			return fmt.Errorf("file size verification failed for %s: expected %d bytes, got %d bytes", outputPath, totalSize, fi.Size())
 		}
 	}
@@ -384,7 +463,7 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 	pr.current += int64(n)
 
 	// Report progress every 3 seconds
-	if time.Since(pr.reportTime) > 3*time.Second {
+	if time.Since(pr.reportTime) > 3*time.Second && pr.total > 0 {
 		percentComplete := float64(pr.current) / float64(pr.total) * 100
 		pr.logger.Debug("Downloading",
 			"file", pr.fileName,
@@ -407,7 +486,8 @@ func filterMediaByDate(mediaFiles []MediaFile, cutoffTime time.Time) []MediaFile
 	return result
 }
 
-// fileExistsWithSize checks if a file exists and has the expected size
+// fileExistsWithSize checks if a file exists and has the expected size.
+// Size 0 means unknown (grouped media members): any non-empty file counts.
 func (m *WiFiManager) fileExistsWithSize(filePath string, expectedSize int64) (bool, error) {
 	fi, err := os.Stat(filePath)
 	if err != nil {
@@ -415,6 +495,9 @@ func (m *WiFiManager) fileExistsWithSize(filePath string, expectedSize int64) (b
 			return false, nil
 		}
 		return false, err
+	}
+	if expectedSize <= 0 {
+		return fi.Size() > 0, nil
 	}
 	return fi.Size() == expectedSize, nil
 }

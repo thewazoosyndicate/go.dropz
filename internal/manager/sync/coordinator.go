@@ -31,6 +31,7 @@ const (
 	apiReadyDelay      = 2 * time.Second
 	idleWaitTimeout    = 2 * time.Minute // max wait for busy/encoding to clear
 	idleWaitPoll       = 5 * time.Second
+	apReadyTimeout     = 10 * time.Second // max wait for AP Mode (status 69)
 )
 
 // BLEOperation runs a BLE operation with the manager's retry policy.
@@ -311,6 +312,20 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		return
 	}
 
+	// Step 1c: Wait for the camera's AP to actually be up (status 69); the
+	// Set AP Control response only acknowledges the request. On timeout,
+	// bounce the AP once (spec FAQ recovery for intermittent AP failures),
+	// then proceed either way and let the join retries have their chance.
+	updateProgress("Waiting for camera WiFi AP", 25)
+	if err := c.ble.WaitForWiFiAPReady(bleAddress, apReadyTimeout); err != nil {
+		c.log.Warn("Camera AP not ready, bouncing AP", "camera", task.CameraName, "err", err)
+		if bounceErr := c.ble.SetAPControl(bleAddress, ble.WiFiAPModeBounce); bounceErr != nil {
+			c.log.Warn("AP bounce failed", "err", bounceErr)
+		} else if err := c.ble.WaitForWiFiAPReady(bleAddress, apReadyTimeout); err != nil {
+			c.log.Warn("Camera AP still not ready after bounce", "err", err)
+		}
+	}
+
 	// Step 2: Connect to camera WiFi
 	updateProgress("Connecting to WiFi", 30)
 
@@ -374,6 +389,18 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 
 	downloadCtx, downloadCancel := context.WithTimeout(syncCtx, downloadTimeout)
 	defer downloadCancel()
+
+	// Turbo Transfer speeds up WiFi offload; spec says enable only for the
+	// offload window. Best-effort: unsupported cameras answer 501.
+	if err := wifiManager.SetTurboTransfer(downloadCtx, true); err != nil {
+		c.log.Debug("Turbo transfer not enabled", "err", err)
+	} else {
+		defer func() {
+			if err := wifiManager.SetTurboTransfer(syncCtx, false); err != nil {
+				c.log.Debug("Turbo transfer not disabled", "err", err)
+			}
+		}()
+	}
 
 	downloadedFiles, err := wifiManager.DownloadVideos(downloadCtx, cameraFolder, int(config.DaysThreshold))
 	if err != nil {

@@ -132,6 +132,23 @@ type SyncQueueEntry struct {
 	Priority         int32     `json:"priority"` // Higher numbers = higher priority (manual sync = 10, auto sync = 5)
 	ProgressPercent  int32     `json:"progress_percent"`
 	CurrentOperation string    `json:"current_operation"`
+	// FileNames limits the download to exactly these files (media browser
+	// selection); empty means the normal date-threshold sync.
+	FileNames []string `json:"file_names,omitempty"`
+	// CatalogOnly refreshes the media catalog and thumbnails without
+	// downloading anything.
+	CatalogOnly bool `json:"catalog_only,omitempty"`
+}
+
+// CameraMediaItem is one file in a camera's cached media catalog,
+// captured during the last sync.
+type CameraMediaItem struct {
+	Name          string    `json:"name"`
+	CameraPath    string    `json:"camera_path"` // <dir>/<name> on the camera
+	SizeBytes     int64     `json:"size_bytes"`
+	CreatedAt     time.Time `json:"created_at"`
+	ThumbnailPath string    `json:"thumbnail_path,omitempty"` // absolute local path
+	Downloaded    bool      `json:"downloaded"`
 }
 
 // Group represents a collection of cameras that can be managed together

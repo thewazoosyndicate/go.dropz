@@ -263,3 +263,32 @@ message ApplyCameraSettingsRequest {
 message ApplyCameraSettingsResponse {
   repeated CameraSettingsResult cameras = 1;
 }
+
+// Media browser: cached catalog of what is on a camera, captured at sync.
+message CameraMediaItem {
+  string name = 1;
+  string camera_path = 2;
+  int64 size_bytes = 3;
+  google.protobuf.Timestamp created_at = 4;
+  string thumbnail_path = 5; // absolute local path, empty if not cached
+  bool downloaded = 6;
+}
+
+message GetCameraMediaRequest {
+  string camera_id = 1;
+}
+
+message GetCameraMediaResponse {
+  repeated CameraMediaItem items = 1;
+  google.protobuf.Timestamp updated_at = 2; // when the catalog was captured
+}
+
+message RequestMediaDownloadRequest {
+  string camera_id = 1;
+  // Empty = refresh the catalog and thumbnails without downloading.
+  repeated string file_names = 2;
+}
+
+message RequestMediaDownloadResponse {
+  SyncQueueEntry entry = 1;
+}

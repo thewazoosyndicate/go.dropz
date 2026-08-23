@@ -45,6 +45,10 @@ type SyncTask struct {
 	CameraName string
 	Cancel     context.CancelFunc
 	Ctx        context.Context
+	// FileNames limits the download to a media-browser selection;
+	// CatalogOnly refreshes catalog and thumbnails without downloading.
+	FileNames   []string
+	CatalogOnly bool
 }
 
 // Coordinator handles sync orchestration
@@ -145,11 +149,13 @@ func (c *Coordinator) tryClaimCamera(entry *model.SyncQueueEntry) (*SyncTask, bo
 
 	taskCtx, taskCancel := context.WithCancel(c.ctx)
 	task := &SyncTask{
-		CameraID:   camera.Camera.ID,
-		BLEAddress: camera.Camera.BLEAddress,
-		CameraName: camera.Camera.Name,
-		Cancel:     taskCancel,
-		Ctx:        taskCtx,
+		CameraID:    camera.Camera.ID,
+		BLEAddress:  camera.Camera.BLEAddress,
+		CameraName:  camera.Camera.Name,
+		Cancel:      taskCancel,
+		Ctx:         taskCtx,
+		FileNames:   entry.FileNames,
+		CatalogOnly: entry.CatalogOnly,
 	}
 
 	c.activeTasks[entry.CameraID] = task
@@ -189,6 +195,61 @@ func (c *Coordinator) ForceSync(cameraID string) (*model.SyncQueueEntry, error) 
 	c.log.Info("Camera added to sync queue", camera.LogAttrs()...)
 	c.notifier()
 
+	return syncEntry, nil
+}
+
+// RequestMediaDownload queues a media-browser request: a selection of
+// files to fetch, or (empty selection) a catalog-only refresh.
+func (c *Coordinator) RequestMediaDownload(cameraID string, fileNames []string) (*model.SyncQueueEntry, error) {
+	camera, found := c.db.GetCameraByID(cameraID)
+	if !found {
+		return nil, fmt.Errorf("%w: %s", model.ErrCameraNotFound, cameraID)
+	}
+	if !camera.Status.IsManaged || !camera.Status.IsPaired {
+		return nil, fmt.Errorf("%w: %s", model.ErrNotManagedPaired, camera.Camera.Name)
+	}
+
+	// Merge into an already-queued entry: union selections; any file
+	// request upgrades a catalog-only entry; a queued full sync already
+	// covers everything.
+	var merged *model.SyncQueueEntry
+	updated, err := c.db.MutateSyncQueueEntry(cameraID, func(entry *model.SyncQueueEntry) {
+		if len(fileNames) > 0 && (entry.CatalogOnly || len(entry.FileNames) > 0) {
+			seen := make(map[string]bool, len(entry.FileNames))
+			for _, n := range entry.FileNames {
+				seen[n] = true
+			}
+			for _, n := range fileNames {
+				if !seen[n] {
+					entry.FileNames = append(entry.FileNames, n)
+				}
+			}
+			entry.CatalogOnly = false
+		}
+		entryCopy := *entry
+		merged = &entryCopy
+	})
+	if err != nil {
+		return nil, err
+	}
+	if updated {
+		c.notifier()
+		return merged, nil
+	}
+
+	syncEntry := &model.SyncQueueEntry{
+		CameraID:         cameraID,
+		QueuedAt:         time.Now(),
+		Priority:         SyncPriorityManual,
+		CurrentOperation: "Waiting to start",
+		FileNames:        fileNames,
+		CatalogOnly:      len(fileNames) == 0,
+	}
+	if err := c.db.AddSyncQueueEntry(syncEntry); err != nil {
+		return nil, fmt.Errorf("failed to queue media download: %w", err)
+	}
+	c.log.Info("Media download queued", "camera", camera.Camera.Name, "files", len(fileNames), "catalog_only", syncEntry.CatalogOnly)
+	c.notifier()
 	return syncEntry, nil
 }
 
@@ -384,8 +445,8 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		time.Sleep(apiReadyDelay)
 	}
 
-	// Step 4: Download media
-	updateProgress("Downloading media", 60)
+	// Step 4: Media catalog and download
+	updateProgress("Preparing download", 50)
 
 	if err := os.MkdirAll(config.DestinationFolder, 0755); err != nil {
 		updateProgress("Failed to create destination folder", syncEntry.ProgressPercent)
@@ -405,6 +466,25 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 	downloadCtx, downloadCancel := context.WithTimeout(syncCtx, downloadTimeout)
 	defer downloadCancel()
 
+	// Step 4a: capture the media catalog + thumbnails while the WiFi link
+	// is up; the media browser reads them offline later.
+	updateProgress("Updating media catalog", 55)
+	if mediaFiles, listErr := wifiManager.ListMedia(downloadCtx); listErr != nil {
+		c.log.Warn("Media catalog refresh failed", "camera", task.CameraName, "err", listErr)
+	} else {
+		if err := WriteCatalog(cameraFolder, mediaFiles); err != nil {
+			c.log.Warn("Media catalog write failed", "camera", task.CameraName, "err", err)
+		}
+		refreshThumbnails(downloadCtx, wifiManager, cameraFolder, mediaFiles, c.log)
+	}
+
+	if task.CatalogOnly {
+		c.db.SetLastSyncErrorByID(task.CameraID, "")
+		c.log.Info("Media catalog refreshed, no download requested", "camera", task.CameraName)
+		c.notifier()
+		return
+	}
+
 	// Turbo Transfer speeds up WiFi offload; spec says enable only for the
 	// offload window. Best-effort: unsupported cameras answer 501.
 	if err := wifiManager.SetTurboTransfer(downloadCtx, true); err != nil {
@@ -417,7 +497,8 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		}()
 	}
 
-	downloadedFiles, err := wifiManager.DownloadVideos(downloadCtx, cameraFolder, int(config.DaysThreshold))
+	updateProgress("Downloading media", 60)
+	downloadedFiles, err := wifiManager.DownloadVideos(downloadCtx, cameraFolder, int(config.DaysThreshold), task.FileNames)
 	if err != nil {
 		updateProgress("Media Download Failed", syncEntry.ProgressPercent)
 		msg := "Sync failed, media download"
@@ -429,8 +510,12 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		return
 	}
 
-	// Step 5: Finalize — defer handles IsSyncing=false, queue cleanup, and notification
-	c.db.MarkCameraSyncedByID(task.CameraID)
+	// Step 5: Finalize — defer handles IsSyncing=false, queue cleanup, and notification.
+	// A selection download is partial by definition: the camera is not
+	// "synced", so the auto-sync eligibility must stay untouched.
+	if len(task.FileNames) == 0 {
+		c.db.MarkCameraSyncedByID(task.CameraID)
+	}
 	c.db.SetLastSyncErrorByID(task.CameraID, "")
 	c.log.Info("Camera synced", append(camera.LogAttrs(), "files", len(downloadedFiles))...)
 }

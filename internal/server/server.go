@@ -38,6 +38,9 @@ type Manager interface {
 	DeleteGroup(groupID string) error
 	LoadGroup(groupID string) error
 	SaveManagedAsGroup(name string) (*model.Group, error)
+	// Media browser
+	GetCameraMedia(cameraID string) ([]model.CameraMediaItem, time.Time, error)
+	RequestMediaDownload(cameraID string, fileNames []string) (*model.SyncQueueEntry, error)
 	// Camera settings (BLE)
 	GetCameraSettings(cameraID string) ([]model.CameraSetting, time.Time, error)
 	RefreshCameraSettings(cameraID string) ([]model.CameraSetting, time.Time, error)

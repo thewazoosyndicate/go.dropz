@@ -458,7 +458,7 @@ func (m *GoProManager) GetVideosByCamera(cameraID string, startDate, endDate tim
 			}
 
 			hash := sha256.Sum256([]byte(fullPath))
-			allVideos = append(allVideos, &model.VideoFile{
+			video := &model.VideoFile{
 				ID:        fmt.Sprintf("%x", hash[:8]),
 				Name:      f.Name(),
 				Path:      fullPath,
@@ -466,7 +466,12 @@ func (m *GoProManager) GetVideosByCamera(cameraID string, startDate, endDate tim
 				CreatedAt: mtime,
 				CameraID:  camID,
 				MimeType:  mimeType,
-			})
+			}
+			// Camera-generated preview cached by the media catalog sync
+			if thumb := syncpkg.ThumbnailPath(subdir, f.Name()); fileExistsNonEmpty(thumb) {
+				video.ThumbnailPath = thumb
+			}
+			allVideos = append(allVideos, video)
 		}
 	}
 

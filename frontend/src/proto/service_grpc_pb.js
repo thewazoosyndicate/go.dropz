@@ -106,6 +106,28 @@ function deserialize_dropz_ForceSyncResponse(buffer_arg) {
   return gopro_pb.ForceSyncResponse.deserializeBinary(new Uint8Array(buffer_arg));
 }
 
+function serialize_dropz_GetCameraMediaRequest(arg) {
+  if (!(arg instanceof gopro_pb.GetCameraMediaRequest)) {
+    throw new Error('Expected argument of type dropz.GetCameraMediaRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_GetCameraMediaRequest(buffer_arg) {
+  return gopro_pb.GetCameraMediaRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_GetCameraMediaResponse(arg) {
+  if (!(arg instanceof gopro_pb.GetCameraMediaResponse)) {
+    throw new Error('Expected argument of type dropz.GetCameraMediaResponse');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_GetCameraMediaResponse(buffer_arg) {
+  return gopro_pb.GetCameraMediaResponse.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
 function serialize_dropz_GetCameraSettingsRequest(arg) {
   if (!(arg instanceof gopro_pb.GetCameraSettingsRequest)) {
     throw new Error('Expected argument of type dropz.GetCameraSettingsRequest');
@@ -368,6 +390,28 @@ function serialize_dropz_PairCameraResponse(arg) {
 
 function deserialize_dropz_PairCameraResponse(buffer_arg) {
   return gopro_pb.PairCameraResponse.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_RequestMediaDownloadRequest(arg) {
+  if (!(arg instanceof gopro_pb.RequestMediaDownloadRequest)) {
+    throw new Error('Expected argument of type dropz.RequestMediaDownloadRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_RequestMediaDownloadRequest(buffer_arg) {
+  return gopro_pb.RequestMediaDownloadRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_RequestMediaDownloadResponse(arg) {
+  if (!(arg instanceof gopro_pb.RequestMediaDownloadResponse)) {
+    throw new Error('Expected argument of type dropz.RequestMediaDownloadResponse');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_RequestMediaDownloadResponse(buffer_arg) {
+  return gopro_pb.RequestMediaDownloadResponse.deserializeBinary(new Uint8Array(buffer_arg));
 }
 
 function serialize_dropz_ResetSettingRequest(arg) {
@@ -687,6 +731,29 @@ getVideos: {
     requestDeserialize: deserialize_dropz_GetVideosRequest,
     responseSerialize: serialize_dropz_GetVideosResponse,
     responseDeserialize: deserialize_dropz_GetVideosResponse,
+  },
+  // Media browser: cached per-camera catalogs with selective download
+getCameraMedia: {
+    path: '/dropz.DropzService/GetCameraMedia',
+    requestStream: false,
+    responseStream: false,
+    requestType: gopro_pb.GetCameraMediaRequest,
+    responseType: gopro_pb.GetCameraMediaResponse,
+    requestSerialize: serialize_dropz_GetCameraMediaRequest,
+    requestDeserialize: deserialize_dropz_GetCameraMediaRequest,
+    responseSerialize: serialize_dropz_GetCameraMediaResponse,
+    responseDeserialize: deserialize_dropz_GetCameraMediaResponse,
+  },
+  requestMediaDownload: {
+    path: '/dropz.DropzService/RequestMediaDownload',
+    requestStream: false,
+    responseStream: false,
+    requestType: gopro_pb.RequestMediaDownloadRequest,
+    responseType: gopro_pb.RequestMediaDownloadResponse,
+    requestSerialize: serialize_dropz_RequestMediaDownloadRequest,
+    requestDeserialize: deserialize_dropz_RequestMediaDownloadRequest,
+    responseSerialize: serialize_dropz_RequestMediaDownloadResponse,
+    responseDeserialize: deserialize_dropz_RequestMediaDownloadResponse,
   },
   // Configuration & Settings
 getConfig: {

@@ -36,9 +36,10 @@ const (
 	// Status endpoints
 	StatusURL = "/gopro/camera/state"
 	// Media endpoints
-	MediaListURL = "/gopro/media/list"
-	MediaInfoURL = "/gopro/media/info"
-	TurboURL     = "/gopro/media/turbo_transfer"
+	MediaListURL  = "/gopro/media/list"
+	MediaInfoURL  = "/gopro/media/info"
+	ThumbnailURL  = "/gopro/media/thumbnail"
+	TurboURL      = "/gopro/media/turbo_transfer"
 )
 
 // WiFiManager handles WiFi operations for GoPro devices
@@ -53,8 +54,10 @@ func NewWiFiManager(log *slog.Logger) *WiFiManager {
 	}
 }
 
-// DownloadVideos downloads videos from a GoPro device
-func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysInPast int) ([]string, error) {
+// DownloadVideos downloads videos from a GoPro device.
+// A non-empty fileNames selection downloads exactly those files (media
+// browser); empty falls back to the date-threshold window.
+func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysInPast int, fileNames []string) ([]string, error) {
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create destination directory: %w", err)
 	}
@@ -69,14 +72,26 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 		return nil, nil
 	}
 
-	if daysInPast <= 0 {
-		daysInPast = 7
+	var filteredMedia []MediaFile
+	if len(fileNames) > 0 {
+		selected := make(map[string]bool, len(fileNames))
+		for _, n := range fileNames {
+			selected[n] = true
+		}
+		for _, media := range mediaFiles {
+			if selected[media.Name] {
+				filteredMedia = append(filteredMedia, media)
+			}
+		}
+		m.log.Info("Media list fetched", "total", len(mediaFiles), "selected", len(filteredMedia))
+	} else {
+		if daysInPast <= 0 {
+			daysInPast = 7
+		}
+		cutoffTime := time.Now().AddDate(0, 0, -daysInPast)
+		filteredMedia = filterMediaByDate(mediaFiles, cutoffTime)
+		m.log.Info("Media list fetched", "total", len(mediaFiles), "in_window", len(filteredMedia), "days", daysInPast)
 	}
-
-	cutoffTime := time.Now().AddDate(0, 0, -daysInPast)
-	filteredMedia := filterMediaByDate(mediaFiles, cutoffTime)
-
-	m.log.Info("Media list fetched", "total", len(mediaFiles), "in_window", len(filteredMedia), "days", daysInPast)
 
 	var downloadedFiles []string
 	skippedCount := 0
@@ -115,6 +130,39 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 		m.log.Info("Download finished", "downloaded", actualDownloads, "skipped", skippedCount)
 	}
 	return downloadedFiles, nil
+}
+
+// DownloadThumbnail fetches the camera-generated preview JPEG for one file
+// and writes it to outPath (tmp + rename so readers never see partials).
+func (m *WiFiManager) DownloadThumbnail(ctx context.Context, cameraPath, outPath string) error {
+	url := fmt.Sprintf("%s%s?path=%s", GoProBaseURL, ThumbnailURL, cameraPath)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("thumbnail request failed: %s", resp.Status)
+	}
+	tmp := outPath + ".partial"
+	f, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, outPath)
 }
 
 // SetTurboTransfer toggles Turbo Transfer, the faster WiFi offload mode.
@@ -174,10 +222,11 @@ type goProFile struct {
 
 // MediaFile represents a media file on the GoPro
 type MediaFile struct {
-	Name      string
-	URL       string
-	CreatedAt time.Time
-	Size      int64
+	Name       string
+	URL        string
+	CameraPath string // <dir>/<name>, the camera API's path parameter
+	CreatedAt  time.Time
+	Size       int64
 }
 
 // GetCameraStatus retrieves the camera status via HTTP API
@@ -275,10 +324,11 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 			mediaURL := fmt.Sprintf("%s/videos/DCIM/%s/%s", GoProBaseURL, media.Directory, file.Name)
 
 			result = append(result, MediaFile{
-				Name:      file.Name,
-				URL:       mediaURL,
-				CreatedAt: createdAtTime,
-				Size:      sizeInt,
+				Name:       file.Name,
+				URL:        mediaURL,
+				CameraPath: fmt.Sprintf("%s/%s", media.Directory, file.Name),
+				CreatedAt:  createdAtTime,
+				Size:       sizeInt,
 			})
 
 			// A grouped entry only lists its first member; the siblings must
@@ -286,10 +336,11 @@ func (m *WiFiManager) getMediaList(ctx context.Context) ([]MediaFile, error) {
 			if isGroup {
 				for _, member := range expandGroupMembers(file.Name, file.FirstID, file.LastID, file.MissingIDs) {
 					result = append(result, MediaFile{
-						Name:      member,
-						URL:       fmt.Sprintf("%s/videos/DCIM/%s/%s", GoProBaseURL, media.Directory, member),
-						CreatedAt: createdAtTime,
-						Size:      0,
+						Name:       member,
+						URL:        fmt.Sprintf("%s/videos/DCIM/%s/%s", GoProBaseURL, media.Directory, member),
+						CameraPath: fmt.Sprintf("%s/%s", media.Directory, member),
+						CreatedAt:  createdAtTime,
+						Size:       0,
 					})
 				}
 			}

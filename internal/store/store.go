@@ -340,6 +340,20 @@ func (db *Store) AddSyncQueueEntry(entry *model.SyncQueueEntry) error {
 	return db.saveToFile()
 }
 
+// MutateSyncQueueEntry mutates a camera's queued entry under lock and
+// persists it. Returns false when the camera is not queued.
+func (db *Store) MutateSyncQueueEntry(cameraID string, mutate func(*model.SyncQueueEntry)) (bool, error) {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+	for _, existing := range db.syncQueue {
+		if existing.CameraID == cameraID {
+			mutate(existing)
+			return true, db.saveToFile()
+		}
+	}
+	return false, nil
+}
+
 // GetSyncQueue returns the current sync queue, sorted by priority (highest first) then by queued time
 func (db *Store) GetSyncQueue() []*model.SyncQueueEntry {
 	db.mutex.RLock()

@@ -39,6 +39,8 @@ const (
 	DropzService_LoadGroup_FullMethodName              = "/dropz.DropzService/LoadGroup"
 	DropzService_SaveManagedAsGroup_FullMethodName     = "/dropz.DropzService/SaveManagedAsGroup"
 	DropzService_GetVideos_FullMethodName              = "/dropz.DropzService/GetVideos"
+	DropzService_GetCameraMedia_FullMethodName         = "/dropz.DropzService/GetCameraMedia"
+	DropzService_RequestMediaDownload_FullMethodName   = "/dropz.DropzService/RequestMediaDownload"
 	DropzService_GetConfig_FullMethodName              = "/dropz.DropzService/GetConfig"
 	DropzService_UpdateConfig_FullMethodName           = "/dropz.DropzService/UpdateConfig"
 	DropzService_GetSetting_FullMethodName             = "/dropz.DropzService/GetSetting"
@@ -79,6 +81,9 @@ type DropzServiceClient interface {
 	SaveManagedAsGroup(ctx context.Context, in *SaveManagedAsGroupRequest, opts ...grpc.CallOption) (*Group, error)
 	// Video management
 	GetVideos(ctx context.Context, in *GetVideosRequest, opts ...grpc.CallOption) (*GetVideosResponse, error)
+	// Media browser: cached per-camera catalogs with selective download
+	GetCameraMedia(ctx context.Context, in *GetCameraMediaRequest, opts ...grpc.CallOption) (*GetCameraMediaResponse, error)
+	RequestMediaDownload(ctx context.Context, in *RequestMediaDownloadRequest, opts ...grpc.CallOption) (*RequestMediaDownloadResponse, error)
 	// Configuration & Settings
 	GetConfig(ctx context.Context, in *GetConfigRequest, opts ...grpc.CallOption) (*GetConfigResponse, error)
 	UpdateConfig(ctx context.Context, in *UpdateConfigRequest, opts ...grpc.CallOption) (*UpdateConfigResponse, error)
@@ -322,6 +327,26 @@ func (c *dropzServiceClient) GetVideos(ctx context.Context, in *GetVideosRequest
 	return out, nil
 }
 
+func (c *dropzServiceClient) GetCameraMedia(ctx context.Context, in *GetCameraMediaRequest, opts ...grpc.CallOption) (*GetCameraMediaResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetCameraMediaResponse)
+	err := c.cc.Invoke(ctx, DropzService_GetCameraMedia_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dropzServiceClient) RequestMediaDownload(ctx context.Context, in *RequestMediaDownloadRequest, opts ...grpc.CallOption) (*RequestMediaDownloadResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RequestMediaDownloadResponse)
+	err := c.cc.Invoke(ctx, DropzService_RequestMediaDownload_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *dropzServiceClient) GetConfig(ctx context.Context, in *GetConfigRequest, opts ...grpc.CallOption) (*GetConfigResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetConfigResponse)
@@ -405,6 +430,9 @@ type DropzServiceServer interface {
 	SaveManagedAsGroup(context.Context, *SaveManagedAsGroupRequest) (*Group, error)
 	// Video management
 	GetVideos(context.Context, *GetVideosRequest) (*GetVideosResponse, error)
+	// Media browser: cached per-camera catalogs with selective download
+	GetCameraMedia(context.Context, *GetCameraMediaRequest) (*GetCameraMediaResponse, error)
+	RequestMediaDownload(context.Context, *RequestMediaDownloadRequest) (*RequestMediaDownloadResponse, error)
 	// Configuration & Settings
 	GetConfig(context.Context, *GetConfigRequest) (*GetConfigResponse, error)
 	UpdateConfig(context.Context, *UpdateConfigRequest) (*UpdateConfigResponse, error)
@@ -480,6 +508,12 @@ func (UnimplementedDropzServiceServer) SaveManagedAsGroup(context.Context, *Save
 }
 func (UnimplementedDropzServiceServer) GetVideos(context.Context, *GetVideosRequest) (*GetVideosResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetVideos not implemented")
+}
+func (UnimplementedDropzServiceServer) GetCameraMedia(context.Context, *GetCameraMediaRequest) (*GetCameraMediaResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCameraMedia not implemented")
+}
+func (UnimplementedDropzServiceServer) RequestMediaDownload(context.Context, *RequestMediaDownloadRequest) (*RequestMediaDownloadResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RequestMediaDownload not implemented")
 }
 func (UnimplementedDropzServiceServer) GetConfig(context.Context, *GetConfigRequest) (*GetConfigResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetConfig not implemented")
@@ -856,6 +890,42 @@ func _DropzService_GetVideos_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DropzService_GetCameraMedia_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCameraMediaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).GetCameraMedia(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_GetCameraMedia_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).GetCameraMedia(ctx, req.(*GetCameraMediaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DropzService_RequestMediaDownload_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RequestMediaDownloadRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).RequestMediaDownload(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_RequestMediaDownload_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).RequestMediaDownload(ctx, req.(*RequestMediaDownloadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _DropzService_GetConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetConfigRequest)
 	if err := dec(in); err != nil {
@@ -1020,6 +1090,14 @@ var DropzService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetVideos",
 			Handler:    _DropzService_GetVideos_Handler,
+		},
+		{
+			MethodName: "GetCameraMedia",
+			Handler:    _DropzService_GetCameraMedia_Handler,
+		},
+		{
+			MethodName: "RequestMediaDownload",
+			Handler:    _DropzService_RequestMediaDownload_Handler,
 		},
 		{
 			MethodName: "GetConfig",

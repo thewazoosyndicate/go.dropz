@@ -2,7 +2,14 @@
 
 Validated 2026-08-23 against gopro.github.io/OpenGoPro (docs/ble/*) and the
 official Python SDK constants (demos/python/sdk_wireless_camera_control).
+Re-validated 2026-08-23 against the full gh-pages spec build plus all upstream
+demo implementations (Python SDK, Kotlin kmp_sdk, Swift, C#, C/C++, tutorials).
 Verdicts: conform | fixed | deviation (kept, reason given) | enhancement (not implemented).
+
+Trust note: the spec's advertisement bit tables are LSB-first (Bit 0 = 0x01).
+The Python SDK parses them MSB-first via construct BitStruct; that parser is
+unused upstream and wrong. The Kotlin SDK matches the spec and has a
+real-capture test vector. When SDKs disagree, the spec + Kotlin vector win.
 
 ## BLE setup and GATT
 
@@ -14,7 +21,9 @@ Verdicts: conform | fixed | deviation (kept, reason given) | enhancement (not im
 | Network mgmt GP-0091 write, GP-0092 notify | match | same | conform |
 | WiFi AP Power GP-0004 / State GP-0005 | unused; we use command 0x17 | either path valid | conform |
 | Re-subscribe on each connect | yes (no caching assumed) | required | conform |
-| Adv manufacturer data (pairing flag, new-media flag, model id, serial) | parsed; drives identity, auto-pair, status checks | available | conform (implemented 2026-08-23) |
+| Adv manufacturer data (pairing flag, new-media flag, model id, serial) | parsed; drives identity, auto-pair, status checks | available | fixed 2026-08-23: bit masks were MSB-first (copied from the buggy Python SDK parser); now LSB-first per spec (processor 0x01, wifi 0x02, pairing 0x04, new media 0x10) |
+| Serial from advertisement | assembled: model prefix + schema v2 id_hash or v3 chars 4-5 + service data tail (4 or 8 chars) | serial is split across manuf + service data; first 4 chars never broadcast | fixed 2026-08-23: previously expected 8+ chars directly after the AP MAC, which never matches; partial serials are never stored |
+| Fragment accumulation | one collector per notify characteristic | accumulate per source UUID | fixed 2026-08-23: was one collector per device; a push during a fragmented response corrupted both |
 
 ## Pairing
 
@@ -42,7 +51,8 @@ Verdicts: conform | fixed | deviation (kept, reason given) | enhancement (not im
 | Sleep | 0x05, no params | SLEEP 0x05 | conform |
 | Set Date Time fallback | 0x0D, 7-byte payload | SET_DATE_TIME | conform |
 | Set Local Date Time | 0x0F, 10-byte payload (date+utc offset+dst) | SET_DATE_TIME_DST | conform |
-| AP control | 0x17, param 1 byte | SET_WIFI 0x17 | conform; mode 2 "bounce" is not in spec and unused, kept |
+| AP control | 0x17, param 1 byte | SET_WIFI 0x17 | conform; mode 2 "bounce" is in spec ("disable then enable") and now used for AP recovery |
+| WiFi AP readiness | poll status 69 up to 10s before joining; bounce AP on timeout | spec: wait for AP Mode (69) == 1 before connecting | conform (implemented 2026-08-23; replaced a blind 2s sleep) |
 | Get Hardware Info | 0x3C, length-prefixed field parse | GET_HW_INFO | conform |
 | Third-party client | was 0x6B ("empirically works") | SET_THIRD_PARTY_CLIENT_INFO 0x50 | fixed: now 0x50; 0x6B is not in the command table |
 | Keep-alive | was command 0x5B on GP-0072 | setting LED(91)=66 on GP-0074 | fixed: now a settings write; bytes were right, characteristic was wrong |
@@ -78,13 +88,37 @@ Verdicts: conform | fixed | deviation (kept, reason given) | enhancement (not im
 | Camera state | /gopro/camera/state | same | conform |
 | Media list | /gopro/media/list | same | conform |
 | Download | /videos/DCIM/<dir>/<file>, Range resume | same endpoint; Range supported | conform |
-| Media list parse | n/cre/mod/s + group fields | same schema | conform; group fields (b/l/g) parsed but unused |
+| Media list parse | n/cre/mod/s + group fields | same schema | conform |
+| Grouped media (burst, time lapse) | members expanded from b..l skipping m; "s" treated as count, not bytes | grouped entries list only the first member; s is the member count | fixed 2026-08-23: previously only the first member downloaded and s misread as bytes |
+| Turbo transfer | enabled for the download window, disabled after (best effort) | recommended only during media offload | conform (implemented 2026-08-23) |
 | File types | .mp4/.jpg only | .360, LRV/THM also exist | deviation kept: by design, primary media only |
 | cre epoch seconds | time.Unix(cre, 0) | epoch seconds | conform |
+
+## Enhancements not implemented (deliberate)
+
+- Set Camera Control (protobuf 0xF1/0x69, claim EXTERNAL_CONTROL): spec says a
+  third-party client "should" claim control. Fleet cameras are headless;
+  revisit if camera-UI contention appears (status 114 reports the holder).
+- Get Open GoPro Version (0x51) handshake: SDK asserts "2.0". Low value; our
+  commands fail loudly enough on unsupported cameras.
+- Status 82 (Ready): documented but never prescribed; hardware-info polling is
+  the spec's readiness gate and we do that.
+- New-media flag clearing (protobuf 0xF1/0x7C): we track sync state ourselves;
+  clearing the camera flag would break other clients' view.
+
+## Known model gaps (documented, not coded)
+
+- LIT HERO (model 70): Sleep 0x05 and Set Date Time 0x0D are not listed as
+  supported. Our Sleep on disconnect will fail harmlessly there.
+- Cameras advertise for only 8 hours after sleep; beyond that they need a
+  button press. Fleet reachability windows must assume this.
+- 2-byte setting/status IDs (Mission 1 family) are not implemented; gate on
+  Get Camera Capabilities if those models ever matter.
 
 ## Follow-ups (not code fixes)
 
 - Hardware validation needed on real cameras (HERO12 and HERO13+ on Linux,
   any camera on macOS 15): keep-alive fix, pairing-finish framing,
-  third-party-client 0x50, advertisement parsing, busy gating, and the
+  third-party-client 0x50, advertisement parsing (bit order + serial assembly),
+  busy gating, AP-ready gate, turbo transfer, grouped media expansion, and the
   CoreWLAN wifi_join helper path.

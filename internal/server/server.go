@@ -38,6 +38,11 @@ type Manager interface {
 	DeleteGroup(groupID string) error
 	LoadGroup(groupID string) error
 	SaveManagedAsGroup(name string) (*model.Group, error)
+	// Camera settings (BLE)
+	GetCameraSettings(cameraID string) ([]model.CameraSetting, time.Time, error)
+	RefreshCameraSettings(cameraID string) ([]model.CameraSetting, time.Time, error)
+	ApplyCameraSettings(cameraID string, changes map[int32]int64) ([]model.SettingApplyResult, error)
+	ApplyGroupSettings(groupID string, changes map[int32]int64) ([]model.GroupSettingsResult, error)
 	// Config
 	GetConfig() model.Config
 	UpdateConfig(config model.Config) error

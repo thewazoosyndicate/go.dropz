@@ -7,6 +7,28 @@ var video_pb = require('./video_pb.js');
 var config_pb = require('./config_pb.js');
 var common_pb = require('./common_pb.js');
 
+function serialize_dropz_ApplyCameraSettingsRequest(arg) {
+  if (!(arg instanceof gopro_pb.ApplyCameraSettingsRequest)) {
+    throw new Error('Expected argument of type dropz.ApplyCameraSettingsRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_ApplyCameraSettingsRequest(buffer_arg) {
+  return gopro_pb.ApplyCameraSettingsRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_ApplyCameraSettingsResponse(arg) {
+  if (!(arg instanceof gopro_pb.ApplyCameraSettingsResponse)) {
+    throw new Error('Expected argument of type dropz.ApplyCameraSettingsResponse');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_ApplyCameraSettingsResponse(buffer_arg) {
+  return gopro_pb.ApplyCameraSettingsResponse.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
 function serialize_dropz_CancelSyncRequest(arg) {
   if (!(arg instanceof gopro_pb.CancelSyncRequest)) {
     throw new Error('Expected argument of type dropz.CancelSyncRequest');
@@ -82,6 +104,28 @@ function serialize_dropz_ForceSyncResponse(arg) {
 
 function deserialize_dropz_ForceSyncResponse(buffer_arg) {
   return gopro_pb.ForceSyncResponse.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_GetCameraSettingsRequest(arg) {
+  if (!(arg instanceof gopro_pb.GetCameraSettingsRequest)) {
+    throw new Error('Expected argument of type dropz.GetCameraSettingsRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_GetCameraSettingsRequest(buffer_arg) {
+  return gopro_pb.GetCameraSettingsRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_GetCameraSettingsResponse(arg) {
+  if (!(arg instanceof gopro_pb.GetCameraSettingsResponse)) {
+    throw new Error('Expected argument of type dropz.GetCameraSettingsResponse');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_GetCameraSettingsResponse(buffer_arg) {
+  return gopro_pb.GetCameraSettingsResponse.deserializeBinary(new Uint8Array(buffer_arg));
 }
 
 function serialize_dropz_GetConfigRequest(arg) {
@@ -496,6 +540,29 @@ pairCamera: {
     requestDeserialize: deserialize_dropz_PairCameraRequest,
     responseSerialize: serialize_dropz_PairCameraResponse,
     responseDeserialize: deserialize_dropz_PairCameraResponse,
+  },
+  // Camera settings over BLE, per camera or per group
+getCameraSettings: {
+    path: '/dropz.DropzService/GetCameraSettings',
+    requestStream: false,
+    responseStream: false,
+    requestType: gopro_pb.GetCameraSettingsRequest,
+    responseType: gopro_pb.GetCameraSettingsResponse,
+    requestSerialize: serialize_dropz_GetCameraSettingsRequest,
+    requestDeserialize: deserialize_dropz_GetCameraSettingsRequest,
+    responseSerialize: serialize_dropz_GetCameraSettingsResponse,
+    responseDeserialize: deserialize_dropz_GetCameraSettingsResponse,
+  },
+  applyCameraSettings: {
+    path: '/dropz.DropzService/ApplyCameraSettings',
+    requestStream: false,
+    responseStream: false,
+    requestType: gopro_pb.ApplyCameraSettingsRequest,
+    responseType: gopro_pb.ApplyCameraSettingsResponse,
+    requestSerialize: serialize_dropz_ApplyCameraSettingsRequest,
+    requestDeserialize: deserialize_dropz_ApplyCameraSettingsRequest,
+    responseSerialize: serialize_dropz_ApplyCameraSettingsResponse,
+    responseDeserialize: deserialize_dropz_ApplyCameraSettingsResponse,
   },
   // Sync Queue operations
 getSyncQueue: {

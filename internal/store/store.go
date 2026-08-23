@@ -149,6 +149,10 @@ func (db *Store) groupIDFor(cameraID string) string {
 func (db *Store) copyCamera(cs *model.CameraWithState) *model.CameraWithState {
 	csCopy := *cs
 	csCopy.GroupID = db.groupIDFor(cs.Camera.ID)
+	if len(cs.Metadata.Settings) > 0 {
+		csCopy.Metadata.Settings = make([]model.CameraSetting, len(cs.Metadata.Settings))
+		copy(csCopy.Metadata.Settings, cs.Metadata.Settings)
+	}
 	return &csCopy
 }
 

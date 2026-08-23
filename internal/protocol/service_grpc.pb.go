@@ -26,6 +26,8 @@ const (
 	DropzService_ManageCamera_FullMethodName           = "/dropz.DropzService/ManageCamera"
 	DropzService_UnmanageCamera_FullMethodName         = "/dropz.DropzService/UnmanageCamera"
 	DropzService_PairCamera_FullMethodName             = "/dropz.DropzService/PairCamera"
+	DropzService_GetCameraSettings_FullMethodName      = "/dropz.DropzService/GetCameraSettings"
+	DropzService_ApplyCameraSettings_FullMethodName    = "/dropz.DropzService/ApplyCameraSettings"
 	DropzService_GetSyncQueue_FullMethodName           = "/dropz.DropzService/GetSyncQueue"
 	DropzService_WatchSyncQueue_FullMethodName         = "/dropz.DropzService/WatchSyncQueue"
 	DropzService_ForceSync_FullMethodName              = "/dropz.DropzService/ForceSync"
@@ -60,6 +62,9 @@ type DropzServiceClient interface {
 	UnmanageCamera(ctx context.Context, in *UnmanageCameraRequest, opts ...grpc.CallOption) (*UnmanageCameraResponse, error)
 	// Pairing operations
 	PairCamera(ctx context.Context, in *PairCameraRequest, opts ...grpc.CallOption) (*PairCameraResponse, error)
+	// Camera settings over BLE, per camera or per group
+	GetCameraSettings(ctx context.Context, in *GetCameraSettingsRequest, opts ...grpc.CallOption) (*GetCameraSettingsResponse, error)
+	ApplyCameraSettings(ctx context.Context, in *ApplyCameraSettingsRequest, opts ...grpc.CallOption) (*ApplyCameraSettingsResponse, error)
 	// Sync Queue operations
 	GetSyncQueue(ctx context.Context, in *GetSyncQueueRequest, opts ...grpc.CallOption) (*GetSyncQueueResponse, error)
 	WatchSyncQueue(ctx context.Context, in *GetSyncQueueRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetSyncQueueResponse], error)
@@ -172,6 +177,26 @@ func (c *dropzServiceClient) PairCamera(ctx context.Context, in *PairCameraReque
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PairCameraResponse)
 	err := c.cc.Invoke(ctx, DropzService_PairCamera_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dropzServiceClient) GetCameraSettings(ctx context.Context, in *GetCameraSettingsRequest, opts ...grpc.CallOption) (*GetCameraSettingsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetCameraSettingsResponse)
+	err := c.cc.Invoke(ctx, DropzService_GetCameraSettings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dropzServiceClient) ApplyCameraSettings(ctx context.Context, in *ApplyCameraSettingsRequest, opts ...grpc.CallOption) (*ApplyCameraSettingsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ApplyCameraSettingsResponse)
+	err := c.cc.Invoke(ctx, DropzService_ApplyCameraSettings_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -363,6 +388,9 @@ type DropzServiceServer interface {
 	UnmanageCamera(context.Context, *UnmanageCameraRequest) (*UnmanageCameraResponse, error)
 	// Pairing operations
 	PairCamera(context.Context, *PairCameraRequest) (*PairCameraResponse, error)
+	// Camera settings over BLE, per camera or per group
+	GetCameraSettings(context.Context, *GetCameraSettingsRequest) (*GetCameraSettingsResponse, error)
+	ApplyCameraSettings(context.Context, *ApplyCameraSettingsRequest) (*ApplyCameraSettingsResponse, error)
 	// Sync Queue operations
 	GetSyncQueue(context.Context, *GetSyncQueueRequest) (*GetSyncQueueResponse, error)
 	WatchSyncQueue(*GetSyncQueueRequest, grpc.ServerStreamingServer[GetSyncQueueResponse]) error
@@ -413,6 +441,12 @@ func (UnimplementedDropzServiceServer) UnmanageCamera(context.Context, *Unmanage
 }
 func (UnimplementedDropzServiceServer) PairCamera(context.Context, *PairCameraRequest) (*PairCameraResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PairCamera not implemented")
+}
+func (UnimplementedDropzServiceServer) GetCameraSettings(context.Context, *GetCameraSettingsRequest) (*GetCameraSettingsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCameraSettings not implemented")
+}
+func (UnimplementedDropzServiceServer) ApplyCameraSettings(context.Context, *ApplyCameraSettingsRequest) (*ApplyCameraSettingsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ApplyCameraSettings not implemented")
 }
 func (UnimplementedDropzServiceServer) GetSyncQueue(context.Context, *GetSyncQueueRequest) (*GetSyncQueueResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSyncQueue not implemented")
@@ -591,6 +625,42 @@ func _DropzService_PairCamera_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(DropzServiceServer).PairCamera(ctx, req.(*PairCameraRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DropzService_GetCameraSettings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCameraSettingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).GetCameraSettings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_GetCameraSettings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).GetCameraSettings(ctx, req.(*GetCameraSettingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DropzService_ApplyCameraSettings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApplyCameraSettingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).ApplyCameraSettings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_ApplyCameraSettings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).ApplyCameraSettings(ctx, req.(*ApplyCameraSettingsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -902,6 +972,14 @@ var DropzService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PairCamera",
 			Handler:    _DropzService_PairCamera_Handler,
+		},
+		{
+			MethodName: "GetCameraSettings",
+			Handler:    _DropzService_GetCameraSettings_Handler,
+		},
+		{
+			MethodName: "ApplyCameraSettings",
+			Handler:    _DropzService_ApplyCameraSettings_Handler,
 		},
 		{
 			MethodName: "GetSyncQueue",

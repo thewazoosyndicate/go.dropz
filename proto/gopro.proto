@@ -213,3 +213,53 @@ message LoadGroupResponse {
 message SaveManagedAsGroupRequest {
   string name = 1;
 }
+// Camera settings, refreshed over BLE. Options list only what the camera
+// reported as available: per-model support comes from the camera itself.
+message SettingOption {
+  int64 value = 1;
+  string name = 2;
+}
+
+message CameraSetting {
+  int32 id = 1;
+  string name = 2;
+  int64 value = 3;
+  string value_name = 4;
+  repeated SettingOption options = 5;
+}
+
+message SettingChange {
+  int32 id = 1;
+  int64 value = 2;
+}
+
+message SettingApplyResult {
+  int32 id = 1;
+  string error = 2; // empty = applied
+}
+
+message CameraSettingsResult {
+  string camera_id = 1;
+  string error = 2; // whole-camera failure; empty otherwise
+  repeated SettingApplyResult results = 3;
+}
+
+message GetCameraSettingsRequest {
+  string camera_id = 1;
+  bool refresh = 2; // true = read from the camera over BLE
+}
+
+message GetCameraSettingsResponse {
+  repeated CameraSetting settings = 1;
+  google.protobuf.Timestamp updated_at = 2;
+}
+
+message ApplyCameraSettingsRequest {
+  string camera_id = 1; // exactly one of camera_id / group_id
+  string group_id = 2;
+  repeated SettingChange changes = 3;
+}
+
+message ApplyCameraSettingsResponse {
+  repeated CameraSettingsResult cameras = 1;
+}

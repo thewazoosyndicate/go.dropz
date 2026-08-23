@@ -48,6 +48,40 @@ type CameraMetadata struct {
 	NumVideos        int32  `json:"num_videos"`
 	SDCardStatusCode int32  `json:"sd_card_status"`
 	RemainingSpaceKB int64  `json:"remaining_space_kb"`
+	// Settings is the last-known snapshot from the camera. Mutators must
+	// replace the slice, never edit elements in place (copies share it).
+	Settings        []CameraSetting `json:"settings,omitempty"`
+	SettingsUpdated time.Time       `json:"settings_updated,omitempty"`
+}
+
+// SettingOption is one selectable value for a camera setting.
+type SettingOption struct {
+	Value int64  `json:"value"`
+	Name  string `json:"name"`
+}
+
+// CameraSetting is one setting's state as the camera reported it over BLE.
+// Options list only what the camera says is available right now; per-model
+// and per-state gating comes from the camera, never from static tables.
+type CameraSetting struct {
+	ID        int32           `json:"id"`
+	Name      string          `json:"name"`
+	Value     int64           `json:"value"`
+	ValueName string          `json:"value_name,omitempty"`
+	Options   []SettingOption `json:"options,omitempty"`
+}
+
+// SettingApplyResult reports one setting write on one camera.
+type SettingApplyResult struct {
+	ID    int32  `json:"id"`
+	Error string `json:"error,omitempty"` // empty = applied
+}
+
+// GroupSettingsResult reports one camera's outcome of a settings apply.
+type GroupSettingsResult struct {
+	CameraID string
+	Error    string // whole-camera failure (unreachable, busy); empty otherwise
+	Results  []SettingApplyResult
 }
 
 // CameraWithState represents a complete camera with all its information

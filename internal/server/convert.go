@@ -98,6 +98,31 @@ func toProtoVideoFile(v *model.VideoFile) *protocol.VideoFile {
 	}
 }
 
+func toProtoCameraSettings(settings []model.CameraSetting) []*protocol.CameraSetting {
+	out := make([]*protocol.CameraSetting, 0, len(settings))
+	for _, s := range settings {
+		ps := &protocol.CameraSetting{
+			Id:        s.ID,
+			Name:      s.Name,
+			Value:     s.Value,
+			ValueName: s.ValueName,
+		}
+		for _, o := range s.Options {
+			ps.Options = append(ps.Options, &protocol.SettingOption{Value: o.Value, Name: o.Name})
+		}
+		out = append(out, ps)
+	}
+	return out
+}
+
+func toProtoSettingApplyResults(results []model.SettingApplyResult) []*protocol.SettingApplyResult {
+	out := make([]*protocol.SettingApplyResult, 0, len(results))
+	for _, r := range results {
+		out = append(out, &protocol.SettingApplyResult{Id: r.ID, Error: r.Error})
+	}
+	return out
+}
+
 func toProtoConfig(c model.Config) *protocol.Config {
 	return &protocol.Config{
 		PairModeEnabled:            c.PairModeEnabled,

@@ -22,6 +22,10 @@ service DropzService {
   
   // Pairing operations
   rpc PairCamera(PairCameraRequest) returns (PairCameraResponse);
+
+  // Camera settings over BLE, per camera or per group
+  rpc GetCameraSettings(GetCameraSettingsRequest) returns (GetCameraSettingsResponse);
+  rpc ApplyCameraSettings(ApplyCameraSettingsRequest) returns (ApplyCameraSettingsResponse);
   
   // Sync Queue operations
   rpc GetSyncQueue(GetSyncQueueRequest) returns (GetSyncQueueResponse);

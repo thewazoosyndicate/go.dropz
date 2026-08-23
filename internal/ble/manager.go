@@ -502,13 +502,17 @@ func (m *Manager) ConnectForStatusCheck(macAddress string) error {
 		return err
 	}
 
+	// Settings chars included: keep-alive and setting reads/writes go to
+	// GP-0074/0075 and must work on this lightweight connection too.
 	m.discoverCharacteristics(macAddress, services, map[string]bool{
 		ServiceControl: true,
 	}, map[string]bool{
 		CharCommand: true, CharCommandResponse: true,
 		CharQuery: true, CharQueryResponse: true,
+		CharSettings: true, CharSettingsResponse: true,
 	}, map[string]bool{
 		CharCommandResponse: true, CharQueryResponse: true,
+		CharSettingsResponse: true,
 	}, connectStart)
 
 	return nil

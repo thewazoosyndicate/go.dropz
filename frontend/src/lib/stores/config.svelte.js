@@ -33,6 +33,7 @@ export function updateConfigField(key, value) {
     'inactivity_timeout_seconds': 'inactivityTimeoutSeconds',
     'status_check_interval_seconds': 'statusCheckIntervalSeconds',
     'check_on_return': 'checkOnReturn',
+    'turbo_enabled': 'turboEnabled',
     'set_time_enabled': 'setTimeEnabled',
     'log_level': 'logLevel'
   };

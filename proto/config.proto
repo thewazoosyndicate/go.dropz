@@ -20,6 +20,7 @@ message Config {
   reserved 8; // was inactivity_sync_interval_seconds
   int32 status_check_interval_seconds = 12;  // Interval between BLE status checks (0 = off)
   bool check_on_return = 13;  // Check for new media when camera reappears
+  bool turbo_enabled = 14;    // Use Turbo Transfer during media offload
 
   // Camera behavior settings
   bool set_time_enabled = 9;   // Set camera time when connecting

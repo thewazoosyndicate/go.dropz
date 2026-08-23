@@ -99,6 +99,7 @@ func validateLogLevel(v string) error {
 var settings = map[string]setting{
 	"pair_mode_enabled": boolSetting(func(c *model.Config) *bool { return &c.PairModeEnabled }),
 	"sync_enabled":      boolSetting(func(c *model.Config) *bool { return &c.SyncEnabled }),
+	"turbo_enabled":     boolSetting(func(c *model.Config) *bool { return &c.TurboEnabled }),
 	"check_on_return":   boolSetting(func(c *model.Config) *bool { return &c.CheckOnReturn }),
 	"set_time_enabled":  boolSetting(func(c *model.Config) *bool { return &c.SetTimeEnabled }),
 

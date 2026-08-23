@@ -485,16 +485,19 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		return
 	}
 
-	// Turbo Transfer speeds up WiFi offload; spec says enable only for the
-	// offload window. Best-effort: unsupported cameras answer 501.
-	if err := wifiManager.SetTurboTransfer(downloadCtx, true); err != nil {
-		c.log.Debug("Turbo transfer not enabled", "camera", task.CameraName, "err", err)
-	} else {
-		defer func() {
-			if err := wifiManager.SetTurboTransfer(syncCtx, false); err != nil {
-				c.log.Debug("Turbo transfer not disabled", "camera", task.CameraName, "err", err)
-			}
-		}()
+	// Turbo Transfer is opt-in: it is tuned for the GoPro app's parallel
+	// chunked downloads and measured slower for our single sequential
+	// stream. `ble-probe validate -wifi -speed` measures both on hardware.
+	if config.TurboEnabled {
+		if err := wifiManager.SetTurboTransfer(downloadCtx, true); err != nil {
+			c.log.Debug("Turbo transfer not enabled", "camera", task.CameraName, "err", err)
+		} else {
+			defer func() {
+				if err := wifiManager.SetTurboTransfer(syncCtx, false); err != nil {
+					c.log.Debug("Turbo transfer not disabled", "camera", task.CameraName, "err", err)
+				}
+			}()
+		}
 	}
 
 	updateProgress("Downloading media", 60)

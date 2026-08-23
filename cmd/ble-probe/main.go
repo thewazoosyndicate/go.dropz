@@ -14,7 +14,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -92,13 +94,14 @@ func main() {
 		fs := flag.NewFlagSet("validate", flag.ExitOnError)
 		doSleep := fs.Bool("sleep", false, "send Sleep on disconnect")
 		doWifi := fs.Bool("wifi", false, "also join the camera AP and run HTTP checks")
+		doSpeed := fs.Bool("speed", false, "with -wifi: measure throughput turbo off vs on")
 		level := logLevelFlag(fs)
 		fs.Parse(args)
 		initLogger(*level)
 		if fs.NArg() != 1 {
 			usage()
 		}
-		os.Exit(runValidate(adapter, fs.Arg(0), *doSleep, *doWifi))
+		os.Exit(runValidate(adapter, fs.Arg(0), *doSleep, *doWifi, *doSpeed))
 	case "pair":
 		fs := flag.NewFlagSet("pair", flag.ExitOnError)
 		level := logLevelFlag(fs)
@@ -254,7 +257,7 @@ func findCamera(adapter *bluetooth.Adapter, fragment string, timeout time.Durati
 	return found, adv, nil
 }
 
-func runValidate(adapter *bluetooth.Adapter, fragment string, doSleep, doWifi bool) int {
+func runValidate(adapter *bluetooth.Adapter, fragment string, doSleep, doWifi, doSpeed bool) int {
 	r := &report{}
 	fmt.Printf("=== dropz hardware validation ===\n\n")
 
@@ -334,7 +337,7 @@ func runValidate(adapter *bluetooth.Adapter, fragment string, doSleep, doWifi bo
 		fmt.Sprintf("AP up after %v", time.Since(start).Round(time.Millisecond)))
 
 	if doWifi {
-		validateWifi(r, manager, addr)
+		validateWifi(r, manager, addr, doSpeed)
 	} else {
 		r.note("wifi checks", "skipped; rerun with -wifi to validate join, media list, turbo")
 	}
@@ -348,7 +351,7 @@ func runValidate(adapter *bluetooth.Adapter, fragment string, doSleep, doWifi bo
 	return r.summary()
 }
 
-func validateWifi(r *report, manager *ble.Manager, addr string) {
+func validateWifi(r *report, manager *ble.Manager, addr string, doSpeed bool) {
 	ssid, password, err := manager.GetWifiCredentials(addr)
 	if err != nil || ssid == "" || password == "" {
 		r.bad("wifi credentials", fmt.Sprintf("ssid=%q err=%v", ssid, err))
@@ -397,6 +400,69 @@ func validateWifi(r *report, manager *ble.Manager, addr string) {
 		err := wm.SetTurboTransfer(ctx, false)
 		r.check("turbo transfer", err, "enabled and disabled (camera briefly showed transfer UI)")
 	}
+
+	if doSpeed {
+		speedTest(r, ctx, wm, files)
+	}
+}
+
+// speedTest measures single-stream download throughput with turbo off and
+// on, using the largest file on the card (capped at 64MB per run).
+// The number that settles whether turbo helps this host and camera.
+func speedTest(r *report, ctx context.Context, wm *wifi.WiFiManager, files []wifi.MediaFile) {
+	var largest wifi.MediaFile
+	for _, f := range files {
+		if f.Size > largest.Size {
+			largest = f
+		}
+	}
+	if largest.Size < 8<<20 {
+		r.note("speed test", "no file of at least 8MB on the card; record a clip first")
+		return
+	}
+
+	const capBytes = 64 << 20
+	measure := func() (float64, error) {
+		req, err := http.NewRequestWithContext(ctx, "GET", largest.URL, nil)
+		if err != nil {
+			return 0, err
+		}
+		limit := largest.Size
+		if limit > capBytes {
+			limit = capBytes
+		}
+		req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", limit-1))
+		start := time.Now()
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return 0, err
+		}
+		defer resp.Body.Close()
+		n, err := io.Copy(io.Discard, resp.Body)
+		if err != nil {
+			return 0, err
+		}
+		return float64(n) / 1e6 / time.Since(start).Seconds(), nil
+	}
+
+	run := func(label string, turbo bool) {
+		if err := wm.SetTurboTransfer(ctx, turbo); err != nil {
+			r.note("speed "+label, "turbo toggle failed: "+err.Error())
+			return
+		}
+		time.Sleep(2 * time.Second) // let the camera settle into the mode
+		rate, err := measure()
+		if err != nil {
+			r.bad("speed "+label, err.Error())
+			return
+		}
+		r.ok("speed "+label, fmt.Sprintf("%.1f MB/s (%s, first %dMB)", rate, largest.Name, min(largest.Size, capBytes)>>20))
+	}
+
+	run("turbo off", false)
+	run("turbo ON", true)
+	wm.SetTurboTransfer(ctx, false)
+	r.note("speed verdict", "set turbo_enabled in the app config to whichever won")
 }
 
 func runPair(adapter *bluetooth.Adapter, fragment string) int {

@@ -36,6 +36,7 @@ type Config struct {
 	InactivityTimeoutSeconds   int32  `protobuf:"varint,7,opt,name=inactivity_timeout_seconds,json=inactivityTimeoutSeconds,proto3" json:"inactivity_timeout_seconds,omitempty"`
 	StatusCheckIntervalSeconds int32  `protobuf:"varint,12,opt,name=status_check_interval_seconds,json=statusCheckIntervalSeconds,proto3" json:"status_check_interval_seconds,omitempty"` // Interval between BLE status checks (0 = off)
 	CheckOnReturn              bool   `protobuf:"varint,13,opt,name=check_on_return,json=checkOnReturn,proto3" json:"check_on_return,omitempty"`                                          // Check for new media when camera reappears
+	TurboEnabled               bool   `protobuf:"varint,14,opt,name=turbo_enabled,json=turboEnabled,proto3" json:"turbo_enabled,omitempty"`                                               // Use Turbo Transfer during media offload
 	// Camera behavior settings
 	SetTimeEnabled bool `protobuf:"varint,9,opt,name=set_time_enabled,json=setTimeEnabled,proto3" json:"set_time_enabled,omitempty"` // Set camera time when connecting
 	// Additional settings
@@ -134,6 +135,13 @@ func (x *Config) GetStatusCheckIntervalSeconds() int32 {
 func (x *Config) GetCheckOnReturn() bool {
 	if x != nil {
 		return x.CheckOnReturn
+	}
+	return false
+}
+
+func (x *Config) GetTurboEnabled() bool {
+	if x != nil {
+		return x.TurboEnabled
 	}
 	return false
 }
@@ -647,7 +655,7 @@ var File_config_proto protoreflect.FileDescriptor
 
 const file_config_proto_rawDesc = "" +
 	"\n" +
-	"\fconfig.proto\x12\x05dropz\x1a\x1fgoogle/protobuf/timestamp.proto\"\xce\x04\n" +
+	"\fconfig.proto\x12\x05dropz\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf3\x04\n" +
 	"\x06Config\x12*\n" +
 	"\x11pair_mode_enabled\x18\x01 \x01(\bR\x0fpairModeEnabled\x12!\n" +
 	"\fsync_enabled\x18\x02 \x01(\bR\vsyncEnabled\x122\n" +
@@ -657,7 +665,8 @@ const file_config_proto_rawDesc = "" +
 	"\x12destination_folder\x18\x06 \x01(\tR\x11destinationFolder\x12<\n" +
 	"\x1ainactivity_timeout_seconds\x18\a \x01(\x05R\x18inactivityTimeoutSeconds\x12A\n" +
 	"\x1dstatus_check_interval_seconds\x18\f \x01(\x05R\x1astatusCheckIntervalSeconds\x12&\n" +
-	"\x0fcheck_on_return\x18\r \x01(\bR\rcheckOnReturn\x12(\n" +
+	"\x0fcheck_on_return\x18\r \x01(\bR\rcheckOnReturn\x12#\n" +
+	"\rturbo_enabled\x18\x0e \x01(\bR\fturboEnabled\x12(\n" +
 	"\x10set_time_enabled\x18\t \x01(\bR\x0esetTimeEnabled\x12\x1b\n" +
 	"\tlog_level\x18\n" +
 	" \x01(\tR\blogLevel\x12=\n" +

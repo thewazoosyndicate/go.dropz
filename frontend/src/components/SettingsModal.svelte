@@ -142,6 +142,18 @@
               </label>
             </div>
 
+            <div class="setting-item">
+              <div class="setting-label">
+                <span>Turbo Transfer</span>
+                <p class="setting-hint">Faster on some setups, slower on others; measure with ble-probe -speed</p>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" checked={config.turboEnabled}
+                       onchange={(e) => handleToggle(e, 'turbo_enabled')} />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
             <div class="setting-item slider-row">
               <div class="setting-label-row">
                 <span>Check Every</span>

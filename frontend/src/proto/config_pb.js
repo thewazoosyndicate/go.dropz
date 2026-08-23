@@ -264,6 +264,7 @@ proto.dropz.Config.toObject = function(includeInstance, msg) {
     inactivityTimeoutSeconds: jspb.Message.getFieldWithDefault(msg, 7, 0),
     statusCheckIntervalSeconds: jspb.Message.getFieldWithDefault(msg, 12, 0),
     checkOnReturn: jspb.Message.getBooleanFieldWithDefault(msg, 13, false),
+    turboEnabled: jspb.Message.getBooleanFieldWithDefault(msg, 14, false),
     setTimeEnabled: jspb.Message.getBooleanFieldWithDefault(msg, 9, false),
     logLevel: jspb.Message.getFieldWithDefault(msg, 10, ""),
     lastUpdated: (f = msg.getLastUpdated()) && google_protobuf_timestamp_pb.Timestamp.toObject(includeInstance, f)
@@ -338,6 +339,10 @@ proto.dropz.Config.deserializeBinaryFromReader = function(msg, reader) {
     case 13:
       var value = /** @type {boolean} */ (reader.readBool());
       msg.setCheckOnReturn(value);
+      break;
+    case 14:
+      var value = /** @type {boolean} */ (reader.readBool());
+      msg.setTurboEnabled(value);
       break;
     case 9:
       var value = /** @type {boolean} */ (reader.readBool());
@@ -441,6 +446,13 @@ proto.dropz.Config.serializeBinaryToWriter = function(message, writer) {
   if (f) {
     writer.writeBool(
       13,
+      f
+    );
+  }
+  f = message.getTurboEnabled();
+  if (f) {
+    writer.writeBool(
+      14,
       f
     );
   }
@@ -628,6 +640,24 @@ proto.dropz.Config.prototype.getCheckOnReturn = function() {
  */
 proto.dropz.Config.prototype.setCheckOnReturn = function(value) {
   return jspb.Message.setProto3BooleanField(this, 13, value);
+};
+
+
+/**
+ * optional bool turbo_enabled = 14;
+ * @return {boolean}
+ */
+proto.dropz.Config.prototype.getTurboEnabled = function() {
+  return /** @type {boolean} */ (jspb.Message.getBooleanFieldWithDefault(this, 14, false));
+};
+
+
+/**
+ * @param {boolean} value
+ * @return {!proto.dropz.Config} returns this
+ */
+proto.dropz.Config.prototype.setTurboEnabled = function(value) {
+  return jspb.Message.setProto3BooleanField(this, 14, value);
 };
 
 

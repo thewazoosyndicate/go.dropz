@@ -135,6 +135,7 @@ func toProtoConfig(c model.Config) *protocol.Config {
 		StatusCheckIntervalSeconds: c.StatusCheckIntervalSeconds,
 		CheckOnReturn:              c.CheckOnReturn,
 		SetTimeEnabled:             c.SetTimeEnabled,
+		TurboEnabled:               c.TurboEnabled,
 		LogLevel:                   c.LogLevel,
 		LastUpdated:                timestamppb.New(c.LastUpdated),
 	}

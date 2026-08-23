@@ -112,12 +112,23 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 			continue
 		}
 
+		dlStart := time.Now()
 		dlErr := m.downloadFileWithResume(ctx, media.URL, outputPath, media.CreatedAt, media.Size)
 		if dlErr != nil {
 			// Per-file, skipped and continued; the summary below counts them
 			m.log.Warn("Failed to download media file", "file", media.Name, "err", dlErr)
 			failedCount++
 			continue
+		}
+
+		// Throughput per file: the number that settles turbo-vs-not debates
+		if fi, statErr := os.Stat(outputPath); statErr == nil {
+			elapsed := time.Since(dlStart).Seconds()
+			if elapsed > 0.5 {
+				m.log.Info("File downloaded", "file", media.Name,
+					"mb", fmt.Sprintf("%.1f", float64(fi.Size())/1e6),
+					"mb_per_s", fmt.Sprintf("%.1f", float64(fi.Size())/1e6/elapsed))
+			}
 		}
 
 		downloadedFiles = append(downloadedFiles, outputPath)

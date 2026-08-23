@@ -207,6 +207,8 @@ export function loadConfig() {
           inactivityTimeoutSeconds: config.getInactivityTimeoutSeconds(),
           statusCheckIntervalSeconds: config.getStatusCheckIntervalSeconds(),
           checkOnReturn: config.getCheckOnReturn(),
+      turboEnabled: config.getTurboEnabled(),
+          turboEnabled: config.getTurboEnabled(),
           logLevel: config.getLogLevel()
         });
       } catch (e) {

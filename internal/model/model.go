@@ -187,8 +187,12 @@ type Config struct {
 	StatusCheckIntervalSeconds int32     `json:"status_check_interval_seconds"`
 	CheckOnReturn              bool      `json:"check_on_return"`
 	SetTimeEnabled             bool      `json:"set_time_enabled"`
-	LogLevel                   string    `json:"log_level"`
-	LastUpdated                time.Time `json:"last_updated"`
+	// TurboEnabled uses Turbo Transfer during offload. Off by default:
+	// it is tuned for the GoPro app's parallel chunked downloads and
+	// measured slower for our single sequential stream on a HERO11.
+	TurboEnabled bool      `json:"turbo_enabled"`
+	LogLevel     string    `json:"log_level"`
+	LastUpdated  time.Time `json:"last_updated"`
 }
 
 // DefaultConfig returns the default configuration
@@ -208,6 +212,7 @@ func DefaultConfig() Config {
 		StatusCheckIntervalSeconds: 300,
 		CheckOnReturn:              true,
 		SetTimeEnabled:             true,
+		TurboEnabled:               false,
 		LogLevel:                   "info",
 		LastUpdated:                time.Now(),
 	}

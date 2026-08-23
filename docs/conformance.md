@@ -72,6 +72,15 @@ real-capture test vector. When SDKs disagree, the spec + Kotlin vector win.
 | Status 70 battery percent | INTERNAL_BATTERY_PERCENTAGE | same | conform |
 | -1 / 255 sentinels after wake | special-cased, not stored | not documented upstream | deviation kept: observed HERO13 firmware behavior |
 
+## Settings
+
+| Item | Ours | Spec | Verdict |
+|---|---|---|---|
+| Get setting values | bare 0x12 (empty = all) | GET_SETTING_VAL, "empty array queries all" | conform; works on HERO11 (267B response) |
+| Get setting capabilities | 0x32 with one setting ID per query | GET_CAPABILITIES_VAL | deviation from bare form kept: the spec allows empty = all, but no reference implementation sends it (Python SDK queries per setting) and a HERO11 never finishes answering it. Per-setting matches upstream practice |
+| Set setting | TLV [id][len][value] on GP-0074 | Change Setting | conform; status 2 = option invalid in current state |
+| Per-model gating | camera-reported capabilities only | capabilities depend on model and state | conform by construction: no static model tables |
+
 ## State management
 
 | Item | Ours | Spec | Verdict |

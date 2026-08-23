@@ -75,15 +75,37 @@ func (m *GoProManager) settingsSession(cameraID string, op func(bleAddress strin
 
 // refreshSettingsLocked queries values and capabilities on an open
 // connection and persists the snapshot.
+// Values use the spec's empty-list-means-all form (works on hardware).
+// Capabilities are queried one setting at a time, exactly like the official
+// SDK: no reference implementation sends a bare all-settings 0x32, and a
+// HERO11 answers it with a stream that never completes. Only settings the
+// label table knows are asked; unknown ones stay value-only.
 func (m *GoProManager) refreshSettingsLocked(cameraID, bleAddress string) ([]model.CameraSetting, error) {
 	values, err := m.ble.GetSettingValues(bleAddress, nil)
 	if err != nil {
 		return nil, err
 	}
-	caps, err := m.ble.GetSettingCapabilities(bleAddress, nil)
-	if err != nil {
-		return nil, err
+
+	ids := make([]byte, 0, len(values))
+	for id := range values {
+		if _, known := ble.SettingDefs[id]; known {
+			ids = append(ids, id)
+		}
 	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	caps := make(map[byte][]int64, len(ids))
+	for _, id := range ids {
+		idCaps, capErr := m.ble.GetSettingCapabilities(bleAddress, []byte{id})
+		if capErr != nil {
+			m.log.Debug("Setting capability query failed", "setting", id, "err", capErr)
+			continue
+		}
+		for k, v := range idCaps {
+			caps[k] = v
+		}
+	}
+
 	snapshot := buildSettingsSnapshot(values, caps)
 	m.db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
 		cs.Metadata.Settings = snapshot

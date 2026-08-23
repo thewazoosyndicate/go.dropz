@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -107,6 +108,15 @@ func main() {
 			usage()
 		}
 		os.Exit(runPair(adapter, fs.Arg(0)))
+	case "settings":
+		fs := flag.NewFlagSet("settings", flag.ExitOnError)
+		level := logLevelFlag(fs)
+		fs.Parse(args)
+		initLogger(*level)
+		if fs.NArg() != 1 {
+			usage()
+		}
+		os.Exit(runSettings(adapter, fs.Arg(0)))
 	default:
 		usage()
 	}
@@ -116,6 +126,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage: ble-probe scan [-duration 30s]")
 	fmt.Fprintln(os.Stderr, "       ble-probe validate <name-fragment> [-sleep] [-wifi]")
 	fmt.Fprintln(os.Stderr, "       ble-probe pair <name-fragment>")
+	fmt.Fprintln(os.Stderr, "       ble-probe settings <name-fragment>")
 	os.Exit(2)
 }
 
@@ -430,6 +441,77 @@ func runPair(adapter *bluetooth.Adapter, fragment string) int {
 	// RequestPairingFinish is fire-and-forget; only the camera UI shows it.
 	time.Sleep(3 * time.Second)
 	r.human("pairing screen", "the camera's pairing screen must have closed by itself: that proves the RequestPairingFinish framing fix")
+
+	return r.summary()
+}
+
+// runSettings validates the settings read path exactly as the app runs it:
+// bare 0x12 for all values, then one 0x32 per known setting (the official
+// SDK's shape). A bare all-settings 0x32 is attempted last as a data point;
+// no reference implementation sends it and a HERO11 never finished answering.
+func runSettings(adapter *bluetooth.Adapter, fragment string) int {
+	r := &report{}
+	fmt.Printf("=== dropz settings validation ===\n\n")
+
+	result, _, err := findCamera(adapter, fragment, 30*time.Second)
+	if err != nil {
+		r.bad("discovery", err.Error())
+		return r.summary()
+	}
+	addr := result.Address.String()
+	r.ok("discovery", fmt.Sprintf("%s (%s)", result.LocalName(), addr))
+
+	manager := ble.NewManager(adapter, probeLog)
+	defer manager.Stop()
+
+	if err := manager.ConnectForStatusCheck(addr); err != nil {
+		r.bad("connect", err.Error())
+		return r.summary()
+	}
+	defer manager.DisconnectQuietly(addr)
+	r.ok("connect", "lightweight status-check connection")
+
+	start := time.Now()
+	values, err := manager.GetSettingValues(addr, nil)
+	if err != nil {
+		r.bad("values (bare 0x12)", err.Error())
+		return r.summary()
+	}
+	r.ok("values (bare 0x12)", fmt.Sprintf("%d settings in %v", len(values), time.Since(start).Round(time.Millisecond)))
+
+	var ids []byte
+	for id := range values {
+		if _, known := ble.SettingDefs[id]; known {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	start = time.Now()
+	totalOptions := 0
+	var failures []string
+	for _, id := range ids {
+		caps, capErr := manager.GetSettingCapabilities(addr, []byte{id})
+		if capErr != nil {
+			failures = append(failures, fmt.Sprintf("%d: %v", id, capErr))
+			continue
+		}
+		totalOptions += len(caps[id])
+	}
+	detail := fmt.Sprintf("%d settings, %d options total in %v", len(ids)-len(failures), totalOptions, time.Since(start).Round(time.Millisecond))
+	if len(failures) > 0 {
+		r.bad("capabilities (per setting)", detail+"; failed: "+strings.Join(failures, "; "))
+	} else {
+		r.ok("capabilities (per setting)", detail)
+	}
+
+	// Data point for the conformance record, not part of the app flow.
+	start = time.Now()
+	if bare, err := manager.GetSettingCapabilities(addr, nil); err != nil {
+		r.note("bare 0x32 (unused by app)", fmt.Sprintf("no usable answer: %v", err))
+	} else {
+		r.note("bare 0x32 (unused by app)", fmt.Sprintf("answered: %d settings in %v", len(bare), time.Since(start).Round(time.Millisecond)))
+	}
 
 	return r.summary()
 }

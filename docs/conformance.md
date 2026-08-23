@@ -14,7 +14,7 @@ Verdicts: conform | fixed | deviation (kept, reason given) | enhancement (not im
 | Network mgmt GP-0091 write, GP-0092 notify | match | same | conform |
 | WiFi AP Power GP-0004 / State GP-0005 | unused; we use command 0x17 | either path valid | conform |
 | Re-subscribe on each connect | yes (no caching assumed) | required | conform |
-| Adv manufacturer data (pairing flag, model id, schema v3 serial) | ignored | available | enhancement: detect pairing-mode cameras without connecting |
+| Adv manufacturer data (pairing flag, new-media flag, model id, serial) | parsed; drives identity, auto-pair, status checks | available | conform (implemented 2026-08-23) |
 
 ## Pairing
 
@@ -67,7 +67,7 @@ Verdicts: conform | fixed | deviation (kept, reason given) | enhancement (not im
 | Item | Ours | Spec | Verdict |
 |---|---|---|---|
 | Readiness after connect | poll Get Hardware Info until success | ble_setup prescribes exactly this | conform |
-| Busy/encoding gating | not checked before commands | spec: wait for System Busy (8) and Encoding (10) unset | enhancement: register 8+10 and gate sync start; we only send while idle in practice |
+| Busy/encoding gating | sync waits for idle; Sleep skipped while busy/recording | spec: wait for System Busy (8) and Encoding (10) unset | conform (implemented 2026-08-23) |
 | HERO13+ reconnect-to-sleep (model >= 64) | workaround | not documented upstream | deviation kept: firmware quirk, documented in code |
 
 ## WiFi / HTTP
@@ -84,8 +84,7 @@ Verdicts: conform | fixed | deviation (kept, reason given) | enhancement (not im
 
 ## Follow-ups (not code fixes)
 
-- Enhancement: parse advertisement manufacturer data (company ID 0xF202) for
-  pairing-state and model ID; enables pairing-mode detection without connecting.
-- Enhancement: register statuses 8 (busy) and 10 (encoding) and gate sync.
-- Hardware validation needed: keep-alive fix, pairing-finish framing fix, and
-  third-party-client 0x50 must be confirmed on real cameras (HERO12 and HERO13+).
+- Hardware validation needed on real cameras (HERO12 and HERO13+ on Linux,
+  any camera on macOS 15): keep-alive fix, pairing-finish framing,
+  third-party-client 0x50, advertisement parsing, busy gating, and the
+  CoreWLAN wifi_join helper path.

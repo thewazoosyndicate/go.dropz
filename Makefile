@@ -16,11 +16,13 @@ probe:
 	@mkdir -p bin
 	go build -o bin/ble-probe cmd/ble-probe/main.go
 
+# protoc plugins are versioned tools, not module deps: install once, pinned.
+# A "go get -u" here silently upgraded go.mod on every proto regen.
 proto:
 	@echo "Generating protobuf code..."
 	@mkdir -p internal/protocol
-	go get -u google.golang.org/protobuf/cmd/protoc-gen-go
-	go get -u google.golang.org/grpc/cmd/protoc-gen-go-grpc
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1
 	protoc -I=proto -I=include -I=/usr/local/include -I=/usr/include \
         --go_out=internal/protocol/ --go_opt=paths=source_relative \
 		--go-grpc_out=internal/protocol/ --go-grpc_opt=paths=source_relative \
@@ -101,6 +103,6 @@ run:
 
 deps:
 	@echo "Installing dependencies..."
-	go get -u google.golang.org/protobuf/cmd/protoc-gen-go
-	go get -u google.golang.org/grpc/cmd/protoc-gen-go-grpc
-	go mod tidy 
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1
+	go mod tidy

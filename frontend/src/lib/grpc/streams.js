@@ -34,6 +34,7 @@ function processCamera(camera) {
       isReachable: status ? status.getIsReachable() : false,
       isSynced: status ? status.getIsSynced() : false,
       isSyncing: status ? status.getIsSyncing() : false,
+      inPairingMode: status ? status.getInPairingMode() : false,
       groupId: cameraState.getGroupId(),
       batteryLevel: metadata ? metadata.getBatteryLevel() : null,
       firmwareVersion: metadata ? metadata.getFirmwareVersion() : null,

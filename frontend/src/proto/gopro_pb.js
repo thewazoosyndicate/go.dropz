@@ -1079,7 +1079,8 @@ proto.dropz.CameraStatus.toObject = function(includeInstance, msg) {
     isReachable: jspb.Message.getBooleanFieldWithDefault(msg, 6, false),
     isSynced: jspb.Message.getBooleanFieldWithDefault(msg, 7, false),
     isSyncing: jspb.Message.getBooleanFieldWithDefault(msg, 8, false),
-    lastSyncError: jspb.Message.getFieldWithDefault(msg, 9, "")
+    lastSyncError: jspb.Message.getFieldWithDefault(msg, 9, ""),
+    inPairingMode: jspb.Message.getBooleanFieldWithDefault(msg, 10, false)
   };
 
   if (includeInstance) {
@@ -1153,6 +1154,10 @@ proto.dropz.CameraStatus.deserializeBinaryFromReader = function(msg, reader) {
     case 9:
       var value = /** @type {string} */ (reader.readString());
       msg.setLastSyncError(value);
+      break;
+    case 10:
+      var value = /** @type {boolean} */ (reader.readBool());
+      msg.setInPairingMode(value);
       break;
     default:
       reader.skipField();
@@ -1245,6 +1250,13 @@ proto.dropz.CameraStatus.serializeBinaryToWriter = function(message, writer) {
   if (f.length > 0) {
     writer.writeString(
       9,
+      f
+    );
+  }
+  f = message.getInPairingMode();
+  if (f) {
+    writer.writeBool(
+      10,
       f
     );
   }
@@ -1448,6 +1460,24 @@ proto.dropz.CameraStatus.prototype.getLastSyncError = function() {
  */
 proto.dropz.CameraStatus.prototype.setLastSyncError = function(value) {
   return jspb.Message.setProto3StringField(this, 9, value);
+};
+
+
+/**
+ * optional bool in_pairing_mode = 10;
+ * @return {boolean}
+ */
+proto.dropz.CameraStatus.prototype.getInPairingMode = function() {
+  return /** @type {boolean} */ (jspb.Message.getBooleanFieldWithDefault(this, 10, false));
+};
+
+
+/**
+ * @param {boolean} value
+ * @return {!proto.dropz.CameraStatus} returns this
+ */
+proto.dropz.CameraStatus.prototype.setInPairingMode = function(value) {
+  return jspb.Message.setProto3BooleanField(this, 10, value);
 };
 
 

@@ -30,6 +30,7 @@ func toProtoCameraWithState(c *model.CameraWithState) *protocol.CameraWithState 
 			IsSynced:      c.Status.IsSynced,
 			IsSyncing:     c.Status.IsSyncing,
 			LastSyncError: c.Status.LastSyncError,
+			InPairingMode: c.Status.InPairingMode,
 		},
 		GroupId: c.GroupID,
 		Metadata: &protocol.CameraMetadata{

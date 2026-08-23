@@ -127,6 +127,8 @@ type CameraStatus struct {
 	IsSynced      bool                   `protobuf:"varint,7,opt,name=is_synced,json=isSynced,proto3" json:"is_synced,omitempty"`
 	IsSyncing     bool                   `protobuf:"varint,8,opt,name=is_syncing,json=isSyncing,proto3" json:"is_syncing,omitempty"`
 	LastSyncError string                 `protobuf:"bytes,9,opt,name=last_sync_error,json=lastSyncError,proto3" json:"last_sync_error,omitempty"`
+	// Camera-side pairing UI flag, read from BLE advertising data
+	InPairingMode bool `protobuf:"varint,10,opt,name=in_pairing_mode,json=inPairingMode,proto3" json:"in_pairing_mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -222,6 +224,13 @@ func (x *CameraStatus) GetLastSyncError() string {
 		return x.LastSyncError
 	}
 	return ""
+}
+
+func (x *CameraStatus) GetInPairingMode() bool {
+	if x != nil {
+		return x.InPairingMode
+	}
+	return false
 }
 
 // Additional technical metadata about a camera
@@ -1900,7 +1909,7 @@ const file_gopro_proto_rawDesc = "" +
 	"bleAddress\x12\x1b\n" +
 	"\twifi_ssid\x18\x05 \x01(\tR\bwifiSsid\x12#\n" +
 	"\rwifi_password\x18\x06 \x01(\tR\fwifiPassword\x12\x12\n" +
-	"\x04rssi\x18\a \x01(\x05R\x04rssi\"\xe6\x02\n" +
+	"\x04rssi\x18\a \x01(\x05R\x04rssi\"\x8e\x03\n" +
 	"\fCameraStatus\x127\n" +
 	"\tlast_seen\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\x12;\n" +
 	"\vlast_synced\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
@@ -1914,7 +1923,9 @@ const file_gopro_proto_rawDesc = "" +
 	"\tis_synced\x18\a \x01(\bR\bisSynced\x12\x1d\n" +
 	"\n" +
 	"is_syncing\x18\b \x01(\bR\tisSyncing\x12&\n" +
-	"\x0flast_sync_error\x18\t \x01(\tR\rlastSyncError\"\xe8\x02\n" +
+	"\x0flast_sync_error\x18\t \x01(\tR\rlastSyncError\x12&\n" +
+	"\x0fin_pairing_mode\x18\n" +
+	" \x01(\bR\rinPairingMode\"\xe8\x02\n" +
 	"\x0eCameraMetadata\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12)\n" +
 	"\x10firmware_version\x18\x02 \x01(\tR\x0ffirmwareVersion\x12\x14\n" +

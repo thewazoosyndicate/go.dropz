@@ -49,6 +49,12 @@
 
   <span class="name" title={displayName}>{displayName}</span>
 
+  {#if device.inPairingMode && !device.isPaired}
+    <span class="pairing-mode-badge" title="Camera is showing its pairing screen">
+      <i class="fas fa-link"></i> ready to pair
+    </span>
+  {/if}
+
   {#if device.batteryLevel != null}
     <div class="battery">
       <div class="battery-icon">
@@ -113,6 +119,15 @@
   .bar:nth-child(3) { height: 9px; }
   .bar:nth-child(4) { height: 12px; }
   .bar.filled { background-color: var(--bar-color); }
+
+  .pairing-mode-badge {
+    font-size: 0.7rem;
+    color: var(--secondary-color);
+    border: 1px solid var(--secondary-color);
+    border-radius: 8px;
+    padding: 1px 6px;
+    white-space: nowrap;
+  }
 
   .name {
     flex: 1;

@@ -1,7 +1,6 @@
 package manager
 
 import (
-	"encoding/binary"
 	"time"
 
 	"github.com/dropz/dropz/internal/ble"
@@ -139,16 +138,16 @@ func (m *GoProManager) processStatusResults(cs *model.CameraWithState, statuses 
 		newBattery = int32(v[0])
 	}
 	if v, ok := statuses[ble.StatusNumTotalPhotos]; ok {
-		newPhotos = parseIntStatus(v)
+		newPhotos = ble.ParseIntStatus(v)
 	}
 	if v, ok := statuses[ble.StatusNumTotalVideos]; ok {
-		newVideos = parseIntStatus(v)
+		newVideos = ble.ParseIntStatus(v)
 	}
 	if v, ok := statuses[ble.StatusSDCardStatus]; ok && len(v) >= 1 {
 		newSDStatus = int32(v[0])
 	}
 	if v, ok := statuses[ble.StatusSDCardRemainingKB]; ok {
-		newRemainingKB = parseInt64Status(v)
+		newRemainingKB = ble.ParseInt64Status(v)
 	}
 
 	_ = m.db.UpdateCameraByID(cs.Camera.ID, func(cs *model.CameraWithState) {
@@ -197,34 +196,4 @@ func (m *GoProManager) processStatusResults(cs *model.CameraWithState, statuses 
 	m.notify()
 
 	return true
-}
-
-// Unexpected lengths return -1 (invalid) so callers skip the write instead
-// of storing a fake zero.
-func parseIntStatus(v []byte) int32 {
-	switch len(v) {
-	case 1:
-		return int32(v[0])
-	case 2:
-		return int32(binary.BigEndian.Uint16(v))
-	case 4:
-		return int32(binary.BigEndian.Uint32(v))
-	default:
-		return -1
-	}
-}
-
-func parseInt64Status(v []byte) int64 {
-	switch len(v) {
-	case 1:
-		return int64(v[0])
-	case 2:
-		return int64(binary.BigEndian.Uint16(v))
-	case 4:
-		return int64(binary.BigEndian.Uint32(v))
-	case 8:
-		return int64(binary.BigEndian.Uint64(v))
-	default:
-		return -1
-	}
 }

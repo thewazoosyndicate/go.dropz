@@ -16,6 +16,8 @@ import (
 type fakeBLE struct {
 	connects    atomic.Int32
 	disconnects atomic.Int32
+	// merged into QueryStatuses responses (busy/encoding stay idle)
+	statuses map[byte][]byte
 }
 
 func (f *fakeBLE) AcquireSession(string, time.Duration) (func(), error) { return func() {}, nil }
@@ -24,7 +26,11 @@ func (f *fakeBLE) Disconnect(string) error                              { f.disc
 func (f *fakeBLE) KeepAlive(string) error                               { return nil }
 func (f *fakeBLE) QueryStatuses(string, []byte) (map[byte][]byte, error) {
 	// idle: busy=0, encoding=0
-	return map[byte][]byte{ble.StatusSystemBusy: {0}, ble.StatusEncoding: {0}}, nil
+	out := map[byte][]byte{ble.StatusSystemBusy: {0}, ble.StatusEncoding: {0}}
+	for k, v := range f.statuses {
+		out[k] = v
+	}
+	return out, nil
 }
 func (f *fakeBLE) WaitForWiFiAPReady(string, time.Duration) error { return nil }
 func (f *fakeBLE) SetAPControl(string, ble.WiFiAPMode) error      { return nil }
@@ -33,6 +39,7 @@ func (f *fakeBLE) SetAPControl(string, ble.WiFiAPMode) error      { return nil }
 type fakeWiFi struct {
 	downloadedNames []string
 	disconnects     atomic.Int32
+	factoryCalls    atomic.Int32
 }
 
 func (f *fakeWiFi) Connect(context.Context, string, string) error { return nil }
@@ -56,7 +63,7 @@ func newFlowCoordinator(t *testing.T) (*Coordinator, *fakeBLE, *fakeWiFi, *SyncT
 	fb := &fakeBLE{}
 	fw := &fakeWiFi{}
 	c.ble = fb
-	c.wifiFactory = func() wifiClient { return fw }
+	c.wifiFactory = func() wifiClient { fw.factoryCalls.Add(1); return fw }
 	c.bleOperation = func(ctx context.Context, op func() error) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -146,5 +153,77 @@ func TestPerformCameraSyncCancelledStillTearsDown(t *testing.T) {
 	c.mutex.RUnlock()
 	if active {
 		t.Error("cancelled task still active")
+	}
+}
+
+// seedCleanState makes cam1 a fully-synced camera whose BLE statuses match
+// the stored baseline, with a complete catalog on disk.
+func seedCleanState(t *testing.T, c *Coordinator, fb *fakeBLE) {
+	t.Helper()
+	_ = c.db.MarkCameraSyncedByID("cam1")
+	_ = c.db.UpdateCameraByID("cam1", func(cs *model.CameraWithState) {
+		cs.Metadata.NumPhotos = 10
+		cs.Metadata.NumVideos = 5
+		cs.Metadata.RemainingSpaceKB = 1000 * 1024
+	})
+	fb.statuses = map[byte][]byte{
+		ble.StatusNumTotalPhotos:    be32t(10),
+		ble.StatusNumTotalVideos:    be32t(5),
+		ble.StatusSDCardRemainingKB: be32t(1000 * 1024),
+	}
+	cfg := c.db.GetConfig()
+	if err := WriteCatalog(filepath.Join(cfg.DestinationFolder, "GP12345678"), nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func be32t(v uint32) []byte { return []byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)} }
+
+func TestPerformCameraSyncSkipsWiFiWhenClean(t *testing.T) {
+	c, fb, fw, task := newFlowCoordinator(t)
+	seedCleanState(t, c, fb)
+
+	c.syncSem <- struct{}{}
+	c.PerformCameraSync(task)
+
+	if fw.factoryCalls.Load() != 0 {
+		t.Error("clean camera must not get a WiFi cycle")
+	}
+	if fb.disconnects.Load() != 1 {
+		t.Errorf("BLE disconnects=%d, want 1", fb.disconnects.Load())
+	}
+	cs, _ := c.db.GetCameraByID("cam1")
+	if !cs.Status.IsSynced || cs.Status.LastSyncError != "" {
+		t.Error("skip must record a clean synced state")
+	}
+	if len(c.db.GetSyncQueue()) != 0 {
+		t.Error("queue entry not removed")
+	}
+}
+
+func TestPerformCameraSyncRunsFullWhenSpaceChanged(t *testing.T) {
+	c, fb, fw, task := newFlowCoordinator(t)
+	seedCleanState(t, c, fb)
+	// One new photo on the card: free space differs by a few KB
+	fb.statuses[ble.StatusSDCardRemainingKB] = be32t(1000*1024 - 4)
+
+	c.syncSem <- struct{}{}
+	c.PerformCameraSync(task)
+
+	if fw.factoryCalls.Load() != 1 {
+		t.Error("changed free space must force the WiFi cycle")
+	}
+}
+
+func TestPerformCameraSyncSelectionNeverSkips(t *testing.T) {
+	c, fb, fw, task := newFlowCoordinator(t)
+	seedCleanState(t, c, fb)
+	task.FileNames = []string{"GX010001.MP4"}
+
+	c.syncSem <- struct{}{}
+	c.PerformCameraSync(task)
+
+	if fw.factoryCalls.Load() != 1 {
+		t.Error("explicit selection must always get the WiFi cycle")
 	}
 }

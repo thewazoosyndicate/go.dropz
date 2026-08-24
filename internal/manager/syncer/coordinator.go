@@ -338,6 +338,10 @@ func (r *syncRun) cleanup(f func()) {
 // errCatalogOnly ends a catalog-only run successfully after the catalog step.
 var errCatalogOnly = errors.New("catalog refreshed, no download requested")
 
+// errUpToDate ends a full sync before the WiFi cycle: BLE proved nothing
+// changed on the camera and the local library is complete.
+var errUpToDate = errors.New("camera verified up to date over BLE")
+
 type syncStep struct {
 	label   string // progress label while the step runs
 	percent int32
@@ -407,6 +411,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 
 	steps := []syncStep{
 		{"Connecting via BLE", 10, "BLE connection failed", c.stepConnectBLE},
+		{"Checking for changes", 15, "", c.stepSkipIfClean},
 		{"Waiting for camera to be idle", 20, "Camera busy or recording", c.stepWaitIdle},
 		{"Waiting for camera WiFi AP", 25, "", c.stepWaitAP},
 		{"Connecting to WiFi", 30, "WiFi connection failed", c.stepConnectWiFi},
@@ -425,6 +430,16 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		if errors.Is(err, errCatalogOnly) {
 			_ = c.db.SetLastSyncErrorByID(task.CameraID, "")
 			c.log.Info("Media catalog refreshed, no download requested", "camera", task.CameraName)
+			return
+		}
+		if errors.Is(err, errUpToDate) {
+			// Verified over BLE, so the synced timestamp is honest.
+			// The progress label is streamed before the defer removes the
+			// entry; the frontend turns it into a toast.
+			_ = c.db.MarkCameraSyncedByID(task.CameraID)
+			_ = c.db.SetLastSyncErrorByID(task.CameraID, "")
+			c.updateProgress(task, "Already up to date", 100)
+			c.log.Info("Camera already up to date, WiFi skipped", camera.LogAttrs()...)
 			return
 		}
 		c.updateProgress(task, step.failMsg, step.percent)
@@ -481,6 +496,84 @@ func (c *Coordinator) stepConnectBLE(r *syncRun) error {
 		}
 	}()
 	return nil
+}
+
+// stepSkipIfClean ends a full sync before the WiFi cycle when BLE proves
+// nothing changed on the camera and the local library is complete.
+// Any doubt (missing status, sentinel value, failed last sync, absent
+// catalog, undownloaded file in the window) falls through to the full
+// cycle: the WiFi dance is also the repair path, so only a provable
+// no-op may skip it.
+func (c *Coordinator) stepSkipIfClean(r *syncRun) error {
+	// Explicit requests always get the WiFi cycle
+	if r.task.CatalogOnly || len(r.task.FileNames) > 0 {
+		return nil
+	}
+	if r.camera.Status.LastSyncError != "" || r.camera.Status.LastSynced.IsZero() {
+		return nil
+	}
+	md := r.camera.Metadata
+	if md.RemainingSpaceKB <= 0 {
+		return nil // no trusted baseline yet
+	}
+	if r.config.DestinationFolder == "" || r.camera.Camera.WiFiSSID == "" {
+		return nil
+	}
+
+	items, updatedAt, err := ReadCatalog(filepath.Join(r.config.DestinationFolder, r.camera.Camera.WiFiSSID))
+	if err != nil || updatedAt.IsZero() {
+		return nil
+	}
+	days := int(r.config.DaysThreshold)
+	if days <= 0 {
+		days = 7 // mirror DownloadVideos's default window
+	}
+	cutoff := time.Now().AddDate(0, 0, -days)
+	for _, item := range items {
+		if item.CreatedAt.After(cutoff) && !item.Downloaded {
+			return nil
+		}
+	}
+
+	statuses, err := c.ble.QueryStatuses(r.bleAddress, []byte{
+		ble.StatusNumTotalPhotos, ble.StatusNumTotalVideos, ble.StatusSDCardRemainingKB,
+	})
+	if err != nil {
+		return nil
+	}
+	photos, photosOK := statusValue(statuses, ble.StatusNumTotalPhotos)
+	videos, videosOK := statusValue(statuses, ble.StatusNumTotalVideos)
+	space, spaceOK := statusValue64(statuses, ble.StatusSDCardRemainingKB)
+	if !photosOK || !videosOK || !spaceOK {
+		return nil
+	}
+	// Exact match required, free space included: any new file on the card
+	// changes free KB, so equality means the card is untouched since the
+	// stored values were read.
+	if photos != md.NumPhotos || videos != md.NumVideos || space != md.RemainingSpaceKB {
+		return nil
+	}
+	return errUpToDate
+}
+
+// statusValue returns a status as int32, false when absent or invalid
+// (HERO13+ post-wake sentinels parse as -1).
+func statusValue(statuses map[byte][]byte, id byte) (int32, bool) {
+	v, ok := statuses[id]
+	if !ok {
+		return 0, false
+	}
+	n := ble.ParseIntStatus(v)
+	return n, n >= 0
+}
+
+func statusValue64(statuses map[byte][]byte, id byte) (int64, bool) {
+	v, ok := statuses[id]
+	if !ok {
+		return 0, false
+	}
+	n := ble.ParseInt64Status(v)
+	return n, n >= 0
 }
 
 // stepWaitIdle waits until the camera is neither busy nor encoding.

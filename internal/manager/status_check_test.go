@@ -57,8 +57,8 @@ func TestParseIntStatus(t *testing.T) {
 		{[]byte{1, 2, 3}, -1},
 	}
 	for _, c := range cases {
-		if got := parseIntStatus(c.in); got != c.want {
-			t.Errorf("parseIntStatus(%v) = %d, want %d", c.in, got, c.want)
+		if got := ble.ParseIntStatus(c.in); got != c.want {
+			t.Errorf("ble.ParseIntStatus(%v) = %d, want %d", c.in, got, c.want)
 		}
 	}
 }

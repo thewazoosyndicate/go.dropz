@@ -3,6 +3,7 @@ package syncer
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -60,8 +61,11 @@ func (f *fakeWiFi) ListMedia(context.Context) ([]wifi.MediaFile, error) {
 	return []wifi.MediaFile{{Name: "GX010001.MP4", CameraPath: "100GOPRO/GX010001.MP4", Size: 42, CreatedAt: time.Now()}}, nil
 }
 func (f *fakeWiFi) SetTurboTransfer(context.Context, bool) error { return nil }
-func (f *fakeWiFi) DownloadVideos(_ context.Context, _ string, _ int, fileNames []string) ([]string, error) {
+func (f *fakeWiFi) DownloadVideos(_ context.Context, destDir string, _ int, fileNames []string) ([]string, error) {
 	f.downloadedNames = fileNames
+	// The skip guard's catalog check stats this file; a fake download
+	// must leave it on disk like the real one does.
+	_ = os.WriteFile(filepath.Join(destDir, "GX010001.MP4"), []byte("x"), 0644)
 	return []string{"GX010001.MP4"}, nil
 }
 func (f *fakeWiFi) DownloadThumbnail(context.Context, string, string) error { return nil }
@@ -171,9 +175,9 @@ func seedCleanState(t *testing.T, c *Coordinator, fb *fakeBLE) {
 	t.Helper()
 	_ = c.db.MarkCameraSyncedByID("cam1")
 	_ = c.db.UpdateCameraByID("cam1", func(cs *model.CameraWithState) {
-		cs.Metadata.NumPhotos = 10
-		cs.Metadata.NumVideos = 5
-		cs.Metadata.RemainingSpaceKB = 1000 * 1024
+		cs.Metadata.SyncedNumPhotos = 10
+		cs.Metadata.SyncedNumVideos = 5
+		cs.Metadata.SyncedSpaceKB = 1000 * 1024
 	})
 	fb.statuses = map[byte][]byte{
 		ble.StatusNumTotalPhotos:    be32t(10),
@@ -256,5 +260,54 @@ func TestPerformCameraSyncBondLossClearsPairing(t *testing.T) {
 	}
 	if fw.factoryCalls.Load() != 0 {
 		t.Error("no WiFi cycle on a failed connect")
+	}
+}
+
+// The bench-found bug: a status check detects new media and refreshes the
+// live counts; the queued sync must still run the full cycle because the
+// camera differs from the last-sync baseline, not from the live values.
+func TestSyncDoesNotSkipAfterStatusCheckMovedLiveCounts(t *testing.T) {
+	c, fb, fw, task := newFlowCoordinator(t)
+	seedCleanState(t, c, fb)
+	// Camera recorded one clip: camera reports 6 videos, and a status
+	// check already stored 6 in the live metadata.
+	fb.statuses[ble.StatusNumTotalVideos] = be32t(6)
+	_ = c.db.UpdateCameraByID("cam1", func(cs *model.CameraWithState) {
+		cs.Metadata.NumVideos = 6
+	})
+
+	c.syncSem <- struct{}{}
+	c.PerformCameraSync(task)
+
+	if fw.factoryCalls.Load() != 1 {
+		t.Error("new media behind a refreshed live count must force the WiFi cycle")
+	}
+}
+
+// A completed full sync snapshots the baseline; the next sync skips.
+func TestSecondSyncSkipsAfterFullSync(t *testing.T) {
+	c, fb, fw, task := newFlowCoordinator(t)
+	fb.statuses = map[byte][]byte{
+		ble.StatusNumTotalPhotos:    be32t(10),
+		ble.StatusNumTotalVideos:    be32t(5),
+		ble.StatusSDCardRemainingKB: be32t(1000 * 1024),
+	}
+
+	c.syncSem <- struct{}{}
+	c.PerformCameraSync(task) // full: no baseline yet
+
+	if fw.factoryCalls.Load() != 1 {
+		t.Fatal("first sync must run the full cycle")
+	}
+
+	task2, ok := c.tryClaimCamera(entry("cam1"))
+	if !ok {
+		t.Fatal("second claim failed")
+	}
+	c.syncSem <- struct{}{}
+	c.PerformCameraSync(task2)
+
+	if fw.factoryCalls.Load() != 1 {
+		t.Error("second sync must skip using the baseline stored by the first")
 	}
 }

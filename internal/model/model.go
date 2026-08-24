@@ -48,6 +48,13 @@ type CameraMetadata struct {
 	NumVideos        int32  `json:"num_videos"`
 	SDCardStatusCode int32  `json:"sd_card_status"`
 	RemainingSpaceKB int64  `json:"remaining_space_kb"`
+	// Camera state snapshotted when the last full sync completed. The
+	// sync skip guard compares against these, never the live values
+	// above: a status check refreshes those the moment it detects new
+	// media, which would make the new content read as "no change".
+	SyncedNumPhotos int32 `json:"synced_num_photos,omitempty"`
+	SyncedNumVideos int32 `json:"synced_num_videos,omitempty"`
+	SyncedSpaceKB   int64 `json:"synced_space_kb,omitempty"`
 	// Settings is the last-known snapshot from the camera. Mutators must
 	// replace the slice, never edit elements in place (copies share it).
 	Settings        []CameraSetting `json:"settings,omitempty"`

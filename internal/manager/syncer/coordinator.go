@@ -466,6 +466,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 	// "synced", so the auto-sync eligibility must stay untouched.
 	if len(task.FileNames) == 0 {
 		_ = c.db.MarkCameraSyncedByID(task.CameraID)
+		c.storeSyncedBaseline(run)
 	}
 	_ = c.db.SetLastSyncErrorByID(task.CameraID, "")
 	c.log.Info("Camera synced", append(camera.LogAttrs(), "files", run.downloaded)...)
@@ -526,8 +527,8 @@ func (c *Coordinator) stepSkipIfClean(r *syncRun) error {
 		return nil
 	}
 	md := r.camera.Metadata
-	if md.RemainingSpaceKB <= 0 {
-		return nil // no trusted baseline yet
+	if md.SyncedSpaceKB <= 0 {
+		return nil // no baseline captured at a completed sync yet
 	}
 	if r.config.DestinationFolder == "" || r.camera.Camera.WiFiSSID == "" {
 		return nil
@@ -560,13 +561,39 @@ func (c *Coordinator) stepSkipIfClean(r *syncRun) error {
 	if !photosOK || !videosOK || !spaceOK {
 		return nil
 	}
-	// Exact match required, free space included: any new file on the card
-	// changes free KB, so equality means the card is untouched since the
-	// stored values were read.
-	if photos != md.NumPhotos || videos != md.NumVideos || space != md.RemainingSpaceKB {
+	// Exact match against the last-sync snapshot, free space included: any
+	// new file on the card changes free KB, so equality means the card is
+	// untouched since the last completed sync.
+	if photos != md.SyncedNumPhotos || videos != md.SyncedNumVideos || space != md.SyncedSpaceKB {
 		return nil
 	}
 	return errUpToDate
+}
+
+// storeSyncedBaseline snapshots the camera-side state the library now
+// mirrors, over the still-open BLE connection. Sentinel or missing values
+// (HERO13 shortly after wake) leave no baseline, so the next sync does the
+// full verify instead of a wrong skip.
+func (c *Coordinator) storeSyncedBaseline(r *syncRun) {
+	statuses, err := c.ble.QueryStatuses(r.bleAddress, []byte{
+		ble.StatusNumTotalPhotos, ble.StatusNumTotalVideos, ble.StatusSDCardRemainingKB,
+	})
+	if err != nil {
+		c.log.Debug("Baseline query failed, next sync will verify fully", "camera", r.task.CameraName, "err", err)
+		return
+	}
+	photos, photosOK := statusValue(statuses, ble.StatusNumTotalPhotos)
+	videos, videosOK := statusValue(statuses, ble.StatusNumTotalVideos)
+	space, spaceOK := statusValue64(statuses, ble.StatusSDCardRemainingKB)
+	if !photosOK || !videosOK || !spaceOK || space <= 0 {
+		c.log.Debug("Baseline unavailable, next sync will verify fully", "camera", r.task.CameraName)
+		return
+	}
+	_ = c.db.UpdateCameraByID(r.task.CameraID, func(cs *model.CameraWithState) {
+		cs.Metadata.SyncedNumPhotos = photos
+		cs.Metadata.SyncedNumVideos = videos
+		cs.Metadata.SyncedSpaceKB = space
+	})
 }
 
 // statusValue returns a status as int32, false when absent or invalid

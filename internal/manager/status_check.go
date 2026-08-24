@@ -9,6 +9,9 @@ import (
 	"github.com/dropz/dropz/internal/model"
 )
 
+// statusReadyTimeout bounds the wait for real media counts after wake.
+const statusReadyTimeout = 8 * time.Second
+
 // recoverLostBond clears both sides of a stale bond so the existing
 // pairing-mode auto-pair flow can re-establish it.
 func (m *GoProManager) recoverLostBond(cs *model.CameraWithState, bleAddress string) {
@@ -81,7 +84,7 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 		return
 	}
 
-	statuses, err := m.ble.QueryStatuses(bleAddress, []byte{
+	statusIDs := []byte{
 		ble.StatusBatteryPercentage,
 		ble.StatusNumTotalPhotos,
 		ble.StatusNumTotalVideos,
@@ -89,7 +92,10 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 		ble.StatusSDCardRemainingKB,
 		ble.StatusSystemBusy,
 		ble.StatusEncoding,
-	})
+	}
+	// Real counts, not post-wake sentinels, or new-media detection is
+	// blind on HERO13+; the camera signals readiness through the values.
+	statuses, err := m.ble.QueryStatusesWhenReady(bleAddress, statusIDs, statusReadyTimeout)
 	if err != nil {
 		m.log.Debug("Status check query failed", append(cs.LogAttrs(), "err", err)...)
 		_ = m.ble.Disconnect(bleAddress)

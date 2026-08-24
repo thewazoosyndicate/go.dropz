@@ -47,7 +47,7 @@ func (pm *Manager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 
 	pm.log.Info("Pairing started", cs.LogAttrs()...)
 
-	pm.db.UpdateCameraPairingStatusByID(cameraID, true)
+	_ = pm.db.UpdateCameraPairingStatusByID(cameraID, true)
 	pm.notifier()
 
 	ctx, cancel := context.WithTimeout(pm.ctx, pairingTimeout)
@@ -55,7 +55,7 @@ func (pm *Manager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 
 	release, sessionErr := pm.ble.AcquireSession(bleAddress, 15*time.Second)
 	if sessionErr != nil {
-		pm.db.UpdateCameraPairingStatusByID(cameraID, false)
+		_ = pm.db.UpdateCameraPairingStatusByID(cameraID, false)
 		pm.notifier()
 		return nil, sessionErr
 	}
@@ -81,7 +81,7 @@ func (pm *Manager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 
 		// Only record paired when credentials were actually read; a bond
 		// without credentials can't sync and should be retried by the user.
-		pm.db.SetCameraPairedByID(cameraID, isPaired)
+		_ = pm.db.SetCameraPairedByID(cameraID, isPaired)
 		pm.notifier()
 		verifiedPairingState = isPaired
 
@@ -94,13 +94,13 @@ func (pm *Manager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 
 	if bleErr != nil {
 		// Returned wrapped; callers own the failure log
-		pm.db.UpdateCameraPairingStatusByID(cameraID, false)
-		pm.db.SetCameraPairedByID(cameraID, false)
+		_ = pm.db.UpdateCameraPairingStatusByID(cameraID, false)
+		_ = pm.db.SetCameraPairedByID(cameraID, false)
 		pm.notifier()
 		return nil, fmt.Errorf("failed in BLE pairing operation: %w", bleErr)
 	}
 
-	pm.db.UpdateCameraPairingStatusByID(cameraID, false)
+	_ = pm.db.UpdateCameraPairingStatusByID(cameraID, false)
 	pm.notifier()
 
 	managedCamera, _ := pm.db.GetManagedCameraByID(cameraID)

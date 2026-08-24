@@ -31,7 +31,7 @@ func (m *GoProManager) Stop() {
 	m.log.Debug("GoPro manager stopping")
 
 	// Stop BLE first so active operations finish cleanly before context cancel
-	m.ble.Stop()
+	_ = m.ble.Stop()
 	m.cancel()
 	m.wg.Wait()
 

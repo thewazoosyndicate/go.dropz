@@ -71,9 +71,7 @@ func (fc *FragmentCollector) handleStartPacket(header *PacketHeader, payload []b
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
 
-	if _, exists := fc.fragments[commandID]; exists {
-		delete(fc.fragments, commandID)
-	}
+	delete(fc.fragments, commandID)
 
 	// Single-packet message
 	if header.MessageLength <= len(payload) {

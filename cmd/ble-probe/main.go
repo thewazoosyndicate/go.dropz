@@ -134,7 +134,7 @@ func main() {
 func parseAnyOrder(fs *flag.FlagSet, args []string) []string {
 	var positional []string
 	for {
-		fs.Parse(args)
+		_ = fs.Parse(args)
 		rest := fs.Args()
 		if len(rest) == 0 {
 			return positional
@@ -178,7 +178,7 @@ func initLogger(level string) {
 func rawScan(adapter *bluetooth.Adapter, timeout time.Duration, sighting func(bluetooth.ScanResult, ble.AdvInfo) bool) error {
 	goProUUID, _ := bluetooth.ParseUUID(ble.AdvertisementService)
 	var once sync.Once
-	stop := func() { once.Do(func() { adapter.StopScan() }) }
+	stop := func() { once.Do(func() { _ = adapter.StopScan() }) }
 
 	timer := time.AfterFunc(timeout, stop)
 	defer timer.Stop()
@@ -297,7 +297,7 @@ func runValidate(adapter *bluetooth.Adapter, fragment string, doSleep, doWifi, d
 	}
 
 	manager := ble.NewManager(adapter, probeLog)
-	defer manager.Stop()
+	defer func() { _ = manager.Stop() }()
 
 	// Connect exercises the spec's readiness gate (hardware info poll),
 	// notification subscriptions, 0x50, date/time, AP enable, credentials.
@@ -358,7 +358,7 @@ func runValidate(adapter *bluetooth.Adapter, fragment string, doSleep, doWifi, d
 	bleDropped := false
 	if doWifi {
 		dropBLE := func() {
-			manager.DisconnectQuietly(addr)
+			_ = manager.DisconnectQuietly(addr)
 			bleDropped = true
 		}
 		validateWifi(r, manager, addr, doSpeed, dropBLE)
@@ -372,7 +372,7 @@ func runValidate(adapter *bluetooth.Adapter, fragment string, doSleep, doWifi, d
 	case doSleep:
 		r.check("sleep on disconnect", manager.Disconnect(addr), "Sleep 0x05 accepted (camera screen should turn off)")
 	default:
-		manager.DisconnectQuietly(addr)
+		_ = manager.DisconnectQuietly(addr)
 		r.note("disconnect", "quiet (no Sleep); rerun with -sleep to validate Sleep")
 	}
 	return r.summary()
@@ -527,7 +527,7 @@ func speedTest(r *report, wm *wifi.WiFiManager, files []wifi.MediaFile, dropBLE 
 	run("BLE down, 4 chunks", false, 4)
 	run("BLE down, 1 stream, turbo", true, 1)
 	run("BLE down, 4 chunks, turbo", true, 4)
-	wm.SetTurboTransfer(ctx, false)
+	_ = wm.SetTurboTransfer(ctx, false)
 	r.note("speed verdict", "if BLE down beats BLE held, drop BLE before downloading")
 }
 
@@ -553,7 +553,7 @@ func runPair(adapter *bluetooth.Adapter, fragment string) int {
 	}
 
 	manager := ble.NewManager(adapter, probeLog)
-	defer manager.Stop()
+	defer func() { _ = manager.Stop() }()
 
 	start := time.Now()
 	err = manager.ConnectForPairing(addr)
@@ -561,7 +561,7 @@ func runPair(adapter *bluetooth.Adapter, fragment string) int {
 	if err != nil {
 		return r.summary()
 	}
-	defer manager.DisconnectQuietly(addr)
+	defer func() { _ = manager.DisconnectQuietly(addr) }()
 
 	ssid, password, err := manager.GetWifiCredentials(addr)
 	if err != nil || ssid == "" || password == "" {
@@ -594,13 +594,13 @@ func runSettings(adapter *bluetooth.Adapter, fragment string) int {
 	r.ok("discovery", fmt.Sprintf("%s (%s)", result.LocalName(), addr))
 
 	manager := ble.NewManager(adapter, probeLog)
-	defer manager.Stop()
+	defer func() { _ = manager.Stop() }()
 
 	if err := manager.ConnectForStatusCheck(addr); err != nil {
 		r.bad("connect", err.Error())
 		return r.summary()
 	}
-	defer manager.DisconnectQuietly(addr)
+	defer func() { _ = manager.DisconnectQuietly(addr) }()
 	r.ok("connect", "lightweight status-check connection")
 
 	start := time.Now()

@@ -76,7 +76,7 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 	})
 	if err != nil {
 		m.log.Debug("Status check query failed", append(cs.LogAttrs(), "err", err)...)
-		m.ble.Disconnect(bleAddress)
+		_ = m.ble.Disconnect(bleAddress)
 		return
 	}
 
@@ -86,7 +86,7 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 	if cameraInUse(statuses) {
 		// Fires on every poll while recording, hence Debug
 		m.log.Debug("Camera busy or recording, leaving it awake", cs.LogAttrs()...)
-		m.ble.DisconnectQuietly(bleAddress)
+		_ = m.ble.DisconnectQuietly(bleAddress)
 		return
 	}
 
@@ -97,7 +97,7 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 	needsReconnectToSleep := !syncQueued && (modelID == 0 || modelID >= 64)
 
 	if needsReconnectToSleep {
-		m.ble.DisconnectQuietly(bleAddress)
+		_ = m.ble.DisconnectQuietly(bleAddress)
 		if err := m.ble.ConnectForStatusCheck(bleAddress); err != nil {
 			// Camera stays awake; next status check will retry the sleep
 			m.log.Debug("Sleep reconnect failed, camera left awake", append(cs.LogAttrs(), "err", err)...)
@@ -106,9 +106,9 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 	}
 
 	if syncQueued {
-		m.ble.DisconnectQuietly(bleAddress)
+		_ = m.ble.DisconnectQuietly(bleAddress)
 	} else {
-		m.ble.Disconnect(bleAddress)
+		_ = m.ble.Disconnect(bleAddress)
 	}
 
 	// Trigger sync AFTER BLE disconnect so the sync goroutine
@@ -147,7 +147,7 @@ func (m *GoProManager) processStatusResults(cs *model.CameraWithState, statuses 
 		newRemainingKB = parseInt64Status(v)
 	}
 
-	m.db.UpdateCameraByID(cs.Camera.ID, func(cs *model.CameraWithState) {
+	_ = m.db.UpdateCameraByID(cs.Camera.ID, func(cs *model.CameraWithState) {
 		if newBattery > 0 {
 			cs.Metadata.BatteryLevel = newBattery
 		}
@@ -184,7 +184,7 @@ func (m *GoProManager) processStatusResults(cs *model.CameraWithState, statuses 
 	m.log.Info("New media detected, queuing sync", append(cs.LogAttrs(),
 		"photos_old", oldPhotos, "photos_new", newPhotos, "videos_old", oldVideos, "videos_new", newVideos)...)
 
-	m.db.AddSyncQueueEntry(&model.SyncQueueEntry{
+	_ = m.db.AddSyncQueueEntry(&model.SyncQueueEntry{
 		CameraID:         cs.Camera.ID,
 		QueuedAt:         time.Now(),
 		Priority:         syncpkg.SyncPriorityAuto,

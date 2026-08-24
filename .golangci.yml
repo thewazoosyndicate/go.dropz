@@ -18,3 +18,8 @@ issues:
     - internal/protocol # generated
     - frontend
     - tmp
+  exclude-rules:
+    # Test setup calls fail the test at the assertion that follows.
+    - path: _test\.go
+      linters:
+        - errcheck

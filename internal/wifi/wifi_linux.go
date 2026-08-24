@@ -18,7 +18,7 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 
 	// Clean up any stale connection profiles for this SSID
 	for _, name := range []string{ssid, connName} {
-		exec.CommandContext(ctx, "nmcli", "connection", "delete", "id", name).Run()
+		_ = exec.CommandContext(ctx, "nmcli", "connection", "delete", "id", name).Run()
 	}
 
 	// Create a proper connection profile
@@ -42,12 +42,12 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 	var lastErr error
 	for attempt := 1; attempt <= 10; attempt++ {
 		// Trigger a WiFi rescan so nmcli can discover the new AP
-		exec.CommandContext(ctx, "nmcli", "device", "wifi", "rescan").Run()
+		_ = exec.CommandContext(ctx, "nmcli", "device", "wifi", "rescan").Run()
 		time.Sleep(2 * time.Second)
 
 		upCmd := exec.CommandContext(ctx, "nmcli", "connection", "up", "id", connName)
 		if output, err := upCmd.CombinedOutput(); err != nil {
-			lastErr = fmt.Errorf("%v (nmcli: %s)", err, strings.TrimSpace(string(output)))
+			lastErr = fmt.Errorf("%w (nmcli: %s)", err, strings.TrimSpace(string(output)))
 			m.log.Debug("WiFi activation attempt failed", "ssid", ssid, "attempt", attempt, "max", 10, "err", lastErr)
 		} else {
 			m.log.Debug("WiFi connection activated", "connection", connName)
@@ -102,7 +102,7 @@ func (m *WiFiManager) Disconnect() error {
 				altName := fmt.Sprintf("dropz-%s", ssid)
 				cmd = exec.Command("nmcli", "connection", "down", "id", altName)
 				if altOutput, altErr := cmd.CombinedOutput(); altErr != nil {
-					return fmt.Errorf("failed to disconnect from %s: %v (nmcli: %s; fallback: %v, %s)",
+					return fmt.Errorf("failed to disconnect from %s: %w (nmcli: %s; fallback: %w, %s)",
 						ssid, err, strings.TrimSpace(string(output)), altErr, strings.TrimSpace(string(altOutput)))
 				}
 			}

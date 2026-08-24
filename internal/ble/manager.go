@@ -318,7 +318,7 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 	m.connectingDone = make(chan struct{})
 	m.mutex.Unlock()
 
-	m.StopScanning()
+	_ = m.StopScanning()
 	time.Sleep(ScanToConnectDelay)
 
 	addr, parseErr := parseAddress(macAddress)
@@ -339,7 +339,7 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 		if retry > 0 {
 			m.log.Debug("Reconnecting for service discovery retry", "ble_addr", macAddress, "attempt", retry+1, "max", ServiceDiscoveryRetries)
 			if connected {
-				device.Disconnect()
+				_ = device.Disconnect()
 				connected = false
 			}
 			m.dropConn(macAddress)
@@ -383,7 +383,7 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 	if len(services) == 0 {
 		m.dropConn(macAddress)
 		if connected {
-			device.Disconnect()
+			_ = device.Disconnect()
 		}
 		m.signalConnectingDone()
 		return nil, time.Time{}, fmt.Errorf("service discovery failed after %d retries", ServiceDiscoveryRetries)
@@ -467,7 +467,7 @@ func (m *Manager) dropConn(macAddress string) *conn {
 // cleanupOnError removes connection state for a device. Used as a deferred cleanup.
 func (m *Manager) cleanupOnError(macAddress string) {
 	if c := m.dropConn(macAddress); c != nil {
-		c.device.Disconnect()
+		_ = c.device.Disconnect()
 		m.log.Debug("Connection state dropped after error", "ble_addr", macAddress)
 	}
 }
@@ -615,7 +615,7 @@ func (m *Manager) DisconnectQuietly(macAddress string) error {
 	if c == nil {
 		return fmt.Errorf("device not connected: %s", macAddress)
 	}
-	c.device.Disconnect()
+	_ = c.device.Disconnect()
 	m.log.Debug("Disconnected, camera left awake", "ble_addr", macAddress)
 	return nil
 }
@@ -737,7 +737,7 @@ func (m *Manager) Disconnect(macAddress string) error {
 	}
 
 	if c := m.dropConn(macAddress); c != nil {
-		c.device.Disconnect()
+		_ = c.device.Disconnect()
 	}
 	m.log.Debug("Disconnected", "ble_addr", macAddress)
 	return nil
@@ -1009,7 +1009,7 @@ func (m *Manager) UnregisterStatusUpdates(macAddress string) error {
 func (m *Manager) Stop() error {
 	m.log.Debug("Stopping BLE manager")
 
-	m.StopScanning()
+	_ = m.StopScanning()
 
 	m.mutex.RLock()
 	addresses := make([]string, 0, len(m.conns))

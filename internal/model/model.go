@@ -177,16 +177,16 @@ type VideoFile struct {
 
 // Config represents the system-wide configuration settings
 type Config struct {
-	PairModeEnabled            bool      `json:"pair_mode_enabled"`
-	SyncEnabled                bool      `json:"sync_enabled"`
-	ScanIntervalSeconds        int32     `json:"scan_interval_seconds"`
-	ConnectTimeoutSeconds      int32     `json:"connect_timeout_seconds"`
-	DaysThreshold              int32     `json:"days_threshold"`
-	DestinationFolder          string    `json:"destination_folder"`
-	InactivityTimeoutSeconds   int32     `json:"inactivity_timeout_seconds"`
-	StatusCheckIntervalSeconds int32     `json:"status_check_interval_seconds"`
-	CheckOnReturn              bool      `json:"check_on_return"`
-	SetTimeEnabled             bool      `json:"set_time_enabled"`
+	PairModeEnabled            bool   `json:"pair_mode_enabled"`
+	SyncEnabled                bool   `json:"sync_enabled"`
+	ScanIntervalSeconds        int32  `json:"scan_interval_seconds"`
+	ConnectTimeoutSeconds      int32  `json:"connect_timeout_seconds"`
+	DaysThreshold              int32  `json:"days_threshold"`
+	DestinationFolder          string `json:"destination_folder"`
+	InactivityTimeoutSeconds   int32  `json:"inactivity_timeout_seconds"`
+	StatusCheckIntervalSeconds int32  `json:"status_check_interval_seconds"`
+	CheckOnReturn              bool   `json:"check_on_return"`
+	SetTimeEnabled             bool   `json:"set_time_enabled"`
 	// TurboEnabled uses Turbo Transfer during offload. Off by default:
 	// it is tuned for the GoPro app's parallel chunked downloads and
 	// measured slower for our single sequential stream on a HERO11.

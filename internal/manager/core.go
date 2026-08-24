@@ -87,7 +87,7 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 		}
 		cameraID := cam.CameraState.Camera.ID
 
-		db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
+		_ = db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
 			if metadata.WiFiSSID != "" && metadata.WiFiPassword != "" {
 				cs.Camera.WiFiSSID = metadata.WiFiSSID
 				cs.Camera.WiFiPassword = metadata.WiFiPassword
@@ -113,7 +113,7 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 	config := db.GetConfig()
 	if config.DestinationFolder == "" && destinationDir != "" {
 		config.DestinationFolder = destinationDir
-		db.UpdateConfig(config)
+		_ = db.UpdateConfig(config)
 	}
 
 	manager := &GoProManager{
@@ -254,7 +254,7 @@ func (m *GoProManager) ManageCamera(cameraID string) (*model.ManagedCamera, erro
 		return managedCamera, nil
 	}
 
-	m.db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
+	_ = m.db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
 		cs.Status.IsManaged = true
 	})
 
@@ -295,7 +295,7 @@ func (m *GoProManager) UnmanageCamera(cameraID string) error {
 		return fmt.Errorf("%w: %s", model.ErrCameraNotFound, cameraID)
 	}
 
-	m.db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
+	_ = m.db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
 		cs.Status.IsManaged = false
 	})
 
@@ -348,7 +348,7 @@ func (m *GoProManager) ResetTransientStates() {
 // PairCamera pairs with a GoPro camera using BLE
 func (m *GoProManager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 	// Mark as pairing immediately so UI shows spinner even while queued
-	m.db.UpdateCameraPairingStatusByID(cameraID, true)
+	_ = m.db.UpdateCameraPairingStatusByID(cameraID, true)
 	m.notify()
 
 	m.pairingMu.Lock()

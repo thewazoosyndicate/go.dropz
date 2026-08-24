@@ -75,7 +75,7 @@ func (m *GoProManager) settingsSession(cameraID string, op func(bleAddress strin
 		if err := m.ble.ConnectForStatusCheck(bleAddress); err != nil {
 			return fmt.Errorf("connect: %w", err)
 		}
-		defer m.ble.DisconnectQuietly(bleAddress)
+		defer func() { _ = m.ble.DisconnectQuietly(bleAddress) }()
 		return op(bleAddress)
 	})
 }
@@ -114,7 +114,7 @@ func (m *GoProManager) refreshSettingsLocked(cameraID, bleAddress string) ([]mod
 	}
 
 	snapshot := buildSettingsSnapshot(values, caps)
-	m.db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
+	_ = m.db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
 		cs.Metadata.Settings = snapshot
 		cs.Metadata.SettingsUpdated = time.Now()
 	})

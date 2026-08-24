@@ -49,6 +49,8 @@ export const proto = {
   DeleteGroupRequest: goProProto.DeleteGroupRequest,
   LoadGroupRequest: goProProto.LoadGroupRequest,
   SaveManagedAsGroupRequest: goProProto.SaveManagedAsGroupRequest,
+  MoveCamerasToGroupRequest: goProProto.MoveCamerasToGroupRequest,
+  SetGroupSyncRequest: goProProto.SetGroupSyncRequest,
   GetCameraSettingsRequest: goProProto.GetCameraSettingsRequest,
   ApplyCameraSettingsRequest: goProProto.ApplyCameraSettingsRequest,
   SettingChange: goProProto.SettingChange,

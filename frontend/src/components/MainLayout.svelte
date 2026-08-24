@@ -2,16 +2,14 @@
   import ManagedPanel from './ManagedPanel.svelte';
   import DiscoveredPanel from './DiscoveredPanel.svelte';
   import VideoLibrary from './VideoLibrary.svelte';
-  import GroupsPanel from './GroupsPanel.svelte';
   import ActivityPanel from './ActivityPanel.svelte';
-  import { loadVideos, loadGroups } from '../lib/grpc/actions.js';
+  import { loadVideos } from '../lib/grpc/actions.js';
   import { getLibraryTarget, getActiveTab, setActiveTab, getLibraryLastVisit,
            setSettingsOpen, getSettingsOpen, getCameraSettingsTarget, getPlayerTarget } from '../lib/stores/ui.svelte.js';
   import { getSyncQueue, getNewFilePaths } from '../lib/stores/sync.svelte.js';
 
   let activeTab = $derived(getActiveTab());
   let videosLoaded = false;
-  let groupsLoaded = false;
 
   let newCount = $derived(getNewFilePaths(getLibraryLastVisit()).size);
   let queueLength = $derived(getSyncQueue().length);
@@ -20,7 +18,6 @@
     { id: 'cameras', icon: 'fa-video', label: 'Cameras' },
     { id: 'library', icon: 'fa-photo-film', label: 'Library' },
     { id: 'activity', icon: 'fa-wave-square', label: 'Activity' },
-    { id: 'groups', icon: 'fa-layer-group', label: 'Groups' },
   ];
 
   // Card shortcuts land on the library tab; VideoLibrary consumes the target
@@ -34,13 +31,9 @@
       videosLoaded = true;
       loadVideos();
     }
-    if (tab === 'groups' && !groupsLoaded) {
-      groupsLoaded = true;
-      loadGroups();
-    }
   }
 
-  // Ctrl/Cmd+1..4 switch tabs, Ctrl/Cmd+, opens settings; skipped while
+  // Ctrl/Cmd+1..3 switch tabs, Ctrl/Cmd+, opens settings; skipped while
   // an overlay has the keyboard or the user types in a field.
   function onKeydown(e) {
     const mod = e.ctrlKey || e.metaKey;
@@ -90,13 +83,9 @@
   <main class="main-layout library-layout">
     <VideoLibrary />
   </main>
-{:else if activeTab === 'activity'}
-  <main class="main-layout library-layout">
-    <ActivityPanel />
-  </main>
 {:else}
   <main class="main-layout library-layout">
-    <GroupsPanel />
+    <ActivityPanel />
   </main>
 {/if}
 

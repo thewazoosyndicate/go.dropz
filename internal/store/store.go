@@ -456,12 +456,14 @@ func copyGroup(g *model.Group) *model.Group {
 	return &gc
 }
 
-// AddOrUpdateGroup adds or updates a group (stores a copy)
+// AddOrUpdateGroup adds or updates a group (stores a copy). A camera
+// belongs to one group: its IDs leave every other group.
 func (db *Store) AddOrUpdateGroup(group *model.Group) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
 	stored := copyGroup(group)
+	db.detachCameras(stored.CameraIDs, stored.ID)
 	for i, existing := range db.groups {
 		if existing.ID == group.ID {
 			db.groups[i] = stored
@@ -471,6 +473,99 @@ func (db *Store) AddOrUpdateGroup(group *model.Group) error {
 
 	db.groups = append(db.groups, stored)
 	return db.saveToFile()
+}
+
+// detachCameras removes the cameras from every group except keepID.
+// Caller must hold the write lock.
+func (db *Store) detachCameras(cameraIDs []string, keepID string) {
+	moving := make(map[string]bool, len(cameraIDs))
+	for _, id := range cameraIDs {
+		moving[id] = true
+	}
+	for _, g := range db.groups {
+		if g.ID == keepID {
+			continue
+		}
+		kept := g.CameraIDs[:0]
+		for _, id := range g.CameraIDs {
+			if !moving[id] {
+				kept = append(kept, id)
+			}
+		}
+		g.CameraIDs = kept
+	}
+}
+
+// MoveCamerasToGroup puts the cameras in groupID (empty: no group),
+// leaving whatever group they were in.
+func (db *Store) MoveCamerasToGroup(cameraIDs []string, groupID string) error {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+
+	var target *model.Group
+	if groupID != "" {
+		for _, g := range db.groups {
+			if g.ID == groupID {
+				target = g
+			}
+		}
+		if target == nil {
+			return fmt.Errorf("%w: %s", model.ErrGroupNotFound, groupID)
+		}
+	}
+	db.detachCameras(cameraIDs, groupID)
+	if target != nil {
+		have := make(map[string]bool, len(target.CameraIDs))
+		for _, id := range target.CameraIDs {
+			have[id] = true
+		}
+		for _, id := range cameraIDs {
+			if !have[id] {
+				target.CameraIDs = append(target.CameraIDs, id)
+				have[id] = true
+			}
+		}
+		target.UpdatedAt = time.Now()
+	}
+	return db.saveToFile()
+}
+
+// SetGroupSync pauses or resumes a group's auto-sync; exclusive resumes
+// it and pauses every other group, which is how a rig switch works.
+func (db *Store) SetGroupSync(groupID string, paused, exclusive bool) error {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+
+	found := false
+	for _, g := range db.groups {
+		switch {
+		case g.ID == groupID:
+			g.SyncPaused = paused
+			found = true
+		case exclusive:
+			g.SyncPaused = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("%w: %s", model.ErrGroupNotFound, groupID)
+	}
+	return db.saveToFile()
+}
+
+// IsCameraSyncPaused reports whether the camera's group is paused;
+// ungrouped cameras are never paused.
+func (db *Store) IsCameraSyncPaused(cameraID string) bool {
+	db.mutex.RLock()
+	defer db.mutex.RUnlock()
+
+	for _, g := range db.groups {
+		for _, id := range g.CameraIDs {
+			if id == cameraID {
+				return g.SyncPaused
+			}
+		}
+	}
+	return false
 }
 
 // GetGroup returns a group by ID (returns a copy)

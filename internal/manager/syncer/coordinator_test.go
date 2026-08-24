@@ -60,6 +60,27 @@ func TestTryClaimCameraSuccess(t *testing.T) {
 	}
 }
 
+func TestTryClaimCameraDropsAutoSyncOfPausedGroup(t *testing.T) {
+	c, st := newTestCoordinator(t)
+	seedCamera(t, st, "cam1", model.CameraStatus{IsManaged: true, IsPaired: true, IsReachable: true})
+	st.AddOrUpdateGroup(&model.Group{ID: "g1", CameraIDs: []string{"cam1"}, SyncPaused: true})
+
+	st.AddSyncQueueEntry(entry("cam1"))
+	if _, ok := c.tryClaimCamera(entry("cam1")); ok {
+		t.Fatal("auto sync claimed for a paused group")
+	}
+	if len(st.GetSyncQueue()) != 0 {
+		t.Error("paused auto entry should leave the queue")
+	}
+
+	manual := entry("cam1")
+	manual.Priority = SyncPriorityManual
+	st.AddSyncQueueEntry(manual)
+	if _, ok := c.tryClaimCamera(manual); !ok {
+		t.Error("a manual sync must still run for a paused group")
+	}
+}
+
 func TestTryClaimCameraRemovesUnknownFromQueue(t *testing.T) {
 	c, st := newTestCoordinator(t)
 	st.AddSyncQueueEntry(entry("ghost"))

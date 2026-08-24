@@ -283,13 +283,18 @@ type CameraMediaItem struct {
 	PreviewPath   string    `json:"preview_path,omitempty"` // cached LRV proxy
 }
 
-// Group represents a collection of cameras that can be managed together
+// Group represents a collection of cameras that can be managed together:
+// the day's rig. A camera belongs to at most one group.
 type Group struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	CameraIDs []string  `json:"camera_ids"` // References to managed cameras
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// SyncPaused keeps the cameras managed and visible but stops
+	// auto-sync and status checks; manual syncs still run. Zero value
+	// is "active" so groups saved before the field existed keep syncing.
+	SyncPaused bool `json:"sync_paused,omitempty"`
 }
 
 // VideoFile represents metadata about a synchronized video file

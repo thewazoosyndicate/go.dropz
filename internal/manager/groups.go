@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dropz/dropz/internal/manager/syncer"
 	"github.com/dropz/dropz/internal/model"
 	"github.com/google/uuid"
 )
@@ -98,6 +99,37 @@ func (m *GoProManager) LoadGroup(groupID string) error {
 	m.log.Info("Group loaded", "group_id", groupID, "group", group.Name, "cameras", len(group.CameraIDs))
 	m.notify()
 	return nil
+}
+
+// MoveCamerasToGroup puts the cameras in a group (empty: none) and
+// returns every group, since membership left another one.
+func (m *GoProManager) MoveCamerasToGroup(cameraIDs []string, groupID string) ([]*model.Group, error) {
+	if err := m.validateCamerasExist(cameraIDs); err != nil {
+		return nil, err
+	}
+	if err := m.db.MoveCamerasToGroup(cameraIDs, groupID); err != nil {
+		return nil, err
+	}
+	m.log.Info("Cameras moved to group", "group_id", groupID, "cameras", len(cameraIDs))
+	m.notify()
+	return m.db.GetAllGroups(), nil
+}
+
+// SetGroupSync pauses or resumes a group's auto-sync. Exclusive resumes
+// it and pauses the rest: the rig switch. Pausing also drops the group's
+// queued auto-syncs so nothing starts behind the user's back.
+func (m *GoProManager) SetGroupSync(groupID string, paused, exclusive bool) ([]*model.Group, error) {
+	if err := m.db.SetGroupSync(groupID, paused, exclusive); err != nil {
+		return nil, err
+	}
+	for _, entry := range m.db.GetSyncQueue() {
+		if entry.Priority < syncer.SyncPriorityManual && m.db.IsCameraSyncPaused(entry.CameraID) {
+			_ = m.db.RemoveSyncQueueEntry(entry.CameraID)
+		}
+	}
+	m.log.Info("Group sync changed", "group_id", groupID, "paused", paused, "exclusive", exclusive)
+	m.notify()
+	return m.db.GetAllGroups(), nil
 }
 
 // SaveManagedAsGroup snapshots the current managed cameras as a new group

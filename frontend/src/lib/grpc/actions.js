@@ -338,7 +338,65 @@ function processGroup(g) {
     cameraIds: g.getCameraIdsList(),
     createdAt: g.getCreatedAt()?.toDate(),
     updatedAt: g.getUpdatedAt()?.toDate(),
+    syncPaused: g.getSyncPaused(),
   };
+}
+
+export function createGroup(name, cameraIds) {
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.CreateGroupRequest();
+    request.setName(name);
+    request.setCameraIdsList(cameraIds || []);
+    client.createGroup(request, (error, response) => {
+      if (error) {
+        addToast('Failed to create group', 'error');
+        return reject(error);
+      }
+      const group = processGroup(response);
+      addOrUpdateGroup(group);
+      // Membership is exclusive: the new group may have taken cameras
+      // from others, so refresh the whole list
+      loadGroups();
+      resolve(group);
+    });
+  });
+}
+
+export function moveCamerasToGroup(cameraIds, groupId) {
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.MoveCamerasToGroupRequest();
+    request.setCameraIdsList(cameraIds);
+    request.setGroupId(groupId || '');
+    client.moveCamerasToGroup(request, (error, response) => {
+      if (error) {
+        addToast('Failed to move cameras', 'error');
+        return reject(error);
+      }
+      setGroups(response.getGroupsList().map(processGroup));
+      resolve();
+    });
+  });
+}
+
+// exclusive: resume this group and pause every other one (switch rig)
+export function setGroupSync(groupId, paused, exclusive = false) {
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.SetGroupSyncRequest();
+    request.setGroupId(groupId);
+    request.setPaused(paused);
+    request.setExclusive(exclusive);
+    client.setGroupSync(request, (error, response) => {
+      if (error) {
+        addToast('Failed to change group sync', 'error');
+        return reject(error);
+      }
+      setGroups(response.getGroupsList().map(processGroup));
+      resolve();
+    });
+  });
 }
 
 export function loadGroups() {
@@ -351,35 +409,6 @@ export function loadGroups() {
       return;
     }
     setGroups(response.getGroupsList().map(processGroup));
-  });
-}
-
-export function saveManagedAsGroup(name) {
-  const client = getClient();
-  const request = new proto.SaveManagedAsGroupRequest();
-  request.setName(name);
-
-  client.saveManagedAsGroup(request, (error, response) => {
-    if (error) {
-      addToast('Failed to save group', 'error');
-      return;
-    }
-    addOrUpdateGroup(processGroup(response));
-    addToast(`Group "${name}" saved`, 'success');
-  });
-}
-
-export function loadGroup(groupId) {
-  const client = getClient();
-  const request = new proto.LoadGroupRequest();
-  request.setGroupId(groupId);
-
-  client.loadGroup(request, (error, response) => {
-    if (error || !response.getSuccess()) {
-      addToast('Failed to load group', 'error');
-      return;
-    }
-    addToast('Group loaded', 'success');
   });
 }
 
@@ -399,18 +428,20 @@ export function deleteGroup(groupId) {
 }
 
 export function renameGroup(groupId, name, cameraIds) {
-  const client = getClient();
-  const request = new proto.UpdateGroupRequest();
-  request.setGroupId(groupId);
-  request.setName(name);
-  request.setCameraIdsList(cameraIds);
-
-  client.updateGroup(request, (error, response) => {
-    if (error) {
-      addToast('Failed to rename group', 'error');
-      return;
-    }
-    addOrUpdateGroup(processGroup(response));
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.UpdateGroupRequest();
+    request.setGroupId(groupId);
+    request.setName(name);
+    request.setCameraIdsList(cameraIds);
+    client.updateGroup(request, (error, response) => {
+      if (error) {
+        addToast('Failed to rename group', 'error');
+        return reject(error);
+      }
+      addOrUpdateGroup(processGroup(response));
+      resolve();
+    });
   });
 }
 

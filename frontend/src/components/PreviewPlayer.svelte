@@ -13,12 +13,41 @@
   let target = $derived(getPlayerTarget());
 
   let video = $state(null);
+  let player = $state(null);
   let timeline = $state(null);
   let duration = $state(0); // seconds, proxy timeline
   let currentTime = $state(0);
   let playing = $state(false);
   let muted = $state(false);
+  let volume = $state(1);
   let hoverTime = $state(null);
+  // Fullscreen: the whole player goes fullscreen so the trim controls
+  // stay usable; they overlay the picture and fade when the mouse rests
+  let fullscreen = $state(false);
+  let idle = $state(false);
+  let idleTimer = null;
+
+  function toggleFullscreen() {
+    if (!player) return;
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else player.requestFullscreen?.();
+  }
+
+  function onFullscreenChange() {
+    fullscreen = !!document.fullscreenElement;
+    if (!fullscreen) { idle = false; clearTimeout(idleTimer); }
+    else wake();
+  }
+
+  function wake() {
+    idle = false;
+    clearTimeout(idleTimer);
+    if (fullscreen) idleTimer = setTimeout(() => { if (!dragging) idle = true; }, 2500);
+  }
+
+  $effect(() => {
+    if (video) video.volume = volume;
+  });
 
   // Trim state, in seconds on the same timeline
   let trimming = $state(false);
@@ -219,6 +248,8 @@
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target?.tagName)) return;
     switch (e.key) {
       case 'Escape':
+        // The browser already left fullscreen on this Esc; do not also close
+        if (fullscreen) break;
         if (trimming && !saving) { trimming = false; loopSelection = false; }
         else closePlayer();
         break;
@@ -250,6 +281,7 @@
       case ']': if (trimming) seek(outTime); break;
       case 't': case 'T': toggleTrim(); break;
       case 'm': case 'M': muted = !muted; break;
+      case 'f': case 'F': toggleFullscreen(); break;
       case 'Enter': if (trimming && !saving) save(); break;
     }
   }
@@ -303,10 +335,14 @@
 </script>
 
 <svelte:window onkeydown={onKeydown} />
+<svelte:document onfullscreenchange={onFullscreenChange} />
 
 {#if target}
   <div class="player-overlay" onclick={closePlayer} role="presentation">
-    <div class="player" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={target.title}>
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div class="player" class:fullscreen class:idle bind:this={player}
+         onclick={(e) => e.stopPropagation()} onmousemove={wake} onpointerdown={wake}
+         role="dialog" aria-modal="true" aria-label={target.title}>
       <div class="player-header">
         <span class="player-title">{target.title}</span>
         <div class="header-actions">
@@ -314,6 +350,7 @@
             <Button size="sm" icon="fa-scissors" variant={trimming ? 'primary' : 'outline'} onclick={toggleTrim}
                     title="Trim (T)">{trimming ? 'Trimming' : 'Trim'}</Button>
           {/if}
+          <IconButton icon={fullscreen ? 'fa-compress' : 'fa-expand'} title={fullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'} onclick={toggleFullscreen} />
           <IconButton icon="fa-times" title="Close (Esc)" onclick={closePlayer} />
         </div>
       </div>
@@ -322,8 +359,9 @@
       <video bind:this={video} src={'file://' + target.path} autoplay {muted}
              onloadedmetadata={onLoaded} ontimeupdate={onTimeUpdate}
              onplay={() => playing = true} onpause={() => playing = false}
-             onclick={togglePlay}></video>
+             onclick={togglePlay} ondblclick={toggleFullscreen}></video>
 
+      <div class="controls">
       <div class="transport">
         <IconButton icon={playing ? 'fa-pause' : 'fa-play'} title={playing ? 'Pause (Space)' : 'Play (Space)'} onclick={togglePlay} />
         <span class="time" aria-live="off">{fmt(currentTime)} <span class="muted">/ {fmt(duration)}</span></span>
@@ -371,7 +409,12 @@
           {/if}
         </div>
 
-        <IconButton icon={muted ? 'fa-volume-xmark' : 'fa-volume-high'} title={muted ? 'Unmute (M)' : 'Mute (M)'} onclick={() => muted = !muted} />
+        <div class="volume">
+          <IconButton icon={muted || volume === 0 ? 'fa-volume-xmark' : volume < 0.5 ? 'fa-volume-low' : 'fa-volume-high'}
+                      title={muted ? 'Unmute (M)' : 'Mute (M)'} onclick={() => muted = !muted} />
+          <input type="range" min="0" max="1" step="0.05" bind:value={volume} aria-label="Volume"
+                 oninput={() => { if (muted && volume > 0) muted = false; }} />
+        </div>
       </div>
 
       {#if trimming}
@@ -424,6 +467,7 @@
           <span><kbd>Esc</kbd> leave trim</span>
         </div>
       {/if}
+      </div>
     </div>
   </div>
 {/if}
@@ -440,6 +484,7 @@
   }
 
   .player {
+    position: relative;
     background: var(--panel-bg);
     border-radius: 10px;
     overflow: hidden;
@@ -482,6 +527,80 @@
     gap: 10px;
     padding: 14px 12px 10px;
   }
+
+  .volume { display: flex; align-items: center; gap: 6px; }
+  .volume input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 0;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border-color);
+    cursor: pointer;
+    transition: width 0.15s, opacity 0.15s;
+    opacity: 0;
+  }
+  .volume:hover input[type="range"], .volume input[type="range"]:focus-visible { width: 72px; opacity: 1; }
+  .volume input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--primary-color);
+  }
+
+  /* Fullscreen: black stage, controls float over the picture and fade
+     when the mouse rests; trim handles stay reachable */
+  .player.fullscreen {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+    background: black;
+    justify-content: center;
+  }
+  .player.fullscreen video { max-height: 100vh; height: 100vh; object-fit: contain; }
+  .player.fullscreen .player-header,
+  .player.fullscreen .controls {
+    position: absolute;
+    left: 0;
+    right: 0;
+    transition: opacity 0.25s;
+  }
+  .player.fullscreen .player-header {
+    top: 0;
+    background: linear-gradient(rgba(0, 0, 0, 0.6), transparent);
+    padding: 12px 16px 24px;
+  }
+  .player.fullscreen .player-title { color: white; }
+  .player.fullscreen .controls {
+    bottom: 0;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.75) 40%);
+    padding: 24px 8px 8px;
+    color: white;
+  }
+  .player.fullscreen .time, .player.fullscreen .k, .player.fullscreen .hint, .player.fullscreen .keys { color: rgba(255, 255, 255, 0.85); }
+  .player.fullscreen .trim-bar { border-top-color: rgba(255, 255, 255, 0.15); }
+  .player.fullscreen .point { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.25); color: white; }
+  .player.fullscreen kbd { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.25); color: white; }
+  .player.fullscreen .track { background: rgba(255, 255, 255, 0.3); }
+  .player.fullscreen .playhead, .player.fullscreen .playhead::after { background: white; box-shadow: none; }
+  .player.fullscreen :global(.icon-btn), .player.fullscreen :global(.btn-outline) {
+    color: white;
+    border-color: rgba(255, 255, 255, 0.35);
+  }
+  .player.fullscreen :global(.icon-btn:hover), .player.fullscreen :global(.btn-outline:hover:not(:disabled)) {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: white;
+    color: white;
+  }
+  .player.fullscreen .hover-label, .player.fullscreen .handle .label {
+    background: rgba(0, 0, 0, 0.7);
+    border-color: rgba(255, 255, 255, 0.3);
+    color: white;
+  }
+  .player.fullscreen.idle .player-header,
+  .player.fullscreen.idle .controls { opacity: 0; pointer-events: none; }
+  .player.fullscreen.idle { cursor: none; }
 
   .time {
     font-variant-numeric: tabular-nums;

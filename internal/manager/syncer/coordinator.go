@@ -190,6 +190,13 @@ func (c *Coordinator) tryClaimCamera(entry *model.SyncQueueEntry) (*SyncTask, bo
 		return nil, false
 	}
 
+	// A paused rig never auto-syncs; a manual request still does
+	if entry.Priority < SyncPriorityManual && c.db.IsCameraSyncPaused(entry.CameraID) {
+		c.log.Debug("Auto sync dropped, group paused", camera.LogAttrs()...)
+		_ = c.db.RemoveSyncQueueEntry(entry.CameraID)
+		return nil, false
+	}
+
 	if !camera.Status.IsReachable {
 		logging.Trace(c.log, "Camera not reachable, skipping sync", "camera_id", entry.CameraID)
 		return nil, false

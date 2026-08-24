@@ -39,6 +39,10 @@ func (m *GoProManager) enqueueStatusChecks() {
 		if !cs.Status.IsReachable || cs.Status.IsSyncing || cs.Status.IsPairing {
 			continue
 		}
+		// A paused rig is left asleep: no wake-ups, no battery spent
+		if m.db.IsCameraSyncPaused(cs.Camera.ID) {
+			continue
+		}
 		if m.ble.IsConnected(cs.Camera.BLEAddress) {
 			continue
 		}
@@ -61,6 +65,10 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 		return
 	}
 	if m.ble.IsConnected(cs.Camera.BLEAddress) {
+		return
+	}
+	if m.db.IsCameraSyncPaused(cameraID) {
+		m.log.Debug("Status check skipped, group paused", cs.LogAttrs()...)
 		return
 	}
 

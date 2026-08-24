@@ -113,6 +113,69 @@ func TestGroupIDDerivedFromGroups(t *testing.T) {
 	}
 }
 
+func TestGroupMembershipIsExclusive(t *testing.T) {
+	st, _ := newTestStore(t)
+	addCamera(t, st, "cam1", "AA:01")
+	addCamera(t, st, "cam2", "AA:02")
+	st.AddOrUpdateGroup(&model.Group{ID: "g1", Name: "rig A", CameraIDs: []string{"cam1", "cam2"}})
+	st.AddOrUpdateGroup(&model.Group{ID: "g2", Name: "rig B", CameraIDs: []string{"cam2"}})
+
+	g1, _ := st.GetGroup("g1")
+	if len(g1.CameraIDs) != 1 || g1.CameraIDs[0] != "cam1" {
+		t.Errorf("cam2 still in g1: %v", g1.CameraIDs)
+	}
+
+	if err := st.MoveCamerasToGroup([]string{"cam1"}, "g2"); err != nil {
+		t.Fatal(err)
+	}
+	g1, _ = st.GetGroup("g1")
+	g2, _ := st.GetGroup("g2")
+	if len(g1.CameraIDs) != 0 || len(g2.CameraIDs) != 2 {
+		t.Errorf("after move g1=%v g2=%v", g1.CameraIDs, g2.CameraIDs)
+	}
+	if cs, _ := st.GetCameraByID("cam1"); cs.GroupID != "g2" {
+		t.Errorf("cam1 GroupID = %q, want g2", cs.GroupID)
+	}
+
+	if err := st.MoveCamerasToGroup([]string{"cam1"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if cs, _ := st.GetCameraByID("cam1"); cs.GroupID != "" {
+		t.Errorf("ungrouped cam1 GroupID = %q", cs.GroupID)
+	}
+	if err := st.MoveCamerasToGroup([]string{"cam1"}, "ghost"); err == nil {
+		t.Error("move to unknown group accepted")
+	}
+}
+
+func TestSetGroupSyncExclusive(t *testing.T) {
+	st, _ := newTestStore(t)
+	addCamera(t, st, "cam1", "AA:01")
+	addCamera(t, st, "cam2", "AA:02")
+	st.AddOrUpdateGroup(&model.Group{ID: "g1", CameraIDs: []string{"cam1"}})
+	st.AddOrUpdateGroup(&model.Group{ID: "g2", CameraIDs: []string{"cam2"}})
+
+	if err := st.SetGroupSync("g1", false, true); err != nil {
+		t.Fatal(err)
+	}
+	if st.IsCameraSyncPaused("cam1") || !st.IsCameraSyncPaused("cam2") {
+		t.Error("exclusive resume must pause the other group only")
+	}
+	if err := st.SetGroupSync("g1", true, false); err != nil {
+		t.Fatal(err)
+	}
+	if !st.IsCameraSyncPaused("cam1") || !st.IsCameraSyncPaused("cam2") {
+		t.Error("plain pause must leave the other group alone")
+	}
+	if err := st.SetGroupSync("ghost", true, false); err == nil {
+		t.Error("unknown group accepted")
+	}
+	addCamera(t, st, "loose", "AA:03")
+	if st.IsCameraSyncPaused("loose") {
+		t.Error("ungrouped camera reads as paused")
+	}
+}
+
 func TestGetGroupReturnsCopy(t *testing.T) {
 	st, _ := newTestStore(t)
 	st.AddOrUpdateGroup(&model.Group{ID: "g1", Name: "trip", CameraIDs: []string{"a"}})

@@ -44,6 +44,8 @@ service DropzService {
   rpc DeleteGroup(DeleteGroupRequest) returns (OperationResponse);
   rpc LoadGroup(LoadGroupRequest) returns (LoadGroupResponse);
   rpc SaveManagedAsGroup(SaveManagedAsGroupRequest) returns (Group);
+  rpc MoveCamerasToGroup(MoveCamerasToGroupRequest) returns (GetGroupsResponse);
+  rpc SetGroupSync(SetGroupSyncRequest) returns (GetGroupsResponse);
 
   // Video management
   rpc GetVideos(GetVideosRequest) returns (GetVideosResponse);

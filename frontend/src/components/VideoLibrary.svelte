@@ -5,6 +5,7 @@
   import { getManagedDevices, getAllDevices } from '../lib/stores/devices.svelte.js';
   import { loadVideos } from '../lib/grpc/actions.js';
   import { getLibraryTarget, clearLibraryTarget } from '../lib/stores/ui.svelte.js';
+  import { getSyncQueue } from '../lib/stores/sync.svelte.js';
 
   let videos = $derived(getVideos());
   let totalCount = $derived(getTotalCount());
@@ -12,6 +13,35 @@
 
   // 'local' or a camera ID: the media source being browsed
   let source = $state('local');
+
+  let sortBy = $state('date');
+  let sortAsc = $state(false);
+
+  let sorted = $derived.by(() => {
+    const list = [...videos];
+    const dir = sortAsc ? 1 : -1;
+    list.sort((a, b) => {
+      if (sortBy === 'name') return dir * a.name.localeCompare(b.name);
+      if (sortBy === 'size') return dir * (a.sizeBytes - b.sizeBytes);
+      return dir * ((a.createdAt?.getTime() || 0) - (b.createdAt?.getTime() || 0));
+    });
+    return list;
+  });
+
+  // Reload when a sync leaves the queue: its downloads are on disk now.
+  // Cheaper and quieter than watching the filesystem while a download is
+  // still writing into it; the manual button covers out-of-band changes.
+  let prevQueueSize = $state(0);
+  $effect(() => {
+    const size = getSyncQueue().length;
+    if (size < prevQueueSize) loadVideos();
+    prevQueueSize = size;
+  });
+
+  // Returning to the Local tab rescans, so it never shows a stale list
+  $effect(() => {
+    if (source === 'local') loadVideos();
+  });
 
   let managedCameras = $derived.by(() =>
     Object.values(getManagedDevices())
@@ -87,8 +117,19 @@
         <p class="hint">Sync a camera to see files here</p>
       </div>
     {:else}
-      <div class="cards-grid">
-        {#each videos as video (video.id)}
+      <div class="toolbar">
+        <select bind:value={sortBy} aria-label="Sort by">
+          <option value="date">Date</option>
+          <option value="name">Name</option>
+          <option value="size">Size</option>
+        </select>
+        <button class="btn-outline" onclick={() => sortAsc = !sortAsc}
+                title="Toggle sort direction" aria-label="Toggle sort direction">
+          <i class="fas {sortAsc ? 'fa-arrow-up-short-wide' : 'fa-arrow-down-wide-short'}"></i>
+        </button>
+      </div>
+      <div class="media-grid">
+        {#each sorted as video (video.id)}
           <VideoCard {video} cameraName={cameraNames[video.cameraId] || 'Unknown'} />
         {/each}
       </div>
@@ -204,10 +245,37 @@
     flex-direction: column;
   }
 
-  .cards-grid {
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 10px;
+  }
+
+  .toolbar select {
+    background-color: var(--panel-bg);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 0.85rem;
+  }
+
+  .btn-outline {
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+
+  /* Same sizing as CameraMediaBrowser's grid so both tabs read the same */
+  .media-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
   }
 
   .empty-state {

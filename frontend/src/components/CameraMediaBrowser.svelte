@@ -15,7 +15,9 @@
   let loadedFor = $state(null);
 
   let syncEntry = $derived(getSyncQueue().find(e => e.cameraId === cameraId));
-  let selectedNames = $derived(Object.keys(selected).filter(n => selected[n]));
+  // Selection and keys use cameraPath: cards can repeat a name across
+  // GOPRO directories, and a name-keyed each crashes the whole UI.
+  let selectedPaths = $derived(Object.keys(selected).filter(p => selected[p]));
 
   let sorted = $derived.by(() => {
     const list = [...items];
@@ -59,16 +61,16 @@
     }
   }
 
-  function toggle(name) {
-    selected[name] = !selected[name];
+  function toggle(cameraPath) {
+    selected[cameraPath] = !selected[cameraPath];
     selected = { ...selected };
   }
 
   async function downloadSelected() {
     try {
-      await requestMediaDownload(cameraId, selectedNames);
-      addToast(`${selectedNames.length} files queued from ${cameraName}`, 'success');
-      addLog(`Queued ${selectedNames.length} files from ${cameraName}`, 'info');
+      await requestMediaDownload(cameraId, selectedPaths);
+      addToast(`${selectedPaths.length} files queued from ${cameraName}`, 'success');
+      addLog(`Queued ${selectedPaths.length} files from ${cameraName}`, 'info');
       selected = {};
     } catch (e) {
       addToast('Failed to queue download', 'error');
@@ -123,8 +125,8 @@
           <i class="fas fa-rotate"></i> Refresh from camera
         </button>
       {/if}
-      <button class="btn btn-primary" onclick={downloadSelected} disabled={selectedNames.length === 0 || !!syncEntry}>
-        <i class="fas fa-download"></i> Download {selectedNames.length > 0 ? `(${selectedNames.length})` : ''}
+      <button class="btn btn-primary" onclick={downloadSelected} disabled={selectedPaths.length === 0 || !!syncEntry}>
+        <i class="fas fa-download"></i> Download {selectedPaths.length > 0 ? `(${selectedPaths.length})` : ''}
       </button>
     </div>
   </div>
@@ -141,9 +143,9 @@
     </div>
   {:else}
     <div class="media-grid">
-      {#each sorted as item (item.name)}
-        <button class="media-card" class:selected={selected[item.name]} class:downloaded={item.downloaded}
-             onclick={() => !item.downloaded && toggle(item.name)}
+      {#each sorted as item (item.cameraPath)}
+        <button class="media-card" class:selected={selected[item.cameraPath]} class:downloaded={item.downloaded}
+             onclick={() => !item.downloaded && toggle(item.cameraPath)}
              title={item.downloaded ? 'Already downloaded' : 'Select for download'}>
           <div class="thumb">
             {#if item.thumbnailPath}
@@ -153,7 +155,7 @@
             {/if}
             {#if item.downloaded}
               <span class="state-badge downloaded-badge"><i class="fas fa-check"></i></span>
-            {:else if selected[item.name]}
+            {:else if selected[item.cameraPath]}
               <span class="state-badge selected-badge"><i class="fas fa-check"></i></span>
             {/if}
           </div>

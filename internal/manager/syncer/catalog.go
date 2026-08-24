@@ -78,6 +78,13 @@ func ReadCatalog(cameraFolder string) ([]model.CameraMediaItem, time.Time, error
 		return nil, time.Time{}, err
 	}
 
+	// Downloads and thumbnails live under the local name, which carries a
+	// directory prefix when the card duplicates a name; mirror that here.
+	dupes := make(map[string]int, len(cat.Files))
+	for _, f := range cat.Files {
+		dupes[f.Name]++
+	}
+
 	items := make([]model.CameraMediaItem, 0, len(cat.Files))
 	for _, f := range cat.Files {
 		item := model.CameraMediaItem{
@@ -86,10 +93,11 @@ func ReadCatalog(cameraFolder string) ([]model.CameraMediaItem, time.Time, error
 			SizeBytes:  f.SizeBytes,
 			CreatedAt:  f.CreatedAt,
 		}
-		if thumb := ThumbnailPath(cameraFolder, f.Name); fileExists(thumb) {
+		local := wifi.LocalMediaName(f.CameraPath, f.Name, dupes[f.Name] > 1)
+		if thumb := ThumbnailPath(cameraFolder, local); fileExists(thumb) {
 			item.ThumbnailPath = thumb
 		}
-		item.Downloaded = fileExists(filepath.Join(cameraFolder, f.Name))
+		item.Downloaded = fileExists(filepath.Join(cameraFolder, local))
 		items = append(items, item)
 	}
 	return items, cat.UpdatedAt, nil
@@ -108,12 +116,13 @@ func refreshThumbnails(ctx context.Context, wm wifiClient, cameraFolder string, 
 		log.Warn("Cannot create thumbnail dir", "dir", thumbDir, "err", err)
 		return
 	}
+	dupes := wifi.DuplicateNames(files)
 	fetched, failed := 0, 0
 	for _, f := range files {
 		if ctx.Err() != nil {
 			return
 		}
-		out := ThumbnailPath(cameraFolder, f.Name)
+		out := ThumbnailPath(cameraFolder, wifi.LocalMediaName(f.CameraPath, f.Name, dupes[f.Name]))
 		if fileExists(out) {
 			continue
 		}

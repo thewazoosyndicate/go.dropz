@@ -54,6 +54,37 @@ func NewWiFiManager(log *slog.Logger) *WiFiManager {
 	}
 }
 
+// DuplicateNames returns the names appearing more than once.
+// Cards can reuse a file name across GOPRO directories (seen on a HERO13
+// after folder rollover), so a bare name does not identify a file.
+func DuplicateNames(files []MediaFile) map[string]bool {
+	seen := make(map[string]int, len(files))
+	for _, f := range files {
+		seen[f.Name]++
+	}
+	dupes := make(map[string]bool)
+	for name, n := range seen {
+		if n > 1 {
+			dupes[name] = true
+		}
+	}
+	return dupes
+}
+
+// LocalMediaName returns the on-disk file name for a camera file: the
+// camera name, prefixed by its directory only when the name is duplicated
+// on the card. dupe must come from the camera's FULL media list, so the
+// local name stays stable across selection downloads and full syncs.
+func LocalMediaName(cameraPath, name string, dupe bool) string {
+	if !dupe {
+		return name
+	}
+	if dir := filepath.Dir(cameraPath); dir != "." && dir != "/" {
+		return strings.ReplaceAll(dir, string(filepath.Separator), "_") + "_" + name
+	}
+	return name
+}
+
 // DownloadProgress is a byte-level snapshot streamed while DownloadVideos
 // runs. Byte totals are 0 when the camera did not report sizes (grouped
 // media members).
@@ -127,7 +158,10 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 			selected[n] = true
 		}
 		for _, media := range mediaFiles {
-			if selected[media.Name] {
+			// The browser selects by camera path since names can repeat
+			// across GOPRO directories; bare names still match queued
+			// entries persisted before that change.
+			if selected[media.CameraPath] || selected[media.Name] {
 				filteredMedia = append(filteredMedia, media)
 			}
 		}
@@ -144,11 +178,18 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	var downloadedFiles []string
 	skippedCount := 0
 
+	// Duplicate detection over the full card, not the filtered window:
+	// the local name must not depend on which files this sync covers.
+	dupes := DuplicateNames(mediaFiles)
+	localName := func(media MediaFile) string {
+		return LocalMediaName(media.CameraPath, media.Name, dupes[media.Name])
+	}
+
 	// Partition before downloading so progress can report the real file
 	// count and byte total for this sync, not the whole window.
 	var pending []MediaFile
 	for _, media := range filteredMedia {
-		outputPath := filepath.Join(destDir, media.Name)
+		outputPath := filepath.Join(destDir, localName(media))
 		if exists, _ := m.fileExistsWithSize(outputPath, media.Size); exists {
 			downloadedFiles = append(downloadedFiles, outputPath)
 			skippedCount++
@@ -177,7 +218,7 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 		default:
 		}
 
-		outputPath := filepath.Join(destDir, media.Name)
+		outputPath := filepath.Join(destDir, localName(media))
 
 		var fileProgress func(int64)
 		if progress != nil {

@@ -1,8 +1,7 @@
 <script>
   import { fetchCameraMedia, requestMediaDownload, previewMedia } from '../lib/grpc/actions.js';
-  import { addToast, addLog } from '../lib/stores/ui.svelte.js';
+  import { addToast, addLog, openPlayer } from '../lib/stores/ui.svelte.js';
   import { getSyncQueue } from '../lib/stores/sync.svelte.js';
-  const { ipcRenderer } = window.require('electron');
 
   let { cameraId, cameraName } = $props();
 
@@ -67,7 +66,7 @@
     const item = items.find(i => i.cameraPath === pendingPreview);
     if (item?.previewPath) {
       pendingPreview = null;
-      ipcRenderer.send('desktop-open', item.previewPath);
+      openPlayer(item.previewPath, item.name);
     }
   });
 
@@ -110,12 +109,13 @@
 
   async function preview(item, ev) {
     ev.stopPropagation();
-    if (item.localPath) return ipcRenderer.send('desktop-open', item.localPath);
-    if (item.previewPath) return ipcRenderer.send('desktop-open', item.previewPath);
+    // Camera files are HEVC, which the renderer cannot decode; playback
+    // always goes through the transcoded WebM proxy.
+    if (item.previewPath) return openPlayer(item.previewPath, item.name);
     try {
       await previewMedia(cameraId, item.cameraPath);
       pendingPreview = item.cameraPath;
-      addToast('Fetching preview from camera...', 'info');
+      addToast(item.downloaded ? 'Generating preview...' : 'Fetching preview from camera...', 'info');
     } catch (e) {
       addToast(e.message || 'Preview failed', 'error');
     }
@@ -204,7 +204,7 @@
             {#if canPreview(item)}
               <span class="preview-btn" role="button" tabindex="0"
                     class:fetching={pendingPreview === item.cameraPath}
-                    title={item.localPath ? 'Play local file' : item.previewPath ? 'Play cached preview' : 'Preview from camera'}
+                    title={item.previewPath ? 'Play preview' : item.downloaded ? 'Generate preview' : 'Preview from camera'}
                     onclick={(e) => preview(item, e)}
                     onkeydown={(e) => e.key === 'Enter' && preview(item, e)}>
                 <i class="fas {pendingPreview === item.cameraPath ? 'fa-spinner fa-spin' : 'fa-play'}"></i>

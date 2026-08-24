@@ -84,6 +84,8 @@ type Coordinator struct {
 	// appears in both while its preview link is up.
 	previewSessions map[string]*previewSession
 	previewIdle     time.Duration // tests shrink the linger window
+	// Preview transcoder, swappable so tests run without ffmpeg
+	transcode func(ctx context.Context, src, dst string) error
 	mutex           sync.RWMutex
 	notifier     func()
 	bleOperation ble.Operation
@@ -109,6 +111,7 @@ func NewCoordinator(ctx context.Context, db *store.Store, bleManager bleClient, 
 		activeTasks:     make(map[string]*SyncTask),
 		previewSessions: make(map[string]*previewSession),
 		previewIdle:     previewLinger,
+		transcode:       transcodePreview,
 		notifier:        notifier,
 		bleOperation:    bleOperation,
 		ctx:             ctx,

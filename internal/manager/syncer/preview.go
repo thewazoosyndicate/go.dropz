@@ -2,8 +2,10 @@ package syncer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -22,6 +24,41 @@ const (
 // link is up.
 type previewSession struct {
 	requests chan string // camera paths
+}
+
+// ffmpegPath finds the bundled ffmpeg (shipped next to the dropz binary
+// in the packaged app) or falls back to PATH.
+func ffmpegPath() string {
+	if exe, err := os.Executable(); err == nil {
+		p := filepath.Join(filepath.Dir(exe), "ffmpeg")
+		if _, statErr := os.Stat(p); statErr == nil {
+			return p
+		}
+	}
+	if p, err := exec.LookPath("ffmpeg"); err == nil {
+		return p
+	}
+	return ""
+}
+
+// transcodePreview turns a camera clip into a 480p VP9/Opus WebM.
+// Chromium decodes VP9 in software everywhere; the camera's HEVC does
+// not render at all on hosts whose Mesa lacks HEVC VAAPI.
+func transcodePreview(ctx context.Context, src, dst string) error {
+	ff := ffmpegPath()
+	if ff == "" {
+		return errors.New("ffmpeg not found next to the binary or in PATH")
+	}
+	tmp := dst + ".partial"
+	cmd := exec.CommandContext(ctx, ff, "-y", "-v", "error", "-i", src,
+		"-vf", "scale=-2:480", "-c:v", "libvpx-vp9", "-row-mt", "1",
+		"-deadline", "realtime", "-cpu-used", "7", "-crf", "34", "-b:v", "0",
+		"-c:a", "libopus", "-b:a", "64k", "-f", "webm", tmp)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("ffmpeg: %w: %s", err, out)
+	}
+	return os.Rename(tmp, dst)
 }
 
 // RequestPreview fetches a clip's LRV proxy into the preview cache.
@@ -53,6 +90,30 @@ func (c *Coordinator) RequestPreview(cameraID, cameraPath string) error {
 	if _, busy := c.activeTasks[cameraID]; busy {
 		c.mutex.Unlock()
 		return fmt.Errorf("%s is busy syncing", camera.Camera.Name)
+	}
+
+	// A local source needs no radio: transcode straight from disk.
+	config := c.db.GetConfig()
+	folder := filepath.Join(config.DestinationFolder, camera.Camera.WiFiSSID)
+	local := c.localNameFor(folder, cameraPath)
+	if src := filepath.Join(folder, local); fileExists(src) {
+		taskCtx, taskCancel := context.WithCancel(c.ctx)
+		task := &SyncTask{CameraID: cameraID, CameraName: camera.Camera.Name, Cancel: taskCancel, Ctx: taskCtx}
+		c.activeTasks[cameraID] = task
+		c.mutex.Unlock()
+		_ = c.db.AddSyncQueueEntry(&model.SyncQueueEntry{
+			CameraID:         cameraID,
+			QueuedAt:         time.Now(),
+			Priority:         SyncPriorityManual,
+			CurrentOperation: "Generating preview",
+		})
+		c.notifier()
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			c.performLocalPreview(task, src, folder, local)
+		}()
+		return nil
 	}
 
 	taskCtx, taskCancel := context.WithCancel(c.ctx)
@@ -183,8 +244,9 @@ func (c *Coordinator) performPreviewSession(task *SyncTask, s *previewSession) {
 	}
 }
 
-// fetchPreview downloads one LRV into the cache and streams "Preview
-// ready", which the browser uses as its reload-and-open signal.
+// fetchPreview downloads one LRV, transcodes it into the always-playable
+// WebM cache, and streams "Preview ready", which the browser uses as its
+// reload-and-open signal.
 func (c *Coordinator) fetchPreview(run *syncRun, previewDir, cameraPath string) {
 	c.updateProgress(run.task, "Fetching preview", 80)
 	if err := os.MkdirAll(previewDir, 0755); err != nil {
@@ -192,10 +254,19 @@ func (c *Coordinator) fetchPreview(run *syncRun, previewDir, cameraPath string) 
 		c.updateProgress(run.task, "Preview failed", 100)
 		return
 	}
-	local := c.localNameFor(run, cameraPath)
-	out := PreviewPath(run.folder, local)
-	if err := run.wifi.DownloadLRV(run.ctx, cameraPath, out); err != nil {
+	local := c.localNameFor(run.folder, cameraPath)
+	raw := rawLRVPath(run.folder, local)
+	if err := run.wifi.DownloadLRV(run.ctx, cameraPath, raw); err != nil {
 		c.log.Warn("Preview fetch failed", "camera", run.task.CameraName, "path", cameraPath, "err", err)
+		c.updateProgress(run.task, "Preview failed", 100)
+		return
+	}
+	c.updateProgress(run.task, "Converting preview", 90)
+	out := PreviewPath(run.folder, local)
+	err := c.transcode(run.ctx, raw, out)
+	_ = os.Remove(raw)
+	if err != nil {
+		c.log.Warn("Preview transcode failed", "camera", run.task.CameraName, "path", cameraPath, "err", err)
 		c.updateProgress(run.task, "Preview failed", 100)
 		return
 	}
@@ -203,11 +274,39 @@ func (c *Coordinator) fetchPreview(run *syncRun, previewDir, cameraPath string) 
 	c.updateProgress(run.task, "Preview ready", 100)
 }
 
+// performLocalPreview transcodes an already-downloaded clip; no radio.
+func (c *Coordinator) performLocalPreview(task *SyncTask, src, folder, local string) {
+	defer func() {
+		c.mutex.Lock()
+		delete(c.activeTasks, task.CameraID)
+		c.mutex.Unlock()
+		_ = c.db.RemoveSyncQueueEntry(task.CameraID)
+		c.notifier()
+	}()
+
+	ctx, cancel := context.WithTimeout(task.Ctx, 10*time.Minute)
+	defer cancel()
+	out := PreviewPath(folder, local)
+	if err := os.MkdirAll(filepath.Dir(out), 0755); err != nil {
+		c.log.Warn("Cannot create preview dir", "err", err)
+		return
+	}
+	if err := c.transcode(ctx, src, out); err != nil {
+		c.log.Warn("Local preview transcode failed", "camera", task.CameraName, "src", src, "err", err)
+		c.updateProgress(task, "Preview failed", 100)
+		return
+	}
+	c.log.Info("Preview generated from local file", "camera", task.CameraName, "src", src)
+	// The label streams before the defer removes the entry; either signal
+	// (label or entry removal) makes the browser reload and open it.
+	c.updateProgress(task, "Preview ready", 100)
+}
+
 // localNameFor resolves a camera path to its local media name via the
 // cached catalog, falling back to the bare file name.
-func (c *Coordinator) localNameFor(run *syncRun, cameraPath string) string {
+func (c *Coordinator) localNameFor(folder, cameraPath string) string {
 	name := filepath.Base(cameraPath)
-	items, _, err := ReadCatalog(run.folder)
+	items, _, err := ReadCatalog(folder)
 	if err != nil {
 		return name
 	}

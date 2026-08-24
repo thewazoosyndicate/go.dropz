@@ -24,6 +24,14 @@ func newPreviewCoordinator(t *testing.T) (*Coordinator, *fakeWiFi) {
 		return op()
 	}
 	c.previewIdle = 50 * time.Millisecond
+	// Stub transcoder: tests must not need ffmpeg
+	c.transcode = func(_ context.Context, src, dst string) error {
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dst, append([]byte("webm:"), data...), 0644)
+	}
 
 	cfg := st.GetConfig()
 	cfg.DestinationFolder = filepath.Join(t.TempDir(), "library")
@@ -65,6 +73,32 @@ func TestPreviewSessionFetchesLRVAndCleansUp(t *testing.T) {
 	defer c.mutex.RUnlock()
 	if len(c.activeTasks) != 0 || len(c.previewSessions) != 0 {
 		t.Error("session maps not cleaned up")
+	}
+}
+
+func TestPreviewFromLocalFileSkipsRadio(t *testing.T) {
+	c, fw := newPreviewCoordinator(t)
+	folder := filepath.Join(c.db.GetConfig().DestinationFolder, "GP12345678")
+	if err := os.MkdirAll(folder, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(folder, "GX010001.MP4"), []byte("hevc"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.RequestPreview("cam1", "100GOPRO/GX010001.MP4"); err != nil {
+		t.Fatal(err)
+	}
+	c.Wait()
+
+	if fw.factoryCalls.Load() != 0 {
+		t.Error("local file preview must not open a camera session")
+	}
+	if _, err := os.Stat(PreviewPath(folder, "GX010001.MP4")); err != nil {
+		t.Errorf("preview not generated: %v", err)
+	}
+	if len(c.db.GetSyncQueue()) != 0 {
+		t.Error("preview task entry not removed")
 	}
 }
 

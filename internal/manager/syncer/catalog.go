@@ -39,11 +39,18 @@ func ThumbnailPath(cameraFolder, name string) string {
 	return filepath.Join(cameraFolder, thumbnailDirName, name+".jpg")
 }
 
-// PreviewPath returns where a video's cached LRV proxy lives. The .mp4
-// extension keeps the system player association; LRV is a plain MP4.
+// PreviewPath returns where a video's transcoded preview lives: a 480p
+// VP9 WebM the in-app player can always decode.
 func PreviewPath(cameraFolder, localName string) string {
 	base := strings.TrimSuffix(localName, filepath.Ext(localName))
-	return filepath.Join(cameraFolder, previewDirName, base+".lrv.mp4")
+	return filepath.Join(cameraFolder, previewDirName, base+".webm")
+}
+
+// rawLRVPath is the fetch-time intermediate next to the preview; kept
+// only between download and transcode.
+func rawLRVPath(cameraFolder, localName string) string {
+	base := strings.TrimSuffix(localName, filepath.Ext(localName))
+	return filepath.Join(cameraFolder, previewDirName, base+".lrv")
 }
 
 // WriteCatalog persists the camera's media list (tmp + rename).

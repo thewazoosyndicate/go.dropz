@@ -38,11 +38,13 @@
 
   // The session only matters while this camera's library is on screen:
   // navigating away (other camera, local tab, tab switch, close) disarms.
+  // The teardown must not read reactive state: tracked reads there make
+  // every device-stream update re-run the effect, whose cleanup then
+  // disarms the session it just started. Disarming unarmed is a no-op.
   $effect(() => {
     const id = cameraId;
     return () => {
-      const dev = Object.values(getAllDevices()).find(d => d.id === id);
-      if (dev?.previewEnabled) setPreviewSession(id, false).catch(() => {});
+      setPreviewSession(id, false).catch(() => {});
     };
   });
   // Selection and keys use cameraPath: cards can repeat a name across

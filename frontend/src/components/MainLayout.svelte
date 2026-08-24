@@ -3,12 +3,25 @@
   import DiscoveredPanel from './DiscoveredPanel.svelte';
   import VideoLibrary from './VideoLibrary.svelte';
   import GroupsPanel from './GroupsPanel.svelte';
+  import ActivityPanel from './ActivityPanel.svelte';
   import { loadVideos, loadGroups } from '../lib/grpc/actions.js';
-  import { getLibraryTarget } from '../lib/stores/ui.svelte.js';
+  import { getLibraryTarget, getActiveTab, setActiveTab, getLibraryLastVisit,
+           setSettingsOpen, getSettingsOpen, getCameraSettingsTarget, getPlayerTarget } from '../lib/stores/ui.svelte.js';
+  import { getSyncQueue, getNewFilePaths } from '../lib/stores/sync.svelte.js';
 
-  let activeTab = $state('cameras');
+  let activeTab = $derived(getActiveTab());
   let videosLoaded = false;
   let groupsLoaded = false;
+
+  let newCount = $derived(getNewFilePaths(getLibraryLastVisit()).size);
+  let queueLength = $derived(getSyncQueue().length);
+
+  const TABS = [
+    { id: 'cameras', icon: 'fa-video', label: 'Cameras' },
+    { id: 'library', icon: 'fa-photo-film', label: 'Library' },
+    { id: 'activity', icon: 'fa-wave-square', label: 'Activity' },
+    { id: 'groups', icon: 'fa-layer-group', label: 'Groups' },
+  ];
 
   // Card shortcuts land on the library tab; VideoLibrary consumes the target
   $effect(() => {
@@ -16,7 +29,7 @@
   });
 
   function switchTab(tab) {
-    activeTab = tab;
+    setActiveTab(tab);
     if (tab === 'library' && !videosLoaded) {
       videosLoaded = true;
       loadVideos();
@@ -26,18 +39,42 @@
       loadGroups();
     }
   }
+
+  // Ctrl/Cmd+1..4 switch tabs, Ctrl/Cmd+, opens settings; skipped while
+  // an overlay has the keyboard or the user types in a field.
+  function onKeydown(e) {
+    const mod = e.ctrlKey || e.metaKey;
+    if (!mod || e.altKey) return;
+    const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target?.tagName);
+    if (typing) return;
+    if (e.key === ',') {
+      e.preventDefault();
+      setSettingsOpen(true);
+      return;
+    }
+    const n = Number(e.key);
+    if (n >= 1 && n <= TABS.length && !getSettingsOpen() && !getCameraSettingsTarget() && !getPlayerTarget()) {
+      e.preventDefault();
+      switchTab(TABS[n - 1].id);
+    }
+  }
 </script>
 
-<div class="tab-bar">
-  <button class="tab" class:active={activeTab === 'cameras'} onclick={() => switchTab('cameras')}>
-    <i class="fas fa-video"></i> Cameras
-  </button>
-  <button class="tab" class:active={activeTab === 'library'} onclick={() => switchTab('library')}>
-    <i class="fas fa-photo-film"></i> Library
-  </button>
-  <button class="tab" class:active={activeTab === 'groups'} onclick={() => switchTab('groups')}>
-    <i class="fas fa-layer-group"></i> Groups
-  </button>
+<svelte:window onkeydown={onKeydown} />
+
+<div class="tab-bar" role="tablist">
+  {#each TABS as tab, i (tab.id)}
+    <button class="tab" role="tab" aria-selected={activeTab === tab.id}
+            class:active={activeTab === tab.id} onclick={() => switchTab(tab.id)}
+            title="{tab.label} (Ctrl+{i + 1})">
+      <i class="fas {tab.icon}" aria-hidden="true"></i> {tab.label}
+      {#if tab.id === 'library' && newCount > 0}
+        <span class="count">{newCount} new</span>
+      {:else if tab.id === 'activity' && queueLength > 0}
+        <span class="dot" aria-label="Sync in progress"></span>
+      {/if}
+    </button>
+  {/each}
 </div>
 
 {#if activeTab === 'cameras'}
@@ -52,6 +89,10 @@
 {:else if activeTab === 'library'}
   <main class="main-layout library-layout">
     <VideoLibrary />
+  </main>
+{:else if activeTab === 'activity'}
+  <main class="main-layout library-layout">
+    <ActivityPanel />
   </main>
 {:else}
   <main class="main-layout library-layout">
@@ -78,7 +119,7 @@
     color: var(--text-secondary);
     cursor: pointer;
     border-bottom: 2px solid transparent;
-    transition: all 0.2s;
+    transition: color 0.2s, border-color 0.2s;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -91,6 +132,23 @@
   .tab.active {
     color: var(--primary-color);
     border-bottom-color: var(--primary-color);
+  }
+
+  .count {
+    font-size: 11px;
+    font-weight: 600;
+    color: white;
+    background: var(--primary-color);
+    border-radius: 8px;
+    padding: 0 6px;
+    line-height: 16px;
+  }
+
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--state-busy);
   }
 
   .main-layout {

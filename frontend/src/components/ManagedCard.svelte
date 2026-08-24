@@ -1,91 +1,81 @@
 <script>
-  import { addToSyncQueue, cancelSync, toggleDeviceManaged } from '../lib/grpc/actions.js';
-  import { getSyncQueue } from '../lib/stores/sync.svelte.js';
-  import { getAllDevices } from '../lib/stores/devices.svelte.js';
-  import { openCameraSettings, openLibrary } from '../lib/stores/ui.svelte.js';
+  import { addToSyncQueue, cancelSync, toggleDeviceManaged, setCameraAlias } from '../lib/grpc/actions.js';
+  import { getSyncEntryForCamera, getQueuePosition, getActiveSyncEntry } from '../lib/stores/sync.svelte.js';
+  import { displayName, factoryName, findDeviceById } from '../lib/stores/devices.svelte.js';
+  import { openCameraSettings, openLibrary, openActivity, addToast } from '../lib/stores/ui.svelte.js';
+  import { formatBytes, formatRate, formatEta, formatTimeAgo, plural } from '../lib/format.js';
+  import Button from './ui/Button.svelte';
+  import Badge from './ui/Badge.svelte';
+  import ProgressBar from './ui/ProgressBar.svelte';
+  import Menu from './ui/Menu.svelte';
+  import PhaseStepper from './PhaseStepper.svelte';
 
   let { device } = $props();
 
-  let displayName = $derived(
-    device.wifiSsid?.trim() ? device.wifiSsid.substring(0, 12) : (device.name || 'Unknown GoPro')
-  );
+  let name = $derived(displayName(device));
+  let factory = $derived(factoryName(device));
+  let subtitle = $derived([device.model, factory !== name ? factory : ''].filter(Boolean).join(' · '));
 
-  let statusCode = $derived(getStatusCode(device));
-  let syncEntry = $derived(getSyncQueue().find(e => e.cameraId === device.id));
-  let isInSyncQueue = $derived(!!syncEntry);
-
-  // The stream delivers the queue already sorted by priority then age, so
-  // the position is the index among entries whose camera is not syncing.
-  let queuePosition = $derived.by(() => {
-    if (!isInSyncQueue || device.isSyncing) return 0;
-    const devices = Object.values(getAllDevices());
-    const waiting = getSyncQueue().filter(e =>
-      !devices.find(d => d.id === e.cameraId)?.isSyncing);
-    return waiting.findIndex(e => e.cameraId === device.id) + 1;
+  let syncEntry = $derived(getSyncEntryForCamera(device.id));
+  let inQueue = $derived(!!syncEntry);
+  let queuePosition = $derived(inQueue && !device.isSyncing ? getQueuePosition(device.id) : 0);
+  let activeName = $derived.by(() => {
+    const active = getActiveSyncEntry();
+    return active ? displayName(findDeviceById(active.cameraId)) : '';
   });
 
-  let downloadDetail = $derived.by(() => {
+  // One state at a time, most urgent first
+  let state = $derived.by(() => {
+    if (!device.isReachable) return 'away';
+    if (device.isPairing) return 'pairing';
+    if (device.isSyncing && syncEntry) return 'syncing';
+    if (inQueue) return 'queued';
+    if (device.lastSyncError) return 'failed';
+    if (device.newMediaCount > 0) return 'new';
+    return 'ok';
+  });
+
+  const BADGE = {
+    ok: { tone: 'ok', label: 'Up to date' },
+    new: { tone: 'info', label: 'new' },
+    queued: { tone: 'idle', label: 'Queued' },
+    syncing: { tone: 'busy', label: 'Syncing' },
+    failed: { tone: 'error', label: 'Failed' },
+    away: { tone: 'idle', label: 'Away' },
+    pairing: { tone: 'busy', label: 'Pairing' },
+  };
+  let badge = $derived(state === 'new'
+    ? { tone: 'info', label: `${device.newMediaCount} new` }
+    : BADGE[state]);
+
+  let transfer = $derived.by(() => {
     const e = syncEntry;
     if (!e?.fileCount) return null;
-    const parts = [`File ${e.fileIndex}/${e.fileCount}`];
-    if (e.bytesTotal > 0) parts.push(`${formatBytes(e.bytesDone)} / ${formatBytes(e.bytesTotal)}`);
-    if (e.rateBps > 0) parts.push(`${(e.rateBps / 1e6).toFixed(1)} MB/s`);
-    if (e.rateBps > 0 && e.bytesTotal > e.bytesDone) {
-      parts.push(formatEta((e.bytesTotal - e.bytesDone) / e.rateBps));
-    }
-    return parts.join(' · ');
+    const parts = [];
+    if (e.bytesTotal > 0) parts.push(`${formatBytes(e.bytesDone)} of ${formatBytes(e.bytesTotal)}`);
+    if (e.rateBps > 0) parts.push(formatRate(e.rateBps));
+    if (e.rateBps > 0 && e.bytesTotal > e.bytesDone) parts.push(formatEta((e.bytesTotal - e.bytesDone) / e.rateBps));
+    return { file: e.fileName, index: e.fileIndex, count: e.fileCount, detail: parts.join(' · ') };
   });
 
-  function formatBytes(bytes) {
-    if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
-    return `${Math.max(1, Math.round(bytes / 1e6))} MB`;
-  }
-
-  function formatEta(seconds) {
-    if (seconds < 90) return `~${Math.max(5, Math.round(seconds / 5) * 5)}s left`;
-    return `~${Math.round(seconds / 60)} min left`;
-  }
-
+  let lastSyncedText = $derived(formatTimeAgo(device.lastSynced));
+  let lastSeenText = $derived(formatTimeAgo(device.lastSeen));
+  let storageText = $derived(formatStorage(device.remainingSpaceKb));
   let signalStrength = $derived(getSignalLevel(device.rssi || -100));
   let signalColor = $derived(
-    signalStrength >= 3 ? 'var(--secondary-color)' :
-    signalStrength >= 2 ? 'var(--warning-color)' : 'var(--danger-color)'
+    signalStrength >= 3 ? 'var(--state-ok)' :
+    signalStrength >= 2 ? 'var(--state-busy)' : 'var(--state-error)'
   );
-
-  let storageText = $derived(formatStorage(device.remainingSpaceKb));
-  let lastSyncedText = $derived(formatTimeAgo(device.lastSynced));
-
   let batteryLevel = $derived(Math.max(0, Math.min(100, device.batteryLevel ?? 0)));
   let batteryColor = $derived(
-    batteryLevel < 20 ? 'var(--danger-color)' :
-    batteryLevel < 50 ? 'var(--warning-color)' : 'var(--secondary-color)'
+    batteryLevel < 20 ? 'var(--state-error)' :
+    batteryLevel < 50 ? 'var(--state-busy)' : 'var(--state-ok)'
   );
 
   function formatStorage(kb) {
     if (!kb || kb <= 0) return null;
     const gb = kb / (1024 * 1024);
     return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(kb / 1024)} MB`;
-  }
-
-  function formatTimeAgo(date) {
-    if (!date || date.getTime() < 86400000) return null;
-    const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
-    if (seconds < 60) return 'just now';
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ago`;
-  }
-
-  function getStatusCode(d) {
-    if (!d.isReachable) return 'unreachable';
-    if (d.isPairing) return 'pairing';
-    if (d.isSyncing) return 'syncing';
-    if (d.isPaired && d.isManaged) return 'managed';
-    if (d.isPaired) return 'available';
-    return 'discovered';
   }
 
   function getSignalLevel(rssi) {
@@ -95,111 +85,184 @@
     return 1;
   }
 
-  function handleSync() {
-    if (isInSyncQueue) cancelSync(device.macAddress);
-    else addToSyncQueue(device.macAddress);
+  // Inline rename: the name becomes an input, Enter saves, Escape cancels
+  let renaming = $state(false);
+  let draft = $state('');
+  let nameInput = $state(null);
+
+  function startRename() {
+    draft = device.alias || '';
+    renaming = true;
+    setTimeout(() => nameInput?.focus(), 0);
   }
 
-  function handleUnmanage() {
-    toggleDeviceManaged(device.macAddress, false);
+  async function commitRename() {
+    if (!renaming) return;
+    renaming = false;
+    const alias = draft.trim();
+    if (alias === (device.alias || '')) return;
+    try {
+      await setCameraAlias(device.id, alias);
+    } catch (e) {
+      addToast(e.message || 'Rename failed', 'error');
+    }
   }
 
-  function handleBrowse() {
-    openLibrary(device.id);
+  function onRenameKey(e) {
+    if (e.key === 'Enter') commitRename();
+    else if (e.key === 'Escape') renaming = false;
   }
+
+  let menuItems = $derived([
+    { label: 'Rename', icon: 'fa-pen', onclick: startRename },
+    { label: 'Browse media', icon: 'fa-photo-film', onclick: () => openLibrary(device.id), disabled: !device.id },
+    { label: 'Camera settings', icon: 'fa-sliders-h', onclick: handleSettings, disabled: device.isSyncing || !device.isReachable },
+    { label: 'Show activity', icon: 'fa-wave-square', onclick: () => openActivity(device.id) },
+    { label: 'Unmanage', icon: 'fa-link-slash', danger: true, confirm: true,
+      onclick: () => toggleDeviceManaged(device.macAddress, false) },
+  ]);
 
   function handleSettings() {
-    openCameraSettings({
-      type: 'camera',
-      id: device.id,
-      name: displayName,
-      referenceCameraId: device.id,
-    });
+    openCameraSettings({ type: 'camera', id: device.id, name, referenceCameraId: device.id });
   }
 </script>
 
-<div class="card status-{statusCode}">
+<div class="card state-{state}">
   <div class="card-header">
     <div class="name-row">
-      <span class="name">{displayName}</span>
-      <span class="status-badge">{statusCode}</span>
+      {#if renaming}
+        <input class="name-input" bind:this={nameInput} bind:value={draft} maxlength="40"
+               placeholder={factory} aria-label="Camera name"
+               onkeydown={onRenameKey} onblur={commitRename} />
+      {:else}
+        <button class="name" title="Rename" onclick={startRename}>{name}</button>
+      {/if}
+      <Badge tone={badge.tone} pulse={state === 'syncing' || state === 'pairing'}>{badge.label}</Badge>
       {#if device.numPhotos > 0 || device.numVideos > 0}
-        <span class="media-counts">
-          {#if device.numPhotos > 0}<i class="fas fa-image"></i> {device.numPhotos}{/if}
-          {#if device.numPhotos > 0 && device.numVideos > 0} · {/if}
-          {#if device.numVideos > 0}<i class="fas fa-video"></i> {device.numVideos}{/if}
+        <span class="media-counts" title="Files on the camera">
+          {#if device.numVideos > 0}<i class="fas fa-video" aria-hidden="true"></i> {device.numVideos}{/if}
+          {#if device.numPhotos > 0 && device.numVideos > 0} &middot; {/if}
+          {#if device.numPhotos > 0}<i class="fas fa-image" aria-hidden="true"></i> {device.numPhotos}{/if}
         </span>
       {/if}
     </div>
-    {#if device.model}
-      <span class="model">{device.model}</span>
-    {/if}
+    {#if subtitle}<span class="subtitle">{subtitle}</span>{/if}
   </div>
 
   <div class="card-body">
     <div class="info-row">
-      <div class="signal">
-        <div class="signal-bars">
-          {#each [1, 2, 3, 4] as level}
-            <div class="bar" class:filled={level <= signalStrength}
-                 style:--bar-color={signalColor}></div>
-          {/each}
-        </div>
+      <div class="signal-bars" title="Signal">
+        {#each [1, 2, 3, 4] as level}
+          <div class="bar" class:filled={level <= signalStrength && device.isReachable}
+               style:--bar-color={signalColor}></div>
+        {/each}
       </div>
       {#if storageText}
-        <span class="storage"><i class="fas fa-sd-card"></i> {storageText}</span>
+        <span class="meta" title="Free space on the card"><i class="fas fa-sd-card" aria-hidden="true"></i> {storageText}</span>
       {/if}
-      {#if lastSyncedText}
-        <span class="last-synced"><i class="fas fa-sync"></i> {lastSyncedText}</span>
+      {#if state === 'away'}
+        <span class="meta">last seen {lastSeenText || 'a while ago'}</span>
+      {:else if lastSyncedText}
+        <span class="meta" title="Last sync"><i class="fas fa-rotate" aria-hidden="true"></i> {lastSyncedText}</span>
       {/if}
       {#if device.batteryLevel != null}
-        <div class="battery">
+        <div class="battery" title="Battery {batteryLevel}%">
           <div class="battery-icon">
-            <div class="battery-fill" style:width="{batteryLevel}%"
-                 style:background-color={batteryColor}></div>
+            <div class="battery-fill" style:width="{batteryLevel}%" style:background-color={batteryColor}></div>
           </div>
-          <span class="battery-text">{batteryLevel}%</span>
+          <span class="meta">{batteryLevel}%</span>
         </div>
       {/if}
     </div>
 
-    {#if device.lastSyncError && !device.isSyncing}
-      <div class="sync-error">
-        <i class="fas fa-exclamation-triangle"></i> {device.lastSyncError}
-      </div>
-    {/if}
-
-    {#if device.isSyncing && syncEntry}
-      <div class="sync-progress">
-        <div class="progress-bar">
-          <div class="progress-fill" style:width="{syncEntry.progressPercent || 0}%"></div>
-        </div>
-        <span class="progress-label">{syncEntry.currentOperation || 'Preparing...'}</span>
-        {#if downloadDetail}
-          <span class="progress-detail">{downloadDetail}</span>
+    {#if state === 'syncing'}
+      <div class="block busy" aria-live="polite">
+        <PhaseStepper compact phase={syncEntry.phase} phases={syncEntry.phases} />
+        <ProgressBar value={syncEntry.progressPercent || 0} shimmer label="Sync progress" />
+        {#if transfer}
+          <div class="file-row">
+            <span class="file-name">{transfer.file}</span>
+            <span class="muted">{transfer.index} of {transfer.count}</span>
+          </div>
+          {#if transfer.detail}<span class="detail">{transfer.detail}</span>{/if}
+        {:else}
+          <span class="detail">{syncEntry.currentOperation || 'Preparing...'}</span>
         {/if}
       </div>
-    {:else if isInSyncQueue}
-      <div class="queue-badge">
-        <i class="fas fa-clock"></i>
-        {queuePosition === 1 ? 'Next in queue' : queuePosition > 1 ? `In queue · #${queuePosition}` : 'In queue'}
+    {:else if state === 'queued'}
+      <div class="block idle">
+        <div class="headline"><i class="fas fa-clock" aria-hidden="true"></i> {queuePosition === 1 ? 'Next in line' : `In line, #${queuePosition}`}</div>
+        <span class="detail">
+          {#if device.newMediaCount > 0}{plural(device.newMediaCount, 'new clip')}. {/if}
+          {#if activeName}Starts after {activeName}.{:else}Starts when the radio is free.{/if}
+        </span>
+      </div>
+    {:else if state === 'failed'}
+      <div class="block error">
+        <div class="headline">
+          <i class="fas fa-triangle-exclamation" aria-hidden="true"></i> {device.lastSyncError}
+        </div>
+        <span class="detail">Press Retry now, or wait for the next new clip.</span>
+      </div>
+    {:else if state === 'new'}
+      <div class="block info">
+        <div class="headline"><i class="fas fa-video" aria-hidden="true"></i> {plural(device.newMediaCount, 'new clip')} on the camera</div>
+        <span class="detail">Syncs on its own once the camera is idle.</span>
+      </div>
+    {:else if state === 'away'}
+      <div class="block idle">
+        <div class="headline">
+          {#if device.lastSyncError}
+            <i class="fas fa-triangle-exclamation" aria-hidden="true"></i> Last sync failed
+          {:else if device.newMediaCount > 0}
+            <i class="fas fa-video" aria-hidden="true"></i> {plural(device.newMediaCount, 'new clip')} when it left
+          {:else}
+            <i class="fas fa-check" aria-hidden="true"></i> Up to date when it left
+          {/if}
+        </div>
+        <span class="detail">
+          {#if device.lastSyncError}{device.lastSyncError}. {/if}Checks for new clips when it returns.
+        </span>
+      </div>
+    {:else if state === 'pairing'}
+      <div class="block busy">
+        <div class="headline"><i class="fas fa-spinner fa-spin" aria-hidden="true"></i> Pairing</div>
+        <span class="detail">Confirm on the camera screen if it asks.</span>
+      </div>
+    {:else}
+      <div class="block ok">
+        <div class="headline"><i class="fas fa-check" aria-hidden="true"></i> Everything in your library</div>
+        <span class="detail">{lastSyncedText ? `Last sync ${lastSyncedText}.` : 'Not synced yet.'}</span>
       </div>
     {/if}
   </div>
 
   <div class="card-actions">
-    <button class="btn {isInSyncQueue ? 'btn-danger' : 'btn-sync'}" onclick={handleSync}>
-      {isInSyncQueue ? 'Cancel' : 'Sync'}
-    </button>
-    <button class="btn btn-outline" onclick={handleBrowse} disabled={!device.id}
-            title="Browse media" aria-label="Browse media">
-      <i class="fas fa-photo-film"></i>
-    </button>
-    <button class="btn btn-outline" onclick={handleSettings} disabled={device.isSyncing}
-            title="Camera settings" aria-label="Camera settings">
-      <i class="fas fa-sliders-h"></i>
-    </button>
-    <button class="btn btn-outline" onclick={handleUnmanage}>Unmanage</button>
+    {#if state === 'syncing'}
+      <Button variant="danger-outline" grow onclick={() => cancelSync(device.macAddress)}>Cancel</Button>
+      <Button icon="fa-wave-square" grow onclick={() => openActivity(device.id)}>Details</Button>
+    {:else if state === 'queued'}
+      <Button grow onclick={() => cancelSync(device.macAddress)}>Remove from queue</Button>
+      <Button icon="fa-photo-film" title="Browse media" onclick={() => openLibrary(device.id)} disabled={!device.id} />
+      <Button icon="fa-sliders-h" title="Camera settings" onclick={handleSettings} />
+    {:else if state === 'failed'}
+      <Button variant="primary" icon="fa-rotate" grow onclick={() => addToSyncQueue(device.macAddress)}>Retry now</Button>
+      <Button grow onclick={() => openActivity(device.id)}>What happened</Button>
+    {:else if state === 'new'}
+      <Button variant="success" grow onclick={() => addToSyncQueue(device.macAddress)}>Sync now</Button>
+      <Button icon="fa-photo-film" title="Browse media" onclick={() => openLibrary(device.id)} disabled={!device.id} />
+      <Button icon="fa-sliders-h" title="Camera settings" onclick={handleSettings} />
+    {:else if state === 'away'}
+      <Button grow disabled title="The camera is out of range">Out of range</Button>
+      <Button icon="fa-photo-film" title="Browse media" onclick={() => openLibrary(device.id)} disabled={!device.id} />
+    {:else if state === 'pairing'}
+      <Button grow disabled>Pairing...</Button>
+    {:else}
+      <Button grow onclick={() => addToSyncQueue(device.macAddress)}>Check now</Button>
+      <Button icon="fa-photo-film" title="Browse media" onclick={() => openLibrary(device.id)} disabled={!device.id} />
+      <Button icon="fa-sliders-h" title="Camera settings" onclick={handleSettings} />
+    {/if}
+    <Menu items={menuItems} />
   </div>
 </div>
 
@@ -212,99 +275,78 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    border-left: 4px solid var(--border-color);
-    transition: all 0.2s;
+    border-left: 4px solid var(--state-idle);
+    transition: box-shadow 0.2s, border-color 0.2s;
   }
 
-  .card:hover {
-    box-shadow: var(--shadow-md);
-  }
+  .card:hover { box-shadow: var(--shadow-md); }
 
-  /* Status colors */
-  .status-managed     { border-left-color: #3498db; }
-  .status-syncing     { border-left-color: #f39c12; }
-  .status-unreachable { border-left-color: #95a5a6; }
-  .status-available   { border-left-color: #2ecc71; }
-  .status-pairing     { border-left-color: #e67e22; }
-  .status-discovered  { border-left-color: #9b59b6; }
+  /* Border color means state only */
+  .state-ok { border-left-color: var(--state-ok); }
+  .state-new { border-left-color: var(--state-info); }
+  .state-syncing, .state-pairing { border-left-color: var(--state-busy); }
+  .state-failed { border-left-color: var(--state-error); }
+  .state-away { opacity: 0.7; }
 
-  .card-header {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
+  .card-header { display: flex; flex-direction: column; gap: 2px; }
 
-  .name-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
+  .name-row { display: flex; align-items: center; gap: 8px; min-height: 28px; }
 
   .name {
     font-weight: 600;
     font-size: 1.05rem;
     color: var(--text-primary);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: text;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    text-align: left;
   }
 
-  .status-badge {
-    font-size: 0.65rem;
-    font-weight: 500;
-    text-transform: uppercase;
-    padding: 1px 6px;
-    border-radius: 10px;
-    color: white;
-    background-color: var(--primary-color);
-    flex-shrink: 0;
-  }
-  .status-syncing .status-badge { background-color: #f39c12; animation: pulse 1s infinite; }
-  .status-unreachable .status-badge { background-color: #95a5a6; }
-  .status-pairing .status-badge { background-color: #e67e22; animation: pulse 1s infinite; }
-
-  .model {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  }
-
-  .card-body {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+  .name-input {
+    font-weight: 600;
+    font-size: 1.05rem;
+    color: var(--text-primary);
+    background: var(--light-bg);
+    border: 1px solid var(--primary-color);
+    border-radius: 6px;
+    padding: 2px 6px;
+    min-width: 0;
     flex: 1;
   }
+
+  .subtitle { font-size: 0.75rem; color: var(--text-muted); }
+
+  .media-counts {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  .card-body { display: flex; flex-direction: column; gap: 8px; flex: 1; }
 
   .info-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 8px;
   }
 
-  .signal-bars {
-    display: flex;
-    align-items: flex-end;
-    gap: 2px;
-    height: 14px;
-  }
+  .meta { font-size: 0.75rem; color: var(--text-secondary); white-space: nowrap; }
 
-  .bar {
-    width: 4px;
-    background-color: var(--border-color);
-    border-radius: 1px;
-  }
+  .signal-bars { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
+  .bar { width: 4px; background-color: var(--border-color); border-radius: 1px; }
   .bar:nth-child(1) { height: 4px; }
   .bar:nth-child(2) { height: 7px; }
   .bar:nth-child(3) { height: 10px; }
   .bar:nth-child(4) { height: 14px; }
   .bar.filled { background-color: var(--bar-color); }
 
-  .battery {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
+  .battery { display: flex; align-items: center; gap: 4px; }
   .battery-icon {
     width: 22px;
     height: 10px;
@@ -313,7 +355,6 @@
     position: relative;
     overflow: hidden;
   }
-
   .battery-icon::after {
     content: '';
     position: absolute;
@@ -324,126 +365,48 @@
     background: var(--text-muted);
     border-radius: 0 2px 2px 0;
   }
+  .battery-fill { height: 100%; transition: width 0.3s; }
 
-  .battery-fill {
-    height: 100%;
-    transition: width 0.3s;
-  }
-
-  .battery-text {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-  }
-
-  .storage, .last-synced {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-  }
-
-  .sync-error {
-    font-size: 0.7rem;
-    color: var(--danger-color);
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .media-counts {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-    margin-left: auto;
-    flex-shrink: 0;
-  }
-
-  .sync-progress {
+  .block {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    color: var(--text-primary);
   }
+  .block.ok { background: var(--state-ok-tint); }
+  .block.busy { background: var(--state-busy-tint); }
+  .block.error { background: var(--state-error-tint); }
+  .block.info { background: var(--state-info-tint); }
+  .block.idle { background: var(--state-idle-tint); }
 
-  .progress-bar {
-    height: 4px;
-    background-color: var(--border-color);
-    border-radius: 2px;
-    overflow: hidden;
-  }
+  .headline { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .headline i { width: 14px; text-align: center; }
+  .block.ok .headline i { color: var(--state-ok); }
+  .block.error .headline i { color: var(--state-error); }
+  .block.info .headline i { color: var(--state-info); }
+  .block.idle .headline i, .block.busy .headline i { color: var(--text-secondary); }
 
-  .progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--warning-color), var(--secondary-color));
-    border-radius: 2px;
-    transition: width 0.3s;
-    position: relative;
-  }
+  .detail { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  .block.error .detail, .block.ok .detail, .block.info .detail, .block.idle .detail { padding-left: 22px; }
 
-  .progress-fill::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -50%;
-    width: 50%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
-    animation: sync-progress-shimmer 1.5s infinite;
-  }
-
-  .progress-label {
-    font-size: 0.65rem;
-    color: var(--text-muted);
-    font-style: italic;
-    text-align: center;
-  }
-
-  .progress-detail {
-    font-size: 0.7rem;
-    color: var(--text-secondary);
-    text-align: center;
+  .file-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
     font-variant-numeric: tabular-nums;
   }
-
-  .queue-badge {
-    font-size: 0.75rem;
-    color: var(--warning-color);
-    display: flex;
-    align-items: center;
-    gap: 4px;
+  .file-name {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.72rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
+  .muted { color: var(--text-secondary); white-space: nowrap; }
 
-
-  .card-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: auto;
-  }
-
-  .btn {
-    flex: 1;
-    padding: 8px 12px;
-    border: none;
-    border-radius: 6px;
-    font-size: 0.8rem;
-    font-weight: 500;
-    cursor: pointer;
-    color: white;
-    min-height: 36px;
-    transition: all 0.2s;
-  }
-
-  .btn:hover { transform: translateY(-1px); }
-  .btn:active { transform: translateY(0); }
-
-  .btn-sync { background-color: var(--secondary-color); }
-  .btn-sync:hover { background-color: var(--secondary-dark); }
-
-  .btn-danger { background-color: var(--danger-color); }
-  .btn-danger:hover { background-color: var(--danger-dark); }
-
-  .btn-outline {
-    background-color: transparent;
-    border: 1px solid var(--border-color);
-    color: var(--text-secondary);
-  }
-  .btn-outline:hover {
-    border-color: var(--text-secondary);
-  }
+  .card-actions { display: flex; gap: 8px; margin-top: auto; }
 </style>

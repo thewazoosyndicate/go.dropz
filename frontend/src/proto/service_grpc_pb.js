@@ -260,6 +260,28 @@ function deserialize_dropz_GetSettingResponse(buffer_arg) {
   return config_pb.GetSettingResponse.deserializeBinary(new Uint8Array(buffer_arg));
 }
 
+function serialize_dropz_GetSyncHistoryRequest(arg) {
+  if (!(arg instanceof gopro_pb.GetSyncHistoryRequest)) {
+    throw new Error('Expected argument of type dropz.GetSyncHistoryRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_GetSyncHistoryRequest(buffer_arg) {
+  return gopro_pb.GetSyncHistoryRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_GetSyncHistoryResponse(arg) {
+  if (!(arg instanceof gopro_pb.GetSyncHistoryResponse)) {
+    throw new Error('Expected argument of type dropz.GetSyncHistoryResponse');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_GetSyncHistoryResponse(buffer_arg) {
+  return gopro_pb.GetSyncHistoryResponse.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
 function serialize_dropz_GetSyncQueueRequest(arg) {
   if (!(arg instanceof gopro_pb.GetSyncQueueRequest)) {
     throw new Error('Expected argument of type dropz.GetSyncQueueRequest');
@@ -478,6 +500,28 @@ function serialize_dropz_SaveManagedAsGroupRequest(arg) {
 
 function deserialize_dropz_SaveManagedAsGroupRequest(buffer_arg) {
   return gopro_pb.SaveManagedAsGroupRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_SetCameraAliasRequest(arg) {
+  if (!(arg instanceof gopro_pb.SetCameraAliasRequest)) {
+    throw new Error('Expected argument of type dropz.SetCameraAliasRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_SetCameraAliasRequest(buffer_arg) {
+  return gopro_pb.SetCameraAliasRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_SetCameraAliasResponse(arg) {
+  if (!(arg instanceof gopro_pb.SetCameraAliasResponse)) {
+    throw new Error('Expected argument of type dropz.SetCameraAliasResponse');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_SetCameraAliasResponse(buffer_arg) {
+  return gopro_pb.SetCameraAliasResponse.deserializeBinary(new Uint8Array(buffer_arg));
 }
 
 function serialize_dropz_SetPreviewSessionRequest(arg) {
@@ -718,6 +762,29 @@ getSyncQueue: {
     requestDeserialize: deserialize_dropz_CancelSyncRequest,
     responseSerialize: serialize_dropz_CancelSyncResponse,
     responseDeserialize: deserialize_dropz_CancelSyncResponse,
+  },
+  getSyncHistory: {
+    path: '/dropz.DropzService/GetSyncHistory',
+    requestStream: false,
+    responseStream: false,
+    requestType: gopro_pb.GetSyncHistoryRequest,
+    responseType: gopro_pb.GetSyncHistoryResponse,
+    requestSerialize: serialize_dropz_GetSyncHistoryRequest,
+    requestDeserialize: deserialize_dropz_GetSyncHistoryRequest,
+    responseSerialize: serialize_dropz_GetSyncHistoryResponse,
+    responseDeserialize: deserialize_dropz_GetSyncHistoryResponse,
+  },
+  // Camera naming
+setCameraAlias: {
+    path: '/dropz.DropzService/SetCameraAlias',
+    requestStream: false,
+    responseStream: false,
+    requestType: gopro_pb.SetCameraAliasRequest,
+    responseType: gopro_pb.SetCameraAliasResponse,
+    requestSerialize: serialize_dropz_SetCameraAliasRequest,
+    requestDeserialize: deserialize_dropz_SetCameraAliasRequest,
+    responseSerialize: serialize_dropz_SetCameraAliasResponse,
+    responseDeserialize: deserialize_dropz_SetCameraAliasResponse,
   },
   // Group management
 getGroups: {

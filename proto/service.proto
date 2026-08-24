@@ -32,6 +32,10 @@ service DropzService {
   rpc WatchSyncQueue(GetSyncQueueRequest) returns (stream GetSyncQueueResponse);
   rpc ForceSync(ForceSyncRequest) returns (ForceSyncResponse);
   rpc CancelSync(CancelSyncRequest) returns (CancelSyncResponse);
+  rpc GetSyncHistory(GetSyncHistoryRequest) returns (GetSyncHistoryResponse);
+
+  // Camera naming
+  rpc SetCameraAlias(SetCameraAliasRequest) returns (SetCameraAliasResponse);
   
   // Group management
   rpc GetGroups(GetGroupsRequest) returns (GetGroupsResponse);

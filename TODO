@@ -1,10 +1,13 @@
 # TODO
 
+## Sync follow-ups
 
-## Sync Visibility
-
-— Progress percent and current operation are tracked but the UI doesn't surface
- file-by-file download status, ETAs, or queue position.
+- Auto-retry after a failed sync: today nothing re-queues until new clips appear
+  or the user presses Retry. A bounded retry (once the camera is idle and in
+  range, with backoff) would make the card copy "retries on its own" true.
+- Nearby panel could collapse to a rail once at least one camera is managed.
+- Tray icon with the sync state, for the hands-off case.
+- CI actions still target Node 20 (deprecation warning in the tag build).
 
 ## DJI Support
 

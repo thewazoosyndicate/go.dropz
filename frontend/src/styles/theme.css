@@ -11,13 +11,28 @@
   --light-bg: #f5f5f5;
   --panel-bg: #ffffff;
   --text-primary: #2c3e50;
-  --text-secondary: #7f8c8d;
-  --text-muted: #95a5a6;
+  /* Secondary and muted clear WCAG AA (4.5:1) on the panel background */
+  --text-secondary: #5d6d6e;
+  --text-muted: #6f7e7f;
   --border-color: #ddd;
   --shadow-sm: 0 2px 5px rgba(0,0,0,0.1);
   --shadow-md: 0 4px 10px rgba(0,0,0,0.1);
   --border-radius: 8px;
   --transition-speed: 0.3s;
+
+  /* State colors mean state only: safe, working, needs you, waiting.
+     Tints are the soft backgrounds behind a card's status block. */
+  --state-ok: var(--secondary-color);
+  --state-busy: var(--warning-color);
+  --state-error: var(--danger-color);
+  --state-info: var(--primary-color);
+  --state-idle: #b8c0c1;
+  --state-ok-tint: #f2fbf5;
+  --state-busy-tint: #fffaf2;
+  --state-error-tint: #fdf1f0;
+  --state-info-tint: #eef6fc;
+  --state-idle-tint: #f7f7f7;
+  --hover-bg: rgba(0, 0, 0, 0.05);
 }
 
 [data-theme="dark"] {
@@ -25,8 +40,15 @@
   --panel-bg: #1e1e1e;
   --text-primary: #f5f5f5;
   --text-secondary: #b0b0b0;
-  --text-muted: #8a8a8a;
+  --text-muted: #9a9a9a;
   --border-color: #333;
+  --state-idle: #4a4f50;
+  --state-ok-tint: #17281d;
+  --state-busy-tint: #2b2214;
+  --state-error-tint: #2e1917;
+  --state-info-tint: #15242f;
+  --state-idle-tint: #262626;
+  --hover-bg: rgba(255, 255, 255, 0.1);
 }
 
 * {
@@ -54,6 +76,16 @@ h1, h2, h3, h4, h5, h6 {
   font-weight: 600;
   line-height: 1.2;
   color: var(--text-primary);
+}
+
+button, input, select {
+  font-family: inherit;
+}
+
+/* Keyboard focus is visible everywhere; pointer clicks stay clean */
+:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
 }
 
 /* Custom scrollbar */

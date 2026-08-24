@@ -50,13 +50,31 @@ One writer per line; each log lives in exactly one file.
 ```
 ~/.dropz/logs/dropz.log   Backend (slog; rotated at 5MB, 3 backups kept)
 Electron userData logs    App lifecycle only (window, spawn, restart)
-Logs drawer (UI)          Live view of backend lines, in memory only
+Activity > Diagnostics    Live view of backend lines in the UI, in memory only
 ```
 
 The backend emits structured lines with `component`, `camera`, and `err` attributes.
-Electron spawns it with `--log-format=json` and parses each line for the drawer.
-Verbosity has one knob: the `log_level` setting (drawer dropdown or gRPC), applied live.
+Electron spawns it with `--log-format=json` and parses each line for the diagnostics view.
+Verbosity has one knob: the `log_level` setting (diagnostics dropdown or gRPC), applied live.
 Use `trace` to see scan cycles and download resume detail.
+
+## Sync visibility
+
+Every sync is visible at three depths, all fed by the same queue stream:
+
+```
+Status bar     Camera on the radio, file x of y, ETA, how many wait
+Camera card    One state at a time: up to date, new on camera, queued,
+               syncing (phase, file, totals), failed (step, retry), away
+Activity tab   Per-file rows for the running sync, then a kept history
+               (SyncSession in the store, 200 most recent) with the
+               outcome, files, phase timings, and a retry or library link
+```
+
+The nine backend steps collapse onto four user phases (connect, Wi-Fi,
+catalog, transfer). A failed download is retried once after the rest of
+the pass; a failed step is recorded with its index so the history can say
+where it stopped.
 
 ## License
 

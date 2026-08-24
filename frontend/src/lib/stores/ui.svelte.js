@@ -1,29 +1,39 @@
 // UI state store
 let theme = $state('light');
-let logsExpanded = $state(false);
+let activeTab = $state('cameras');
 let settingsOpen = $state(false);
 // {type: 'camera'|'group', id, name, referenceCameraId} or null
 let cameraSettingsTarget = $state(null);
-// {source: 'local'|cameraId} or null; consumed once by the library view
+// {source: 'local'|cameraId, filter?: 'all'|'new'|{sessionId}} or null;
+// consumed once by the library view
 let libraryTarget = $state(null);
 // {path, title} or null; the in-app video player overlay
 let playerTarget = $state(null);
+// cameraId or null; consumed once by the activity view
+let activityTarget = $state(null);
 let searchQuery = $state('');
 let sortBy = $state('signal');
 let toasts = $state([]);
 let logs = $state([]);
+let logsExpanded = $state(false);
 let showBackendLogs = $state(true);
 let logLevel = $state('info');
+// Files that arrived after this moment count as new in the library.
+// Starts at first launch so an existing library is not all "new".
+let libraryLastVisit = $state(loadLastVisit());
 
 export function getTheme() { return theme; }
-export function getLogsExpanded() { return logsExpanded; }
+export function getActiveTab() { return activeTab; }
 export function getSettingsOpen() { return settingsOpen; }
 export function getCameraSettingsTarget() { return cameraSettingsTarget; }
 export function openCameraSettings(target) { cameraSettingsTarget = target; }
 export function closeCameraSettings() { cameraSettingsTarget = null; }
 export function getLibraryTarget() { return libraryTarget; }
-export function openLibrary(source = 'local') { libraryTarget = { source }; }
+export function openLibrary(source = 'local', filter = 'all') { libraryTarget = { source, filter }; }
 export function clearLibraryTarget() { libraryTarget = null; }
+export function getActivityTarget() { return activityTarget; }
+export function openActivity(cameraId = null) { activityTarget = { cameraId }; setActiveTab('activity'); }
+export function clearActivityTarget() { activityTarget = null; }
 export function getPlayerTarget() { return playerTarget; }
 export function openPlayer(path, title) { playerTarget = { path, title }; }
 export function closePlayer() { playerTarget = null; }
@@ -31,8 +41,32 @@ export function getSearchQuery() { return searchQuery; }
 export function getSortBy() { return sortBy; }
 export function getToasts() { return toasts; }
 export function getLogs() { return logs; }
+export function getLogsExpanded() { return logsExpanded; }
 export function getShowBackendLogs() { return showBackendLogs; }
 export function getLogLevel() { return logLevel; }
+export function getLibraryLastVisit() { return libraryLastVisit; }
+
+export function setActiveTab(tab) {
+  // Leaving the library is the moment "new" resets; staying on it keeps
+  // the badges so the user can still tell what just arrived.
+  if (activeTab === 'library' && tab !== 'library') markLibraryVisited();
+  activeTab = tab;
+}
+
+export function markLibraryVisited() {
+  libraryLastVisit = Date.now();
+  try { localStorage.setItem('libraryLastVisit', String(libraryLastVisit)); } catch (_) {}
+}
+
+function loadLastVisit() {
+  try {
+    const saved = Number(localStorage.getItem('libraryLastVisit'));
+    if (saved > 0) return saved;
+  } catch (_) {}
+  const now = Date.now();
+  try { localStorage.setItem('libraryLastVisit', String(now)); } catch (_) {}
+  return now;
+}
 
 export function setTheme(value) {
   theme = value;
@@ -61,10 +95,11 @@ export function setShowBackendLogs(value) { showBackendLogs = value; }
 export function setLogLevel(value) { logLevel = value; }
 
 let nextToastId = 0;
+// Toasts confirm; they are never the only record of an outcome
 export function addToast(message, type = 'info') {
   const id = nextToastId++;
   toasts.push({ id, message, type });
-  setTimeout(() => removeToast(id), 4000);
+  setTimeout(() => removeToast(id), type === 'error' ? 8000 : 4000);
 }
 
 export function removeToast(id) {

@@ -9,8 +9,30 @@ export function getManagedDevices() { return managedDevices; }
 export function getAllDevices() { return allDevices; }
 export function getPairingInProgress() { return pairingInProgress; }
 
-export function getSeenCount() {
-  return Object.values(allDevices).filter(d => d.isReachable).length;
+// Cameras in range that are not managed yet: what "nearby" means to the user
+export function getNearbyCount() {
+  return Object.values(discoveredDevices).filter(d => d.isReachable).length;
+}
+
+// The user's name first; the SSID is the stable factory identity
+// ("GoPro 7115"), the advertised name a last resort.
+export function displayName(device) {
+  if (!device) return 'Camera';
+  if (device.alias?.trim()) return device.alias.trim();
+  if (device.wifiSsid?.trim()) return device.wifiSsid.substring(0, 12);
+  return device.name || 'Unknown GoPro';
+}
+
+// The factory identity, shown under an alias so the camera stays
+// recognisable on its own screen
+export function factoryName(device) {
+  if (!device) return '';
+  if (device.wifiSsid?.trim()) return device.wifiSsid.substring(0, 12);
+  return device.name || '';
+}
+
+export function findDeviceById(id) {
+  return Object.values(allDevices).find(d => d.id === id) || null;
 }
 
 export function updateDevice(device) {

@@ -32,6 +32,9 @@ message CameraStatus {
   bool in_pairing_mode = 10;
   // Keep a preview session up whenever the camera is in range
   bool preview_enabled = 11;
+  // Files on the card beyond the last completed sync's baseline; 0 when
+  // unknown or up to date. Derived, never stored.
+  int32 new_media_count = 12;
 }
 
 // Additional technical metadata about a camera
@@ -66,6 +69,41 @@ message ManagedCamera {
   CameraWithState camera_state = 1;
 }
 
+// Per-file transfer state, streamed while a sync runs and kept in history.
+enum SyncFileState {
+  SYNC_FILE_QUEUED = 0;
+  SYNC_FILE_DOWNLOADING = 1;
+  SYNC_FILE_DONE = 2;
+  SYNC_FILE_FAILED = 3;
+  SYNC_FILE_SKIPPED = 4;  // already in the library
+}
+
+message SyncFile {
+  string name = 1;
+  string camera_path = 2;
+  int64 size_bytes = 3;
+  SyncFileState state = 4;
+  int64 bytes_done = 5;
+  string error = 6;
+  string local_path = 7;  // set once done or skipped
+  int64 duration_ms = 8;  // transfer time once done
+}
+
+// User-facing phases; the backend steps collapse onto these four.
+enum SyncPhase {
+  SYNC_PHASE_WAITING = 0;
+  SYNC_PHASE_CONNECT = 1;
+  SYNC_PHASE_LINK = 2;
+  SYNC_PHASE_CATALOG = 3;
+  SYNC_PHASE_TRANSFER = 4;
+}
+
+message SyncPhaseTiming {
+  SyncPhase phase = 1;
+  google.protobuf.Timestamp started_at = 2;
+  google.protobuf.Timestamp finished_at = 3;  // unset while the phase runs
+}
+
 // Sync Queue Entry
 message SyncQueueEntry {
   string camera_id = 1;  // References the camera ID
@@ -83,6 +121,61 @@ message SyncQueueEntry {
   int64 bytes_done = 11;  // whole sync
   int64 bytes_total = 12;
   int64 rate_bps = 13;  // smoothed recent throughput
+  google.protobuf.Timestamp started_at = 14;  // unset while waiting in the queue
+  SyncPhase phase = 15;
+  repeated SyncPhaseTiming phases = 16;
+  // Every file the transfer step considered, in card order; empty before
+  // the media list is known.
+  repeated SyncFile files = 17;
+  int32 step_index = 18;  // 1-based backend step, for failure messages
+  int32 step_count = 19;
+}
+
+// One finished sync, kept so the outcome outlives the queue entry.
+enum SyncOutcome {
+  SYNC_OUTCOME_UNSPECIFIED = 0;
+  SYNC_OUTCOME_COMPLETE = 1;
+  SYNC_OUTCOME_UP_TO_DATE = 2;
+  SYNC_OUTCOME_CATALOG_REFRESHED = 3;
+  SYNC_OUTCOME_FAILED = 4;
+  SYNC_OUTCOME_CANCELLED = 5;
+}
+
+message SyncSession {
+  string id = 1;
+  string camera_id = 2;
+  google.protobuf.Timestamp started_at = 3;
+  google.protobuf.Timestamp finished_at = 4;
+  SyncOutcome outcome = 5;
+  string error = 6;        // user-visible, failed only
+  string failed_step = 7;  // backend step label, failed only
+  int32 step_index = 8;
+  int32 step_count = 9;
+  int32 files_downloaded = 10;
+  int32 files_failed = 11;
+  int32 files_skipped = 12;
+  int64 bytes_downloaded = 13;
+  repeated SyncFile files = 14;
+  repeated SyncPhaseTiming phases = 15;
+  bool selection = 16;  // media browser pick or catalog refresh, not a full sync
+}
+
+message GetSyncHistoryRequest {
+  int32 limit = 1;      // 0 = server default
+  string camera_id = 2; // empty = all cameras
+}
+
+message GetSyncHistoryResponse {
+  repeated SyncSession sessions = 1;
+}
+
+message SetCameraAliasRequest {
+  string camera_id = 1;
+  string alias = 2;  // empty clears the alias
+}
+
+message SetCameraAliasResponse {
+  CameraWithState camera = 1;
 }
 
 // Group of cameras

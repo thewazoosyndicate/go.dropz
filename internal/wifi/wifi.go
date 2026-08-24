@@ -85,9 +85,33 @@ func LocalMediaName(cameraPath, name string, dupe bool) string {
 	return name
 }
 
-// DownloadProgress is a byte-level snapshot streamed while DownloadVideos
-// runs. Byte totals are 0 when the camera did not report sizes (grouped
-// media members).
+// FileState is one file's place in a transfer.
+type FileState string
+
+const (
+	FileQueued      FileState = "queued"
+	FileDownloading FileState = "downloading"
+	FileDone        FileState = "done"
+	FileFailed      FileState = "failed"
+	FileSkipped     FileState = "skipped" // already on disk with the right size
+)
+
+// FileStatus is one file the transfer considered, as of a progress snapshot.
+type FileStatus struct {
+	Name       string
+	CameraPath string
+	Size       int64
+	State      FileState
+	BytesDone  int64
+	Err        string
+	LocalPath  string // set once done or skipped
+	Duration   time.Duration
+}
+
+// DownloadProgress is a snapshot streamed while DownloadVideos runs. Byte
+// totals are 0 when the camera did not report sizes (grouped media
+// members). Files lists every considered file in card order; FileName is
+// empty for the snapshot sent before the first transfer starts.
 type DownloadProgress struct {
 	FileIndex  int   // 1-based, among the files actually downloading
 	FileCount  int
@@ -97,10 +121,12 @@ type DownloadProgress struct {
 	BytesDone  int64 // whole sync
 	BytesTotal int64
 	RateBps    int64 // smoothed recent throughput
+	Files      []FileStatus
 }
 
-// ProgressFunc receives download progress; called at most about once a
-// second, never after DownloadVideos returns.
+// ProgressFunc receives download progress: on every file transition and
+// at most about once a second during a transfer, never after
+// DownloadVideos returns.
 type ProgressFunc func(DownloadProgress)
 
 // rateMeter smooths throughput over successive byte counts; raw per-second
@@ -186,15 +212,24 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	}
 
 	// Partition before downloading so progress can report the real file
-	// count and byte total for this sync, not the whole window.
+	// count and byte total for this sync, not the whole window. files
+	// mirrors filteredMedia in card order; pendingIdx maps a pending
+	// file back to its files slot.
 	var pending []MediaFile
+	var pendingIdx []int
+	files := make([]FileStatus, 0, len(filteredMedia))
 	for _, media := range filteredMedia {
 		outputPath := filepath.Join(destDir, localName(media))
+		st := FileStatus{Name: media.Name, CameraPath: media.CameraPath, Size: media.Size, State: FileQueued}
 		if exists, _ := m.fileExistsWithSize(outputPath, media.Size); exists {
 			downloadedFiles = append(downloadedFiles, outputPath)
 			skippedCount++
+			st.State, st.LocalPath = FileSkipped, outputPath
+			files = append(files, st)
 			continue
 		}
+		pendingIdx = append(pendingIdx, len(files))
+		files = append(files, st)
 		pending = append(pending, media)
 	}
 
@@ -211,43 +246,56 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	var bytesDone int64 // completed files only; the current file adds its own bytes
 	meter := &rateMeter{}
 
-	for i, media := range pending {
-		select {
-		case <-ctx.Done():
-			return downloadedFiles, ctx.Err()
-		default:
+	// Every snapshot carries a copy of the file list: the receiver stores
+	// it, so it must not see later mutations.
+	emit := func(p DownloadProgress) {
+		if progress == nil {
+			return
 		}
+		p.Files = append([]FileStatus(nil), files...)
+		progress(p)
+	}
+	emit(DownloadProgress{FileCount: len(pending), BytesTotal: bytesTotal})
 
+	// fetch downloads one pending file and records its outcome in files.
+	// Returns false on failure; ctx errors abort the whole run.
+	fetch := func(i int, media MediaFile) (bool, error) {
+		slot := &files[pendingIdx[i]]
 		outputPath := filepath.Join(destDir, localName(media))
-
-		var fileProgress func(int64)
-		if progress != nil {
-			idx, name, size := i+1, media.Name, media.Size
-			fileProgress = func(fileBytes int64) {
-				progress(DownloadProgress{
-					FileIndex:  idx,
-					FileCount:  len(pending),
-					FileName:   name,
-					FileBytes:  fileBytes,
-					FileTotal:  size,
-					BytesDone:  bytesDone + fileBytes,
-					BytesTotal: bytesTotal,
-					RateBps:    meter.update(bytesDone + fileBytes),
-				})
-			}
+		idx, name, size := i+1, media.Name, media.Size
+		fileProgress := func(fileBytes int64) {
+			slot.BytesDone = fileBytes
+			emit(DownloadProgress{
+				FileIndex:  idx,
+				FileCount:  len(pending),
+				FileName:   name,
+				FileBytes:  fileBytes,
+				FileTotal:  size,
+				BytesDone:  bytesDone + fileBytes,
+				BytesTotal: bytesTotal,
+				RateBps:    meter.update(bytesDone + fileBytes),
+			})
 		}
+		slot.State, slot.Err = FileDownloading, ""
+		fileProgress(0)
 
 		dlStart := time.Now()
 		dlErr := m.downloadFileWithResume(ctx, media.URL, outputPath, media.CreatedAt, media.Size, fileProgress)
 		if dlErr != nil {
+			if ctx.Err() != nil {
+				slot.State = FileQueued
+				return false, ctx.Err()
+			}
 			// Per-file, skipped and continued; the summary below counts them
 			m.log.Warn("Failed to download media file", "file", media.Name, "err", dlErr)
-			failedCount++
+			slot.State, slot.Err = FileFailed, shortError(dlErr)
 			// Keep the remaining percent honest: this file will not arrive
 			if media.Size > 0 {
 				bytesTotal -= media.Size
 			}
-			continue
+			emit(DownloadProgress{FileIndex: idx, FileCount: len(pending), FileName: name,
+				BytesDone: bytesDone, BytesTotal: bytesTotal, RateBps: meter.update(bytesDone)})
+			return false, nil
 		}
 		// The LRV sidecar (~5% of the clip) makes later in-app previews
 		// cheap: transcoding it beats decoding the 4K original by ~20x.
@@ -265,22 +313,63 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 
 		// Throughput per file: the number that settles turbo-vs-not debates
 		bytesDone += media.Size // stat below corrects unknown (0) sizes
+		elapsed := time.Since(dlStart)
 		if fi, statErr := os.Stat(outputPath); statErr == nil {
 			if media.Size <= 0 {
 				bytesDone += fi.Size()
 				bytesTotal += fi.Size()
+				slot.Size = fi.Size()
 			}
-			elapsed := time.Since(dlStart).Seconds()
 			totalBytes += fi.Size()
-			totalSeconds += elapsed
-			if elapsed > 0.5 {
+			totalSeconds += elapsed.Seconds()
+			if elapsed.Seconds() > 0.5 {
 				m.log.Info("File downloaded", "file", media.Name,
 					"mb", fmt.Sprintf("%.1f", float64(fi.Size())/1e6),
-					"mb_per_s", fmt.Sprintf("%.1f", float64(fi.Size())/1e6/elapsed))
+					"mb_per_s", fmt.Sprintf("%.1f", float64(fi.Size())/1e6/elapsed.Seconds()))
 			}
 		}
-
+		slot.State, slot.BytesDone, slot.LocalPath, slot.Duration = FileDone, slot.Size, outputPath, elapsed
+		emit(DownloadProgress{FileIndex: idx, FileCount: len(pending), FileName: name,
+			FileBytes: slot.Size, FileTotal: slot.Size,
+			BytesDone: bytesDone, BytesTotal: bytesTotal, RateBps: meter.update(bytesDone)})
 		downloadedFiles = append(downloadedFiles, outputPath)
+		return true, nil
+	}
+
+	var failed []int
+	for i, media := range pending {
+		select {
+		case <-ctx.Done():
+			return downloadedFiles, ctx.Err()
+		default:
+		}
+		ok, err := fetch(i, media)
+		if err != nil {
+			return downloadedFiles, err
+		}
+		if !ok {
+			failed = append(failed, i)
+		}
+	}
+
+	// One more pass over the failures after the rest is safe: a transient
+	// HTTP reset mid-run should not cost the user a clip until next time.
+	for _, i := range failed {
+		if ctx.Err() != nil {
+			return downloadedFiles, ctx.Err()
+		}
+		media := pending[i]
+		if media.Size > 0 {
+			bytesTotal += media.Size
+		}
+		m.log.Info("Retrying failed download", "file", media.Name)
+		ok, err := fetch(i, media)
+		if err != nil {
+			return downloadedFiles, err
+		}
+		if !ok {
+			failedCount++
+		}
 	}
 
 	// A healthy 5GHz link does 20+ MB/s; sustained sub-2 usually means the
@@ -299,6 +388,18 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 		m.log.Info("Download finished", "downloaded", actualDownloads, "skipped", skippedCount)
 	}
 	return downloadedFiles, nil
+}
+
+// shortError trims the retry wrapper so the per-file reason fits a UI row.
+func shortError(err error) string {
+	msg := err.Error()
+	if i := strings.LastIndex(msg, "attempts: "); i >= 0 {
+		msg = msg[i+len("attempts: "):]
+	}
+	if len(msg) > 80 {
+		msg = msg[:77] + "..."
+	}
+	return msg
 }
 
 // PreviewsDirName is the per-camera cache of preview material: raw LRV

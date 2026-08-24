@@ -110,6 +110,20 @@ func (c *CameraWithState) LogAttrs() []any {
 	return []any{"camera_id", c.Camera.ID, "camera", c.Camera.Name}
 }
 
+// NewMediaCount is how many files the card holds beyond the last completed
+// sync's baseline: the "new on camera" signal. 0 when unknown or clean.
+func (c *CameraWithState) NewMediaCount() int32 {
+	md := c.Metadata
+	if md.SyncedSpaceKB <= 0 {
+		return 0
+	}
+	n := (md.NumPhotos - md.SyncedNumPhotos) + (md.NumVideos - md.SyncedNumVideos)
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
 // InManagedPool reports whether the camera belongs in the Managed pool.
 func (c *CameraWithState) InManagedPool() bool {
 	return c.Status.IsPaired && c.Status.IsManaged
@@ -130,6 +144,98 @@ type ManagedCamera struct {
 	CameraState *CameraWithState `json:"camera_state"`
 }
 
+// SyncFileState is one file's place in a transfer.
+type SyncFileState string
+
+const (
+	SyncFileQueued      SyncFileState = "queued"
+	SyncFileDownloading SyncFileState = "downloading"
+	SyncFileDone        SyncFileState = "done"
+	SyncFileFailed      SyncFileState = "failed"
+	SyncFileSkipped     SyncFileState = "skipped" // already in the library
+)
+
+// SyncFile is one file the transfer step considered.
+type SyncFile struct {
+	Name       string        `json:"name"`
+	CameraPath string        `json:"camera_path"`
+	SizeBytes  int64         `json:"size_bytes"`
+	State      SyncFileState `json:"state"`
+	BytesDone  int64         `json:"bytes_done,omitempty"`
+	Error      string        `json:"error,omitempty"`
+	LocalPath  string        `json:"local_path,omitempty"`
+	DurationMs int64         `json:"duration_ms,omitempty"`
+}
+
+// SyncPhase is the user-facing stage of a sync; the backend steps
+// collapse onto these so the UI never shows nine labels.
+type SyncPhase string
+
+const (
+	SyncPhaseWaiting  SyncPhase = "waiting"
+	SyncPhaseConnect  SyncPhase = "connect"
+	SyncPhaseLink     SyncPhase = "link"
+	SyncPhaseCatalog  SyncPhase = "catalog"
+	SyncPhaseTransfer SyncPhase = "transfer"
+)
+
+// SyncPhaseTiming records when a phase ran; FinishedAt is zero while it runs.
+type SyncPhaseTiming struct {
+	Phase      SyncPhase `json:"phase"`
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at,omitempty"`
+}
+
+// SyncOutcome is how a sync ended.
+type SyncOutcome string
+
+const (
+	SyncOutcomeComplete         SyncOutcome = "complete"
+	SyncOutcomeUpToDate         SyncOutcome = "up_to_date"
+	SyncOutcomeCatalogRefreshed SyncOutcome = "catalog_refreshed"
+	SyncOutcomeFailed           SyncOutcome = "failed"
+	SyncOutcomeCancelled        SyncOutcome = "cancelled"
+)
+
+// SyncSession is one finished sync, kept so the outcome outlives the
+// queue entry and the UI can show what arrived, or why nothing did.
+type SyncSession struct {
+	ID              string            `json:"id"`
+	CameraID        string            `json:"camera_id"`
+	StartedAt       time.Time         `json:"started_at"`
+	FinishedAt      time.Time         `json:"finished_at"`
+	Outcome         SyncOutcome       `json:"outcome"`
+	Error           string            `json:"error,omitempty"`       // user-visible, failed only
+	FailedStep      string            `json:"failed_step,omitempty"` // backend step label
+	StepIndex       int32             `json:"step_index,omitempty"`
+	StepCount       int32             `json:"step_count,omitempty"`
+	FilesDownloaded int32             `json:"files_downloaded"`
+	FilesFailed     int32             `json:"files_failed"`
+	FilesSkipped    int32             `json:"files_skipped"`
+	BytesDownloaded int64             `json:"bytes_downloaded"`
+	Files           []SyncFile        `json:"files,omitempty"`
+	Phases          []SyncPhaseTiming `json:"phases,omitempty"`
+	// Selection marks a media browser pick or catalog refresh; those
+	// never make the camera "synced".
+	Selection bool `json:"selection,omitempty"`
+}
+
+// CountFiles fills the per-state totals from Files.
+func (s *SyncSession) CountFiles() {
+	s.FilesDownloaded, s.FilesFailed, s.FilesSkipped, s.BytesDownloaded = 0, 0, 0, 0
+	for _, f := range s.Files {
+		switch f.State {
+		case SyncFileDone:
+			s.FilesDownloaded++
+			s.BytesDownloaded += f.SizeBytes
+		case SyncFileFailed:
+			s.FilesFailed++
+		case SyncFileSkipped:
+			s.FilesSkipped++
+		}
+	}
+}
+
 // SyncQueueEntry represents a record in the sync queue
 type SyncQueueEntry struct {
 	CameraID         string    `json:"camera_id"` // References the camera ID
@@ -147,6 +253,15 @@ type SyncQueueEntry struct {
 	BytesDone  int64  `json:"bytes_done,omitempty"`  // whole sync
 	BytesTotal int64  `json:"bytes_total,omitempty"`
 	RateBps    int64  `json:"rate_bps,omitempty"`
+	// Set when the sync leaves the queue's waiting state.
+	StartedAt time.Time         `json:"started_at,omitempty"`
+	Phase     SyncPhase         `json:"phase,omitempty"`
+	Phases    []SyncPhaseTiming `json:"phases,omitempty"`
+	// Every file the transfer considered, card order; nil before the
+	// media list is known. Replace the slice, never edit in place.
+	Files     []SyncFile `json:"files,omitempty"`
+	StepIndex int32      `json:"step_index,omitempty"` // 1-based
+	StepCount int32      `json:"step_count,omitempty"`
 	// FileNames limits the download to exactly these files (media browser
 	// selection); empty means the normal date-threshold sync.
 	FileNames []string `json:"file_names,omitempty"`

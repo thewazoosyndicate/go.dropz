@@ -1,7 +1,7 @@
 <script>
   import { getCameraSettingsTarget, closeCameraSettings, addToast, addLog } from '../lib/stores/ui.svelte.js';
   import { fetchCameraSettings, applyCameraSettings } from '../lib/grpc/actions.js';
-  import { getAllDevices } from '../lib/stores/devices.svelte.js';
+  import { getAllDevices, displayName } from '../lib/stores/devices.svelte.js';
 
   let target = $derived(getCameraSettingsTarget());
 
@@ -58,7 +58,7 @@
 
   function cameraName(id) {
     const d = Object.values(getAllDevices()).find(d => d.id === id);
-    return d ? (d.wifiSsid?.trim()?.substring(0, 12) || d.name || id) : id;
+    return d ? displayName(d) : id;
   }
 
   async function apply() {

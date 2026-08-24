@@ -1,17 +1,12 @@
 // gRPC unary action calls
 import { getClient, proto } from './client.js';
 import { processCamera, processSyncQueueEntry } from './streams.js';
-import { updateDevice, setPairingInProgress, getAllDevices } from '../stores/devices.svelte.js';
+import { updateDevice, setPairingInProgress, getAllDevices, displayName as getDisplayName } from '../stores/devices.svelte.js';
 import { addOrUpdateSyncEntry, removeSyncEntry } from '../stores/sync.svelte.js';
-import { setAppConfig, setAutoPair, setAutoSync, getAppConfig, updateConfigField } from '../stores/config.svelte.js';
+import { setAppConfig, setAutoPair, setAutoSync, updateConfigField } from '../stores/config.svelte.js';
 import { addToast, addLog } from '../stores/ui.svelte.js';
 import { setVideos, setLoading } from '../stores/videos.svelte.js';
 import { setGroups, addOrUpdateGroup, removeGroup as removeGroupFromStore } from '../stores/groups.svelte.js';
-
-function getDisplayName(device) {
-  if (device.wifiSsid?.trim()) return device.wifiSsid.substring(0, 12);
-  return device.name || 'Unknown GoPro';
-}
 
 export function pairDevice(macAddress) {
   const devices = getAllDevices();
@@ -73,7 +68,6 @@ export function addToSyncQueue(macAddress) {
       return;
     }
 
-    addToast(`Syncing ${getDisplayName(device)}`, 'success');
     device.isSynced = false;
 
     const queueEntry = response.getQueueEntry();
@@ -81,6 +75,39 @@ export function addToSyncQueue(macAddress) {
       const processed = processSyncQueueEntry(queueEntry);
       if (processed) addOrUpdateSyncEntry(processed);
     }
+  });
+}
+
+// Queues every reachable managed camera; the backend runs them one at a
+// time over the single radio.
+export function syncAllManaged() {
+  const devices = Object.values(getAllDevices())
+    .filter(d => d.isManaged && d.isPaired && d.isReachable && !d.isSyncing);
+  if (devices.length === 0) {
+    addToast('No camera in range to sync', 'info');
+    return;
+  }
+  devices.forEach(d => addToSyncQueue(d.macAddress));
+  addToast(`Queued ${devices.length} ${devices.length === 1 ? 'camera' : 'cameras'}`, 'info');
+}
+
+export function setCameraAlias(cameraId, alias) {
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.SetCameraAliasRequest();
+    request.setCameraId(cameraId);
+    request.setAlias(alias);
+    client.setCameraAlias(request, (error, response) => {
+      if (error) return reject(error);
+      const camera = response.getCamera();
+      if (camera) {
+        // The alias response is a bare CameraWithState; wrap it the way
+        // the stream does so processCamera can read it.
+        const updated = processCamera({ getCameraState: () => camera });
+        if (updated) updateDevice(updated);
+      }
+      resolve();
+    });
   });
 }
 
@@ -207,7 +234,6 @@ export function loadConfig() {
           inactivityTimeoutSeconds: config.getInactivityTimeoutSeconds(),
           statusCheckIntervalSeconds: config.getStatusCheckIntervalSeconds(),
           checkOnReturn: config.getCheckOnReturn(),
-      turboEnabled: config.getTurboEnabled(),
           turboEnabled: config.getTurboEnabled(),
           logLevel: config.getLogLevel()
         });
@@ -266,6 +292,7 @@ export function resetAllSettings() {
       inactivityTimeoutSeconds: config.getInactivityTimeoutSeconds(),
       statusCheckIntervalSeconds: config.getStatusCheckIntervalSeconds(),
       checkOnReturn: config.getCheckOnReturn(),
+      turboEnabled: config.getTurboEnabled(),
       logLevel: config.getLogLevel()
     });
 

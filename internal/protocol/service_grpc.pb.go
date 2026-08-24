@@ -32,6 +32,8 @@ const (
 	DropzService_WatchSyncQueue_FullMethodName         = "/dropz.DropzService/WatchSyncQueue"
 	DropzService_ForceSync_FullMethodName              = "/dropz.DropzService/ForceSync"
 	DropzService_CancelSync_FullMethodName             = "/dropz.DropzService/CancelSync"
+	DropzService_GetSyncHistory_FullMethodName         = "/dropz.DropzService/GetSyncHistory"
+	DropzService_SetCameraAlias_FullMethodName         = "/dropz.DropzService/SetCameraAlias"
 	DropzService_GetGroups_FullMethodName              = "/dropz.DropzService/GetGroups"
 	DropzService_CreateGroup_FullMethodName            = "/dropz.DropzService/CreateGroup"
 	DropzService_UpdateGroup_FullMethodName            = "/dropz.DropzService/UpdateGroup"
@@ -75,6 +77,9 @@ type DropzServiceClient interface {
 	WatchSyncQueue(ctx context.Context, in *GetSyncQueueRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetSyncQueueResponse], error)
 	ForceSync(ctx context.Context, in *ForceSyncRequest, opts ...grpc.CallOption) (*ForceSyncResponse, error)
 	CancelSync(ctx context.Context, in *CancelSyncRequest, opts ...grpc.CallOption) (*CancelSyncResponse, error)
+	GetSyncHistory(ctx context.Context, in *GetSyncHistoryRequest, opts ...grpc.CallOption) (*GetSyncHistoryResponse, error)
+	// Camera naming
+	SetCameraAlias(ctx context.Context, in *SetCameraAliasRequest, opts ...grpc.CallOption) (*SetCameraAliasResponse, error)
 	// Group management
 	GetGroups(ctx context.Context, in *GetGroupsRequest, opts ...grpc.CallOption) (*GetGroupsResponse, error)
 	CreateGroup(ctx context.Context, in *CreateGroupRequest, opts ...grpc.CallOption) (*Group, error)
@@ -257,6 +262,26 @@ func (c *dropzServiceClient) CancelSync(ctx context.Context, in *CancelSyncReque
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CancelSyncResponse)
 	err := c.cc.Invoke(ctx, DropzService_CancelSync_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dropzServiceClient) GetSyncHistory(ctx context.Context, in *GetSyncHistoryRequest, opts ...grpc.CallOption) (*GetSyncHistoryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetSyncHistoryResponse)
+	err := c.cc.Invoke(ctx, DropzService_GetSyncHistory_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dropzServiceClient) SetCameraAlias(ctx context.Context, in *SetCameraAliasRequest, opts ...grpc.CallOption) (*SetCameraAliasResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetCameraAliasResponse)
+	err := c.cc.Invoke(ctx, DropzService_SetCameraAlias_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -457,6 +482,9 @@ type DropzServiceServer interface {
 	WatchSyncQueue(*GetSyncQueueRequest, grpc.ServerStreamingServer[GetSyncQueueResponse]) error
 	ForceSync(context.Context, *ForceSyncRequest) (*ForceSyncResponse, error)
 	CancelSync(context.Context, *CancelSyncRequest) (*CancelSyncResponse, error)
+	GetSyncHistory(context.Context, *GetSyncHistoryRequest) (*GetSyncHistoryResponse, error)
+	// Camera naming
+	SetCameraAlias(context.Context, *SetCameraAliasRequest) (*SetCameraAliasResponse, error)
 	// Group management
 	GetGroups(context.Context, *GetGroupsRequest) (*GetGroupsResponse, error)
 	CreateGroup(context.Context, *CreateGroupRequest) (*Group, error)
@@ -526,6 +554,12 @@ func (UnimplementedDropzServiceServer) ForceSync(context.Context, *ForceSyncRequ
 }
 func (UnimplementedDropzServiceServer) CancelSync(context.Context, *CancelSyncRequest) (*CancelSyncResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CancelSync not implemented")
+}
+func (UnimplementedDropzServiceServer) GetSyncHistory(context.Context, *GetSyncHistoryRequest) (*GetSyncHistoryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetSyncHistory not implemented")
+}
+func (UnimplementedDropzServiceServer) SetCameraAlias(context.Context, *SetCameraAliasRequest) (*SetCameraAliasResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetCameraAlias not implemented")
 }
 func (UnimplementedDropzServiceServer) GetGroups(context.Context, *GetGroupsRequest) (*GetGroupsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetGroups not implemented")
@@ -808,6 +842,42 @@ func _DropzService_CancelSync_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(DropzServiceServer).CancelSync(ctx, req.(*CancelSyncRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DropzService_GetSyncHistory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetSyncHistoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).GetSyncHistory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_GetSyncHistory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).GetSyncHistory(ctx, req.(*GetSyncHistoryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DropzService_SetCameraAlias_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetCameraAliasRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).SetCameraAlias(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_SetCameraAlias_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).SetCameraAlias(ctx, req.(*SetCameraAliasRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1164,6 +1234,14 @@ var DropzService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelSync",
 			Handler:    _DropzService_CancelSync_Handler,
+		},
+		{
+			MethodName: "GetSyncHistory",
+			Handler:    _DropzService_GetSyncHistory_Handler,
+		},
+		{
+			MethodName: "SetCameraAlias",
+			Handler:    _DropzService_SetCameraAlias_Handler,
 		},
 		{
 			MethodName: "GetGroups",

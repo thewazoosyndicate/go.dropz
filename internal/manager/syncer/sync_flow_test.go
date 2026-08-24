@@ -332,6 +332,126 @@ func TestDownloadProgressStreamsToQueueEntry(t *testing.T) {
 	}
 }
 
+func TestSyncRecordsCompletedSession(t *testing.T) {
+	c, _, _, task := newFlowCoordinator(t)
+
+	c.syncSem <- struct{}{}
+	c.PerformCameraSync(task)
+
+	history := c.db.GetSyncHistory(0, "")
+	if len(history) != 1 {
+		t.Fatalf("history len = %d, want 1", len(history))
+	}
+	s := history[0]
+	if s.Outcome != model.SyncOutcomeComplete || s.Error != "" || s.Selection {
+		t.Errorf("session = %+v, want complete full sync", s)
+	}
+	if s.FinishedAt.Before(s.StartedAt) {
+		t.Error("finished before started")
+	}
+	want := []model.SyncPhase{model.SyncPhaseConnect, model.SyncPhaseLink, model.SyncPhaseCatalog, model.SyncPhaseTransfer}
+	if len(s.Phases) != len(want) {
+		t.Fatalf("phases = %v, want %v", s.Phases, want)
+	}
+	for i, p := range s.Phases {
+		if p.Phase != want[i] {
+			t.Errorf("phase %d = %s, want %s", i, p.Phase, want[i])
+		}
+		if p.FinishedAt.IsZero() {
+			t.Errorf("phase %s left open", p.Phase)
+		}
+	}
+}
+
+func TestSyncRecordsFailedSessionWithStep(t *testing.T) {
+	c, fb, _, task := newFlowCoordinator(t)
+	fb.connectErr = fmt.Errorf("radio off")
+
+	c.syncSem <- struct{}{}
+	c.PerformCameraSync(task)
+
+	history := c.db.GetSyncHistory(0, "cam1")
+	if len(history) != 1 {
+		t.Fatalf("history len = %d, want 1", len(history))
+	}
+	s := history[0]
+	if s.Outcome != model.SyncOutcomeFailed || s.Error != "BLE connection failed" {
+		t.Errorf("outcome = %s %q, want failed with the step's user message", s.Outcome, s.Error)
+	}
+	if s.FailedStep != "Connecting via BLE" || s.StepIndex != 1 || s.StepCount != 9 {
+		t.Errorf("failed step = %q at %d/%d", s.FailedStep, s.StepIndex, s.StepCount)
+	}
+}
+
+func TestSyncRecordsUpToDateSession(t *testing.T) {
+	c, fb, _, task := newFlowCoordinator(t)
+	seedCleanState(t, c, fb)
+
+	c.syncSem <- struct{}{}
+	c.PerformCameraSync(task)
+
+	history := c.db.GetSyncHistory(1, "")
+	if len(history) != 1 || history[0].Outcome != model.SyncOutcomeUpToDate {
+		t.Fatalf("history = %+v, want one up-to-date session", history)
+	}
+	// The BLE verify never reaches the link phase
+	for _, p := range history[0].Phases {
+		if p.Phase != model.SyncPhaseConnect {
+			t.Errorf("unexpected phase %s on a skipped sync", p.Phase)
+		}
+	}
+}
+
+func TestCancelledSyncRecordsCancelled(t *testing.T) {
+	c, _, _, task := newFlowCoordinator(t)
+	task.Cancel()
+
+	c.syncSem <- struct{}{}
+	c.PerformCameraSync(task)
+
+	history := c.db.GetSyncHistory(0, "")
+	if len(history) != 1 || history[0].Outcome != model.SyncOutcomeCancelled {
+		t.Fatalf("history = %+v, want one cancelled session", history)
+	}
+	if history[0].Error != "" {
+		t.Errorf("a cancel is not a fault, got error %q", history[0].Error)
+	}
+}
+
+func TestSyncFileStatesReachQueueEntryAndHistory(t *testing.T) {
+	c, _, fw, task := newFlowCoordinator(t)
+	fw.progress = wifi.DownloadProgress{
+		FileIndex: 2, FileCount: 2, FileName: "GX010002.MP4",
+		Files: []wifi.FileStatus{
+			{Name: "GX010001.MP4", Size: 10, State: wifi.FileDone, LocalPath: "/lib/GX010001.MP4", Duration: 1500 * time.Millisecond},
+			{Name: "GX010002.MP4", Size: 20, State: wifi.FileFailed, Err: "connection reset"},
+			{Name: "GX010000.MP4", Size: 5, State: wifi.FileSkipped, LocalPath: "/lib/GX010000.MP4"},
+		},
+	}
+	var streamed []model.SyncFile
+	c.notifier = func() {
+		for _, e := range c.db.GetSyncQueue() {
+			if len(e.Files) > 0 {
+				streamed = e.Files
+			}
+		}
+	}
+
+	c.syncSem <- struct{}{}
+	c.PerformCameraSync(task)
+
+	if len(streamed) != 3 || streamed[0].State != model.SyncFileDone || streamed[1].Error != "connection reset" {
+		t.Errorf("queue entry files = %+v", streamed)
+	}
+	s := c.db.GetSyncHistory(1, "")[0]
+	if s.FilesDownloaded != 1 || s.FilesFailed != 1 || s.FilesSkipped != 1 || s.BytesDownloaded != 10 {
+		t.Errorf("counts = %d/%d/%d %dB", s.FilesDownloaded, s.FilesFailed, s.FilesSkipped, s.BytesDownloaded)
+	}
+	if s.Files[0].DurationMs != 1500 || s.Files[0].LocalPath != "/lib/GX010001.MP4" {
+		t.Errorf("file detail = %+v", s.Files[0])
+	}
+}
+
 // A completed full sync snapshots the baseline; the next sync skips.
 func TestSecondSyncSkipsAfterFullSync(t *testing.T) {
 	c, fb, fw, task := newFlowCoordinator(t)

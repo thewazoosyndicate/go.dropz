@@ -1,9 +1,16 @@
 <script>
+  // The camera's cached catalog: loads it, keeps the preview session, and
+  // hands the items to the same grid the local library uses.
   import { onDestroy } from 'svelte';
   import { fetchCameraMedia, requestMediaDownload, previewMedia, setPreviewSession } from '../lib/grpc/actions.js';
   import { addToast, addLog, openPlayer } from '../lib/stores/ui.svelte.js';
   import { getSyncQueue } from '../lib/stores/sync.svelte.js';
-  import { getAllDevices } from '../lib/stores/devices.svelte.js';
+  import { findDeviceById } from '../lib/stores/devices.svelte.js';
+  import { fromCatalogItem, filterKind, sortItems } from '../lib/media.js';
+  import { formatDayLabel, formatClock } from '../lib/format.js';
+  import MediaToolbar from './MediaToolbar.svelte';
+  import MediaGrid from './MediaGrid.svelte';
+  import Button from './ui/Button.svelte';
 
   let { cameraId, cameraName } = $props();
 
@@ -11,13 +18,15 @@
   let loadError = $state('');
   let items = $state([]);
   let updatedAt = $state(null);
-  let selected = $state({});
+  let selected = $state(new Set());
+  let onlyOnCamera = $state(false);
+  let kind = $state('all');
   let sortBy = $state('date');
   let sortAsc = $state(false);
   let loadedFor = $state(null);
 
   let syncEntry = $derived(getSyncQueue().find(e => e.cameraId === cameraId));
-  let device = $derived(Object.values(getAllDevices()).find(d => d.id === cameraId));
+  let device = $derived(findDeviceById(cameraId));
 
   // Session state while armed: live link, connecting, or out of range
   let sessionState = $derived.by(() => {
@@ -48,25 +57,17 @@
   onDestroy(() => {
     setPreviewSession(sessionCameraId, false).catch(() => {});
   });
-  // Selection and keys use cameraPath: cards can repeat a name across
-  // GOPRO directories, and a name-keyed each crashes the whole UI.
-  let selectedPaths = $derived(Object.keys(selected).filter(p => selected[p]));
 
-  let sorted = $derived.by(() => {
-    const list = [...items];
-    const dir = sortAsc ? 1 : -1;
-    list.sort((a, b) => {
-      if (sortBy === 'name') return dir * a.name.localeCompare(b.name);
-      if (sortBy === 'size') return dir * (a.sizeBytes - b.sizeBytes);
-      return dir * ((a.createdAt?.getTime() || 0) - (b.createdAt?.getTime() || 0));
-    });
-    return list;
-  });
+  let normalized = $derived(items.map(i => fromCatalogItem(i, cameraId, cameraName)));
+  let onCameraCount = $derived(normalized.filter(i => !i.downloaded).length);
+  let shown = $derived(sortItems(
+    filterKind(onlyOnCamera ? normalized.filter(i => !i.downloaded) : normalized, kind), sortBy, sortAsc));
+  let selectableShown = $derived(shown.filter(i => !i.downloaded));
 
   $effect(() => {
     if (cameraId && loadedFor !== cameraId) {
       loadedFor = cameraId;
-      selected = {};
+      selected = new Set();
       load();
     }
   });
@@ -91,7 +92,7 @@
     if (op === 'Preview ready') load();
     if (op === 'Preview failed' && pendingPreview) {
       pendingPreview = null;
-      addToast('Preview failed, see logs', 'error');
+      addToast('Preview failed, see the diagnostics log', 'error');
     }
   });
   $effect(() => {
@@ -118,32 +119,33 @@
     }
   }
 
-  function toggle(cameraPath) {
-    selected[cameraPath] = !selected[cameraPath];
-    selected = { ...selected };
+  function toggle(item) {
+    const next = new Set(selected);
+    if (next.has(item.key)) next.delete(item.key);
+    else next.add(item.key);
+    selected = next;
+  }
+
+  function selectShown() {
+    selected = new Set(selectableShown.map(i => i.key));
   }
 
   async function downloadSelected() {
+    const paths = [...selected];
     try {
-      await requestMediaDownload(cameraId, selectedPaths);
-      addToast(`${selectedPaths.length} files queued from ${cameraName}`, 'success');
-      addLog(`Queued ${selectedPaths.length} files from ${cameraName}`, 'info');
-      selected = {};
+      await requestMediaDownload(cameraId, paths);
+      addToast(`${paths.length} files queued from ${cameraName}`, 'success');
+      addLog(`Queued ${paths.length} files from ${cameraName}`, 'info');
+      selected = new Set();
     } catch (e) {
       addToast('Failed to queue download', 'error');
       addLog(`Queue download failed: ${e.message}`, 'error');
     }
   }
 
-  // Only GX/GH videos carry an LRV proxy on the card
-  function canPreview(item) {
-    return /^G[XH].*\.MP4$/.test(item.name);
-  }
-
-  async function preview(item, ev) {
-    ev.stopPropagation();
-    // Camera files are HEVC, which the renderer cannot decode; playback
-    // always goes through the transcoded WebM proxy.
+  // Camera files are HEVC, which the renderer cannot decode; playback
+  // always goes through the transcoded WebM proxy.
+  async function play(item) {
     if (item.previewPath) return openPlayer(item.previewPath, item.name);
     try {
       await previewMedia(cameraId, item.cameraPath);
@@ -162,59 +164,41 @@
       addToast('Failed to queue refresh', 'error');
     }
   }
-
-  function formatSize(bytes) {
-    if (!bytes) return '';
-    if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
-    if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
-    return `${Math.round(bytes / 1024)} KB`;
-  }
-
-  function formatDate(d) {
-    return d ? d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
-  }
 </script>
 
 <div class="browser">
-  <div class="toolbar">
-    <div class="toolbar-left">
-      <select bind:value={sortBy} aria-label="Sort by">
-        <option value="date">Date</option>
-        <option value="name">Name</option>
-        <option value="size">Size</option>
-      </select>
-      <button class="btn btn-outline" onclick={() => sortAsc = !sortAsc}
-              title="Toggle sort direction" aria-label="Toggle sort direction">
-        <i class="fas {sortAsc ? 'fa-arrow-up-short-wide' : 'fa-arrow-down-wide-short'}"></i>
+  <MediaToolbar bind:kind bind:sortBy bind:sortAsc>
+    {#snippet leading()}
+      <button class="chip" class:active={onlyOnCamera} disabled={onCameraCount === 0}
+              onclick={() => onlyOnCamera = !onlyOnCamera}>
+        <span class="chip-dot"></span> Not downloaded &middot; {onCameraCount}
       </button>
       {#if updatedAt}
-        <span class="catalog-age">catalog from {formatDate(updatedAt)}</span>
+        <span class="muted">catalog from {formatDayLabel(updatedAt).toLowerCase()} {formatClock(updatedAt)}</span>
       {/if}
-    </div>
-    <div class="toolbar-right">
-      <button class="btn btn-outline session-toggle" class:session-on={device?.previewEnabled}
-              onclick={toggleSession}
+    {/snippet}
+    {#snippet trailing()}
+      <Button icon="fa-satellite-dish" size="sm" onclick={toggleSession}
               title={device?.previewEnabled ? 'Close the camera link' : 'Keep a camera link up for instant previews'}>
-        <i class="fas fa-satellite-dish"></i>
         {#if sessionState === 'live'}Live
         {:else if sessionState === 'connecting'}Connecting...
         {:else if sessionState === 'waiting'}Waiting for camera
         {:else}Camera link{/if}
-      </button>
+      </Button>
       {#if syncEntry}
         <span class="syncing-badge">
-          <i class="fas fa-spinner fa-spin"></i> {syncEntry.currentOperation || 'Syncing...'}
+          <i class="fas fa-spinner fa-spin" aria-hidden="true"></i> {syncEntry.currentOperation || 'Syncing...'}
         </span>
       {:else}
-        <button class="btn btn-outline" onclick={refreshFromCamera} title="Reconnect to the camera and refresh this catalog">
-          <i class="fas fa-rotate"></i> Refresh from camera
-        </button>
+        <Button icon="fa-rotate" size="sm" onclick={refreshFromCamera} title="Reconnect to the camera and refresh this catalog">Refresh</Button>
       {/if}
-      <button class="btn btn-primary" onclick={downloadSelected} disabled={selectedPaths.length === 0 || !!syncEntry}>
-        <i class="fas fa-download"></i> Download {selectedPaths.length > 0 ? `(${selectedPaths.length})` : ''}
-      </button>
-    </div>
-  </div>
+      <Button size="sm" onclick={selectShown} disabled={selectableShown.length === 0 || !!syncEntry}
+              title="Select every shown file that is not downloaded yet">Select shown</Button>
+      <Button variant="primary" size="sm" icon="fa-download" onclick={downloadSelected} disabled={selected.size === 0 || !!syncEntry}>
+        Download{selected.size > 0 ? ` (${selected.size})` : ''}
+      </Button>
+    {/snippet}
+  </MediaToolbar>
 
   {#if loading && items.length === 0}
     <div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>Loading catalog...</p></div>
@@ -224,41 +208,12 @@
     <div class="empty-state">
       <i class="fas fa-camera"></i>
       <p>No catalog for this camera yet</p>
-      <p class="hint">Sync it once, or use "Refresh from camera"</p>
+      <p class="hint">Sync it once, or press Refresh.</p>
     </div>
   {:else}
-    <div class="media-grid">
-      {#each sorted as item (item.cameraPath)}
-        <button class="media-card" class:selected={selected[item.cameraPath]} class:downloaded={item.downloaded}
-             onclick={() => !item.downloaded && toggle(item.cameraPath)}
-             title={item.downloaded ? 'Already downloaded' : 'Select for download'}>
-          <div class="thumb">
-            {#if item.thumbnailPath}
-              <img src={'file://' + item.thumbnailPath} alt={item.name} loading="lazy" />
-            {:else}
-              <i class="fas {item.name.toLowerCase().endsWith('.jpg') ? 'fa-image' : 'fa-film'}"></i>
-            {/if}
-            {#if item.downloaded}
-              <span class="state-badge downloaded-badge"><i class="fas fa-check"></i></span>
-            {:else if selected[item.cameraPath]}
-              <span class="state-badge selected-badge"><i class="fas fa-check"></i></span>
-            {/if}
-            {#if canPreview(item)}
-              <span class="preview-btn" role="button" tabindex="0"
-                    class:fetching={pendingPreview === item.cameraPath}
-                    title={item.previewPath ? 'Play preview' : item.downloaded ? 'Generate preview' : 'Preview from camera'}
-                    onclick={(e) => preview(item, e)}
-                    onkeydown={(e) => e.key === 'Enter' && preview(item, e)}>
-                <i class="fas {pendingPreview === item.cameraPath ? 'fa-spinner fa-spin' : 'fa-play'}"></i>
-              </span>
-            {/if}
-          </div>
-          <div class="media-info">
-            <span class="media-name" title={item.name}>{item.name}</span>
-            <span class="media-meta">{formatSize(item.sizeBytes)}{item.sizeBytes && item.createdAt ? ' · ' : ''}{formatDate(item.createdAt)}</span>
-          </div>
-        </button>
-      {/each}
+    <div class="scroll">
+      <MediaGrid items={shown} {sortBy} selectedKeys={selected} pendingKey={pendingPreview}
+                 onToggle={toggle} onPlay={play} />
     </div>
   {/if}
 </div>
@@ -267,171 +222,23 @@
   .browser {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
     height: 100%;
   }
 
-  .toolbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .toolbar-left, .toolbar-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .toolbar select {
-    background-color: var(--panel-bg);
-    color: var(--text-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    padding: 5px 8px;
-    font-size: 0.85rem;
-  }
-
-  .catalog-age {
-    font-size: 0.78rem;
-    color: var(--text-muted);
-  }
-
   .syncing-badge {
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     color: var(--text-secondary);
     display: flex;
     align-items: center;
     gap: 6px;
   }
 
-  .btn {
-    padding: 6px 12px;
-    border-radius: 6px;
-    border: none;
-    cursor: pointer;
-    font-size: 0.85rem;
-  }
-
-  .btn:disabled { opacity: 0.5; cursor: default; }
-
-  .btn-primary {
-    background-color: var(--primary-color);
-    color: white;
-  }
-
-  .btn-outline {
-    background: none;
-    border: 1px solid var(--border-color);
-    color: var(--text-primary);
-  }
-
-  .session-toggle.session-on {
-    border-color: var(--secondary-color);
-    color: var(--secondary-color);
-  }
-
-  .media-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 10px;
-    /* The browser is pinned to the panel height; without these the grid
-       shrinks to fit and squashes every row instead of scrolling. */
+  /* The browser is pinned to the panel height; the grid scrolls inside */
+  .scroll {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    align-content: start;
-    grid-auto-rows: max-content;
-  }
-
-  .media-card {
-    background-color: var(--panel-bg);
-    border: 2px solid var(--border-color);
-    border-radius: 8px;
-    overflow: hidden;
-    cursor: pointer;
-    padding: 0;
-    text-align: left;
-    display: flex;
-    flex-direction: column;
-    transition: border-color 0.15s;
-  }
-
-  .media-card.selected { border-color: var(--primary-color); }
-  .media-card.downloaded { cursor: default; opacity: 0.85; }
-
-  .thumb {
-    position: relative;
-    aspect-ratio: 4 / 3;
-    background-color: var(--light-bg);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-muted);
-    font-size: 1.6rem;
-  }
-
-  .thumb img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
-  .state-badge {
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.7rem;
-    color: white;
-  }
-
-  .downloaded-badge { background-color: var(--secondary-color); }
-  .selected-badge { background-color: var(--primary-color); }
-
-  .preview-btn {
-    position: absolute;
-    bottom: 6px;
-    left: 6px;
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.7rem;
-    color: white;
-    background-color: rgba(0, 0, 0, 0.55);
-    opacity: 0;
-    transition: opacity 0.15s;
-  }
-  .media-card:hover .preview-btn, .preview-btn.fetching { opacity: 1; }
-  .preview-btn:hover { background-color: var(--primary-color); }
-
-  .media-info {
-    display: flex;
-    flex-direction: column;
-    padding: 6px 8px;
-  }
-
-  .media-name {
-    font-size: 0.82rem;
-    color: var(--text-primary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .media-meta {
-    font-size: 0.72rem;
-    color: var(--text-muted);
   }
 
   .empty-state {

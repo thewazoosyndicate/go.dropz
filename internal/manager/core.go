@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -405,6 +406,27 @@ func (m *GoProManager) ForceSync(cameraID string) (*model.SyncQueueEntry, error)
 // CancelSync cancels an ongoing sync operation and removes the camera from the sync queue
 func (m *GoProManager) CancelSync(cameraID string) error {
 	return m.syncCoordinator.CancelSync(cameraID)
+}
+
+// GetSyncHistory returns finished syncs, newest first.
+func (m *GoProManager) GetSyncHistory(limit int, cameraID string) []*model.SyncSession {
+	return m.db.GetSyncHistory(limit, cameraID)
+}
+
+// SetCameraAlias stores the user's name for a camera. Whitespace-only
+// clears it; the display falls back to the SSID or advertised name.
+func (m *GoProManager) SetCameraAlias(cameraID, alias string) (*model.CameraWithState, error) {
+	alias = strings.TrimSpace(alias)
+	if len(alias) > 40 {
+		return nil, fmt.Errorf("alias too long: %d characters, max 40", len(alias))
+	}
+	if err := m.db.SetCameraAliasByID(cameraID, alias); err != nil {
+		return nil, err
+	}
+	cs, _ := m.db.GetCameraByID(cameraID)
+	m.log.Info("Camera renamed", append(cs.LogAttrs(), "alias", alias)...)
+	m.notify()
+	return cs, nil
 }
 
 // GetVideosByCamera scans the download library; the syncer package owns the

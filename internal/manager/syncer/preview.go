@@ -327,12 +327,14 @@ func (c *Coordinator) performPreviewSession(task *SyncTask, s *previewSession) {
 	}
 	defer release()
 
+	// Phases are left unset: a preview session is not a sync and never
+	// shows the stepper.
 	steps := []syncStep{
-		{"Connecting via BLE", 20, "", c.stepConnectBLE},
-		{"Waiting for camera WiFi AP", 30, "", c.stepWaitAP},
-		{"Connecting to WiFi", 40, "", c.stepConnectWiFi},
-		{"Waiting for GoPro API", 50, "", c.stepAwaitAPI},
-		{"Preparing download", 60, "", c.stepPrepareFolders},
+		{label: "Connecting via BLE", percent: 20, run: c.stepConnectBLE},
+		{label: "Waiting for camera WiFi AP", percent: 30, run: c.stepWaitAP},
+		{label: "Connecting to WiFi", percent: 40, run: c.stepConnectWiFi},
+		{label: "Waiting for GoPro API", percent: 50, run: c.stepAwaitAPI},
+		{label: "Preparing download", percent: 60, run: c.stepPrepareFolders},
 	}
 	for _, step := range steps {
 		c.updateProgress(task, step.label, step.percent)

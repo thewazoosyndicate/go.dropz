@@ -4,11 +4,13 @@
   let toasts = $derived(getToasts());
 </script>
 
-<div class="toast-container">
+<!-- Polite: outcomes are announced without interrupting what a screen
+     reader is in the middle of -->
+<div class="toast-container" aria-live="polite">
   {#each toasts as toast (toast.id)}
-    <div class="toast {toast.type}">
+    <div class="toast {toast.type}" role="status">
       <span>{toast.message}</span>
-      <button class="toast-close" onclick={() => removeToast(toast.id)}>&times;</button>
+      <button class="toast-close" onclick={() => removeToast(toast.id)} aria-label="Dismiss">&times;</button>
     </div>
   {/each}
 </div>
@@ -39,6 +41,7 @@
 
   .toast.success { background-color: var(--secondary-dark); }
   .toast.error   { background-color: var(--danger-dark); }
+  .toast.warning { background-color: var(--warning-dark); }
   .toast.info    { background-color: var(--primary-dark); }
 
   .toast-close {
@@ -50,6 +53,8 @@
     opacity: 0.7;
     margin-left: 12px;
     padding: 0 4px;
+    min-width: 24px;
+    min-height: 24px;
   }
 
   .toast-close:hover { opacity: 1; }

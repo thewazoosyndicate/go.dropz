@@ -204,6 +204,17 @@ func (c *Coordinator) SetPreviewSession(cameraID string, enabled bool) error {
 		return fmt.Errorf("%w: %s", model.ErrNotManagedPaired, camera.Camera.Name)
 	}
 
+	// No state change: stay silent. A notify here turns the UI's cheap
+	// disarm-on-unmount into an infinite RPC loop (notify -> stream ->
+	// re-render -> disarm). Still end a lingering on-demand session so
+	// navigating away always releases the camera.
+	if camera.Status.PreviewEnabled == enabled {
+		if !enabled {
+			c.cancelPreviewSession(cameraID)
+		}
+		return nil
+	}
+
 	if enabled {
 		for _, other := range c.db.GetAllCameras() {
 			if other.Camera.ID != cameraID && other.Status.PreviewEnabled {

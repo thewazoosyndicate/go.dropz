@@ -1,4 +1,5 @@
 <script>
+  import { onDestroy } from 'svelte';
   import { fetchCameraMedia, requestMediaDownload, previewMedia, setPreviewSession } from '../lib/grpc/actions.js';
   import { addToast, addLog, openPlayer } from '../lib/stores/ui.svelte.js';
   import { getSyncQueue } from '../lib/stores/sync.svelte.js';
@@ -37,15 +38,14 @@
   }
 
   // The session only matters while this camera's library is on screen:
-  // navigating away (other camera, local tab, tab switch, close) disarms.
-  // The teardown must not read reactive state: tracked reads there make
-  // every device-stream update re-run the effect, whose cleanup then
-  // disarms the session it just started. Disarming unarmed is a no-op.
-  $effect(() => {
-    const id = cameraId;
-    return () => {
-      setPreviewSession(id, false).catch(() => {});
-    };
+  // navigating away disarms. Deliberately NOT an $effect: the cameraId
+  // prop chains to a derived that changes identity on every device
+  // stream update, so an effect's teardown fired (and disarmed) every
+  // few hundred ms. The component is keyed by camera in VideoLibrary,
+  // so one instance = one camera, captured once here.
+  const sessionCameraId = cameraId;
+  onDestroy(() => {
+    setPreviewSession(sessionCameraId, false).catch(() => {});
   });
   // Selection and keys use cameraPath: cards can repeat a name across
   // GOPRO directories, and a name-keyed each crashes the whole UI.

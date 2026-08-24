@@ -1,6 +1,7 @@
 <script>
   import { addToSyncQueue, cancelSync, toggleDeviceManaged } from '../lib/grpc/actions.js';
   import { getSyncQueue } from '../lib/stores/sync.svelte.js';
+  import { getAllDevices } from '../lib/stores/devices.svelte.js';
   import { openCameraSettings, openLibrary } from '../lib/stores/ui.svelte.js';
 
   let { device } = $props();
@@ -12,6 +13,38 @@
   let statusCode = $derived(getStatusCode(device));
   let syncEntry = $derived(getSyncQueue().find(e => e.cameraId === device.id));
   let isInSyncQueue = $derived(!!syncEntry);
+
+  // The stream delivers the queue already sorted by priority then age, so
+  // the position is the index among entries whose camera is not syncing.
+  let queuePosition = $derived.by(() => {
+    if (!isInSyncQueue || device.isSyncing) return 0;
+    const devices = Object.values(getAllDevices());
+    const waiting = getSyncQueue().filter(e =>
+      !devices.find(d => d.id === e.cameraId)?.isSyncing);
+    return waiting.findIndex(e => e.cameraId === device.id) + 1;
+  });
+
+  let downloadDetail = $derived.by(() => {
+    const e = syncEntry;
+    if (!e?.fileCount) return null;
+    const parts = [`File ${e.fileIndex}/${e.fileCount}`];
+    if (e.bytesTotal > 0) parts.push(`${formatBytes(e.bytesDone)} / ${formatBytes(e.bytesTotal)}`);
+    if (e.rateBps > 0) parts.push(`${(e.rateBps / 1e6).toFixed(1)} MB/s`);
+    if (e.rateBps > 0 && e.bytesTotal > e.bytesDone) {
+      parts.push(formatEta((e.bytesTotal - e.bytesDone) / e.rateBps));
+    }
+    return parts.join(' · ');
+  });
+
+  function formatBytes(bytes) {
+    if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+    return `${Math.max(1, Math.round(bytes / 1e6))} MB`;
+  }
+
+  function formatEta(seconds) {
+    if (seconds < 90) return `~${Math.max(5, Math.round(seconds / 5) * 5)}s left`;
+    return `~${Math.round(seconds / 60)} min left`;
+  }
 
   let signalStrength = $derived(getSignalLevel(device.rssi || -100));
   let signalColor = $derived(
@@ -142,10 +175,14 @@
           <div class="progress-fill" style:width="{syncEntry.progressPercent || 0}%"></div>
         </div>
         <span class="progress-label">{syncEntry.currentOperation || 'Preparing...'}</span>
+        {#if downloadDetail}
+          <span class="progress-detail">{downloadDetail}</span>
+        {/if}
       </div>
     {:else if isInSyncQueue}
       <div class="queue-badge">
-        <i class="fas fa-clock"></i> In queue
+        <i class="fas fa-clock"></i>
+        {queuePosition === 1 ? 'Next in queue' : queuePosition > 1 ? `In queue · #${queuePosition}` : 'In queue'}
       </div>
     {/if}
   </div>
@@ -355,6 +392,13 @@
     color: var(--text-muted);
     font-style: italic;
     text-align: center;
+  }
+
+  .progress-detail {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    text-align: center;
+    font-variant-numeric: tabular-nums;
   }
 
   .queue-badge {

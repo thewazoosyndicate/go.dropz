@@ -54,10 +54,58 @@ func NewWiFiManager(log *slog.Logger) *WiFiManager {
 	}
 }
 
+// DownloadProgress is a byte-level snapshot streamed while DownloadVideos
+// runs. Byte totals are 0 when the camera did not report sizes (grouped
+// media members).
+type DownloadProgress struct {
+	FileIndex  int   // 1-based, among the files actually downloading
+	FileCount  int
+	FileName   string
+	FileBytes  int64 // current file bytes on disk, resume offset included
+	FileTotal  int64
+	BytesDone  int64 // whole sync
+	BytesTotal int64
+	RateBps    int64 // smoothed recent throughput
+}
+
+// ProgressFunc receives download progress; called at most about once a
+// second, never after DownloadVideos returns.
+type ProgressFunc func(DownloadProgress)
+
+// rateMeter smooths throughput over successive byte counts; raw per-second
+// deltas swing too much on camera WiFi to be a readable ETA source.
+type rateMeter struct {
+	lastTime  time.Time
+	lastBytes int64
+	rate      float64
+}
+
+func (r *rateMeter) update(bytes int64) int64 {
+	now := time.Now()
+	// bytes < lastBytes: a retry rewound the count, restart the window
+	if r.lastTime.IsZero() || bytes < r.lastBytes {
+		r.lastTime, r.lastBytes = now, bytes
+		return int64(r.rate)
+	}
+	dt := now.Sub(r.lastTime).Seconds()
+	if dt <= 0 {
+		return int64(r.rate)
+	}
+	inst := float64(bytes-r.lastBytes) / dt
+	if r.rate == 0 {
+		r.rate = inst
+	} else {
+		r.rate = 0.7*r.rate + 0.3*inst
+	}
+	r.lastTime, r.lastBytes = now, bytes
+	return int64(r.rate)
+}
+
 // DownloadVideos downloads videos from a GoPro device.
 // A non-empty fileNames selection downloads exactly those files (media
 // browser); empty falls back to the date-threshold window.
-func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysInPast int, fileNames []string) ([]string, error) {
+// progress may be nil.
+func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysInPast int, fileNames []string, progress ProgressFunc) ([]string, error) {
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create destination directory: %w", err)
 	}
@@ -95,11 +143,34 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 
 	var downloadedFiles []string
 	skippedCount := 0
+
+	// Partition before downloading so progress can report the real file
+	// count and byte total for this sync, not the whole window.
+	var pending []MediaFile
+	for _, media := range filteredMedia {
+		outputPath := filepath.Join(destDir, media.Name)
+		if exists, _ := m.fileExistsWithSize(outputPath, media.Size); exists {
+			downloadedFiles = append(downloadedFiles, outputPath)
+			skippedCount++
+			continue
+		}
+		pending = append(pending, media)
+	}
+
+	var bytesTotal int64
+	for _, media := range pending {
+		if media.Size > 0 {
+			bytesTotal += media.Size
+		}
+	}
+
 	failedCount := 0
 	var totalBytes int64
 	var totalSeconds float64
+	var bytesDone int64 // completed files only; the current file adds its own bytes
+	meter := &rateMeter{}
 
-	for _, media := range filteredMedia {
+	for i, media := range pending {
 		select {
 		case <-ctx.Done():
 			return downloadedFiles, ctx.Err()
@@ -108,23 +179,42 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 
 		outputPath := filepath.Join(destDir, media.Name)
 
-		if exists, _ := m.fileExistsWithSize(outputPath, media.Size); exists {
-			downloadedFiles = append(downloadedFiles, outputPath)
-			skippedCount++
-			continue
+		var fileProgress func(int64)
+		if progress != nil {
+			idx, name, size := i+1, media.Name, media.Size
+			fileProgress = func(fileBytes int64) {
+				progress(DownloadProgress{
+					FileIndex:  idx,
+					FileCount:  len(pending),
+					FileName:   name,
+					FileBytes:  fileBytes,
+					FileTotal:  size,
+					BytesDone:  bytesDone + fileBytes,
+					BytesTotal: bytesTotal,
+					RateBps:    meter.update(bytesDone + fileBytes),
+				})
+			}
 		}
 
 		dlStart := time.Now()
-		dlErr := m.downloadFileWithResume(ctx, media.URL, outputPath, media.CreatedAt, media.Size)
+		dlErr := m.downloadFileWithResume(ctx, media.URL, outputPath, media.CreatedAt, media.Size, fileProgress)
 		if dlErr != nil {
 			// Per-file, skipped and continued; the summary below counts them
 			m.log.Warn("Failed to download media file", "file", media.Name, "err", dlErr)
 			failedCount++
+			// Keep the remaining percent honest: this file will not arrive
+			if media.Size > 0 {
+				bytesTotal -= media.Size
+			}
 			continue
 		}
-
 		// Throughput per file: the number that settles turbo-vs-not debates
+		bytesDone += media.Size // stat below corrects unknown (0) sizes
 		if fi, statErr := os.Stat(outputPath); statErr == nil {
+			if media.Size <= 0 {
+				bytesDone += fi.Size()
+				bytesTotal += fi.Size()
+			}
 			elapsed := time.Since(dlStart).Seconds()
 			totalBytes += fi.Size()
 			totalSeconds += elapsed
@@ -410,7 +500,7 @@ func expandGroupMembers(name, firstID, lastID string, missingIDs []string) []str
 
 // downloadFileWithResume downloads a file with resume capability.
 // The caller is responsible for skipping files that already exist.
-func (m *WiFiManager) downloadFileWithResume(ctx context.Context, url, outputPath string, createdAt time.Time, totalSize int64) error {
+func (m *WiFiManager) downloadFileWithResume(ctx context.Context, url, outputPath string, createdAt time.Time, totalSize int64, onProgress func(int64)) error {
 	maxRetries := 3
 	var lastErr error
 
@@ -425,7 +515,7 @@ func (m *WiFiManager) downloadFileWithResume(ctx context.Context, url, outputPat
 			}
 		}
 
-		err := m.downloadFileWithResumeOnce(ctx, url, outputPath, createdAt, totalSize)
+		err := m.downloadFileWithResumeOnce(ctx, url, outputPath, createdAt, totalSize, onProgress)
 		if err == nil {
 			return nil // Success
 		}
@@ -439,7 +529,7 @@ func (m *WiFiManager) downloadFileWithResume(ctx context.Context, url, outputPat
 }
 
 // downloadFileWithResumeOnce performs a single attempt to download a file with resume capability
-func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outputPath string, createdAt time.Time, totalSize int64) error {
+func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outputPath string, createdAt time.Time, totalSize int64, onProgress func(int64)) error {
 	tempFilePath := outputPath + ".partial"
 
 	// Check if partial download exists
@@ -466,6 +556,9 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 	// If file is already complete, just rename it
 	if totalSize > 0 && startOffset == totalSize {
 		logging.Trace(m.log, "File already complete", "file", outputPath)
+		if onProgress != nil {
+			onProgress(totalSize)
+		}
 		return os.Rename(tempFilePath, outputPath)
 	}
 
@@ -490,7 +583,8 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 		return fmt.Errorf("received non-OK response: %d", resp.StatusCode)
 	}
 
-	// Report progress periodically
+	// Report progress periodically; zero cbTime so the first read reports
+	// immediately and the UI switches to the new file without a lag
 	progressReader := &progressReader{
 		reader:     resp.Body,
 		total:      totalSize,
@@ -498,6 +592,7 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 		reportTime: time.Now(),
 		fileName:   filepath.Base(outputPath),
 		logger:     m.log,
+		onProgress: onProgress,
 	}
 
 	// Set up a pipe with buffer for faster downloads
@@ -543,8 +638,10 @@ type progressReader struct {
 	total      int64
 	current    int64
 	reportTime time.Time
+	cbTime     time.Time
 	fileName   string
 	logger     *slog.Logger
+	onProgress func(int64)
 }
 
 func (pr *progressReader) Read(p []byte) (int, error) {
@@ -560,6 +657,13 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 			"current_mb", pr.current/(1024*1024),
 			"total_mb", pr.total/(1024*1024))
 		pr.reportTime = time.Now()
+	}
+
+	// UI callback on its own, faster clock; every write is a store
+	// mutation plus a stream push, so keep it to about one per second
+	if pr.onProgress != nil && time.Since(pr.cbTime) > time.Second {
+		pr.onProgress(pr.current)
+		pr.cbTime = time.Now()
 	}
 
 	return n, err

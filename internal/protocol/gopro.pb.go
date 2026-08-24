@@ -517,8 +517,18 @@ type SyncQueueEntry struct {
 	Priority         int32                  `protobuf:"varint,3,opt,name=priority,proto3" json:"priority,omitempty"` // Higher numbers = higher priority (manual sync = 10, auto sync = 5)
 	ProgressPercent  int32                  `protobuf:"varint,4,opt,name=progress_percent,json=progressPercent,proto3" json:"progress_percent,omitempty"`
 	CurrentOperation string                 `protobuf:"bytes,5,opt,name=current_operation,json=currentOperation,proto3" json:"current_operation,omitempty"` // Text description of current operation
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Download detail, present only while the download step runs.
+	// Byte fields are 0 when the camera did not report sizes.
+	FileIndex     int32  `protobuf:"varint,6,opt,name=file_index,json=fileIndex,proto3" json:"file_index,omitempty"` // 1-based, among the files actually downloading
+	FileCount     int32  `protobuf:"varint,7,opt,name=file_count,json=fileCount,proto3" json:"file_count,omitempty"`
+	FileName      string `protobuf:"bytes,8,opt,name=file_name,json=fileName,proto3" json:"file_name,omitempty"`
+	FileBytes     int64  `protobuf:"varint,9,opt,name=file_bytes,json=fileBytes,proto3" json:"file_bytes,omitempty"` // current file bytes on disk
+	FileTotal     int64  `protobuf:"varint,10,opt,name=file_total,json=fileTotal,proto3" json:"file_total,omitempty"`
+	BytesDone     int64  `protobuf:"varint,11,opt,name=bytes_done,json=bytesDone,proto3" json:"bytes_done,omitempty"` // whole sync
+	BytesTotal    int64  `protobuf:"varint,12,opt,name=bytes_total,json=bytesTotal,proto3" json:"bytes_total,omitempty"`
+	RateBps       int64  `protobuf:"varint,13,opt,name=rate_bps,json=rateBps,proto3" json:"rate_bps,omitempty"` // smoothed recent throughput
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SyncQueueEntry) Reset() {
@@ -584,6 +594,62 @@ func (x *SyncQueueEntry) GetCurrentOperation() string {
 		return x.CurrentOperation
 	}
 	return ""
+}
+
+func (x *SyncQueueEntry) GetFileIndex() int32 {
+	if x != nil {
+		return x.FileIndex
+	}
+	return 0
+}
+
+func (x *SyncQueueEntry) GetFileCount() int32 {
+	if x != nil {
+		return x.FileCount
+	}
+	return 0
+}
+
+func (x *SyncQueueEntry) GetFileName() string {
+	if x != nil {
+		return x.FileName
+	}
+	return ""
+}
+
+func (x *SyncQueueEntry) GetFileBytes() int64 {
+	if x != nil {
+		return x.FileBytes
+	}
+	return 0
+}
+
+func (x *SyncQueueEntry) GetFileTotal() int64 {
+	if x != nil {
+		return x.FileTotal
+	}
+	return 0
+}
+
+func (x *SyncQueueEntry) GetBytesDone() int64 {
+	if x != nil {
+		return x.BytesDone
+	}
+	return 0
+}
+
+func (x *SyncQueueEntry) GetBytesTotal() int64 {
+	if x != nil {
+		return x.BytesTotal
+	}
+	return 0
+}
+
+func (x *SyncQueueEntry) GetRateBps() int64 {
+	if x != nil {
+		return x.RateBps
+	}
+	return 0
 }
 
 // Group of cameras
@@ -2728,13 +2794,28 @@ const file_gopro_proto_rawDesc = "" +
 	"\x10DiscoveredCamera\x129\n" +
 	"\fcamera_state\x18\x01 \x01(\v2\x16.dropz.CameraWithStateR\vcameraState\"J\n" +
 	"\rManagedCamera\x129\n" +
-	"\fcamera_state\x18\x01 \x01(\v2\x16.dropz.CameraWithStateR\vcameraState\"\xda\x01\n" +
+	"\fcamera_state\x18\x01 \x01(\v2\x16.dropz.CameraWithStateR\vcameraState\"\xce\x03\n" +
 	"\x0eSyncQueueEntry\x12\x1b\n" +
 	"\tcamera_id\x18\x01 \x01(\tR\bcameraId\x127\n" +
 	"\tqueued_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\bqueuedAt\x12\x1a\n" +
 	"\bpriority\x18\x03 \x01(\x05R\bpriority\x12)\n" +
 	"\x10progress_percent\x18\x04 \x01(\x05R\x0fprogressPercent\x12+\n" +
-	"\x11current_operation\x18\x05 \x01(\tR\x10currentOperation\"\xc0\x01\n" +
+	"\x11current_operation\x18\x05 \x01(\tR\x10currentOperation\x12\x1d\n" +
+	"\n" +
+	"file_index\x18\x06 \x01(\x05R\tfileIndex\x12\x1d\n" +
+	"\n" +
+	"file_count\x18\a \x01(\x05R\tfileCount\x12\x1b\n" +
+	"\tfile_name\x18\b \x01(\tR\bfileName\x12\x1d\n" +
+	"\n" +
+	"file_bytes\x18\t \x01(\x03R\tfileBytes\x12\x1d\n" +
+	"\n" +
+	"file_total\x18\n" +
+	" \x01(\x03R\tfileTotal\x12\x1d\n" +
+	"\n" +
+	"bytes_done\x18\v \x01(\x03R\tbytesDone\x12\x1f\n" +
+	"\vbytes_total\x18\f \x01(\x03R\n" +
+	"bytesTotal\x12\x19\n" +
+	"\brate_bps\x18\r \x01(\x03R\arateBps\"\xc0\x01\n" +
 	"\x05Group\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +

@@ -58,7 +58,15 @@ export function processSyncQueueEntry(entry) {
       queuedAt: entry.getQueuedAt()?.toDate(),
       priority: entry.getPriority(),
       progressPercent: entry.getProgressPercent(),
-      currentOperation: entry.getCurrentOperation()
+      currentOperation: entry.getCurrentOperation(),
+      fileIndex: entry.getFileIndex(),
+      fileCount: entry.getFileCount(),
+      fileName: entry.getFileName(),
+      fileBytes: entry.getFileBytes(),
+      fileTotal: entry.getFileTotal(),
+      bytesDone: entry.getBytesDone(),
+      bytesTotal: entry.getBytesTotal(),
+      rateBps: entry.getRateBps()
     };
   } catch (error) {
     console.error('Error processing sync queue entry:', error);

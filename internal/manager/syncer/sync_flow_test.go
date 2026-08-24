@@ -50,6 +50,8 @@ type fakeWiFi struct {
 	downloadedNames []string
 	disconnects     atomic.Int32
 	factoryCalls    atomic.Int32
+	// non-zero FileCount: reported to the progress callback once
+	progress wifi.DownloadProgress
 }
 
 func (f *fakeWiFi) Connect(context.Context, string, string) error { return nil }
@@ -61,8 +63,11 @@ func (f *fakeWiFi) ListMedia(context.Context) ([]wifi.MediaFile, error) {
 	return []wifi.MediaFile{{Name: "GX010001.MP4", CameraPath: "100GOPRO/GX010001.MP4", Size: 42, CreatedAt: time.Now()}}, nil
 }
 func (f *fakeWiFi) SetTurboTransfer(context.Context, bool) error { return nil }
-func (f *fakeWiFi) DownloadVideos(_ context.Context, destDir string, _ int, fileNames []string) ([]string, error) {
+func (f *fakeWiFi) DownloadVideos(_ context.Context, destDir string, _ int, fileNames []string, progress wifi.ProgressFunc) ([]string, error) {
 	f.downloadedNames = fileNames
+	if progress != nil && f.progress.FileCount > 0 {
+		progress(f.progress)
+	}
 	// The skip guard's catalog check stats this file; a fake download
 	// must leave it on disk like the real one does.
 	_ = os.WriteFile(filepath.Join(destDir, "GX010001.MP4"), []byte("x"), 0644)
@@ -281,6 +286,46 @@ func TestSyncDoesNotSkipAfterStatusCheckMovedLiveCounts(t *testing.T) {
 
 	if fw.factoryCalls.Load() != 1 {
 		t.Error("new media behind a refreshed live count must force the WiFi cycle")
+	}
+}
+
+func TestDownloadProgressStreamsToQueueEntry(t *testing.T) {
+	c, _, fw, task := newFlowCoordinator(t)
+	fw.progress = wifi.DownloadProgress{
+		FileIndex: 3, FileCount: 17, FileName: "GX010003.MP4",
+		FileBytes: 5, FileTotal: 10,
+		BytesDone: 100, BytesTotal: 400, RateBps: 42,
+	}
+	// The entry is gone once the sync finishes; snapshot it from the
+	// notifier that fires on every progress write.
+	var got *model.SyncQueueEntry
+	c.notifier = func() {
+		for _, e := range c.db.GetSyncQueue() {
+			if e.FileName != "" {
+				snapshot := *e
+				got = &snapshot
+			}
+		}
+	}
+
+	c.syncSem <- struct{}{}
+	c.PerformCameraSync(task)
+
+	if got == nil {
+		t.Fatal("no queue entry carried download detail")
+	}
+	if got.FileIndex != 3 || got.FileCount != 17 || got.FileName != "GX010003.MP4" {
+		t.Errorf("file detail = %d/%d %q", got.FileIndex, got.FileCount, got.FileName)
+	}
+	if got.BytesDone != 100 || got.BytesTotal != 400 || got.RateBps != 42 {
+		t.Errorf("byte detail = %d/%d at %d", got.BytesDone, got.BytesTotal, got.RateBps)
+	}
+	// 60 + 39 * 100/400
+	if got.ProgressPercent != 69 {
+		t.Errorf("percent = %d, want 69", got.ProgressPercent)
+	}
+	if got.CurrentOperation != "Downloading GX010003.MP4" {
+		t.Errorf("operation = %q", got.CurrentOperation)
 	}
 }
 

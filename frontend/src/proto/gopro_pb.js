@@ -2810,7 +2810,15 @@ proto.dropz.SyncQueueEntry.toObject = function(includeInstance, msg) {
     queuedAt: (f = msg.getQueuedAt()) && google_protobuf_timestamp_pb.Timestamp.toObject(includeInstance, f),
     priority: jspb.Message.getFieldWithDefault(msg, 3, 0),
     progressPercent: jspb.Message.getFieldWithDefault(msg, 4, 0),
-    currentOperation: jspb.Message.getFieldWithDefault(msg, 5, "")
+    currentOperation: jspb.Message.getFieldWithDefault(msg, 5, ""),
+    fileIndex: jspb.Message.getFieldWithDefault(msg, 6, 0),
+    fileCount: jspb.Message.getFieldWithDefault(msg, 7, 0),
+    fileName: jspb.Message.getFieldWithDefault(msg, 8, ""),
+    fileBytes: jspb.Message.getFieldWithDefault(msg, 9, 0),
+    fileTotal: jspb.Message.getFieldWithDefault(msg, 10, 0),
+    bytesDone: jspb.Message.getFieldWithDefault(msg, 11, 0),
+    bytesTotal: jspb.Message.getFieldWithDefault(msg, 12, 0),
+    rateBps: jspb.Message.getFieldWithDefault(msg, 13, 0)
   };
 
   if (includeInstance) {
@@ -2867,6 +2875,38 @@ proto.dropz.SyncQueueEntry.deserializeBinaryFromReader = function(msg, reader) {
     case 5:
       var value = /** @type {string} */ (reader.readString());
       msg.setCurrentOperation(value);
+      break;
+    case 6:
+      var value = /** @type {number} */ (reader.readInt32());
+      msg.setFileIndex(value);
+      break;
+    case 7:
+      var value = /** @type {number} */ (reader.readInt32());
+      msg.setFileCount(value);
+      break;
+    case 8:
+      var value = /** @type {string} */ (reader.readString());
+      msg.setFileName(value);
+      break;
+    case 9:
+      var value = /** @type {number} */ (reader.readInt64());
+      msg.setFileBytes(value);
+      break;
+    case 10:
+      var value = /** @type {number} */ (reader.readInt64());
+      msg.setFileTotal(value);
+      break;
+    case 11:
+      var value = /** @type {number} */ (reader.readInt64());
+      msg.setBytesDone(value);
+      break;
+    case 12:
+      var value = /** @type {number} */ (reader.readInt64());
+      msg.setBytesTotal(value);
+      break;
+    case 13:
+      var value = /** @type {number} */ (reader.readInt64());
+      msg.setRateBps(value);
       break;
     default:
       reader.skipField();
@@ -2930,6 +2970,62 @@ proto.dropz.SyncQueueEntry.serializeBinaryToWriter = function(message, writer) {
   if (f.length > 0) {
     writer.writeString(
       5,
+      f
+    );
+  }
+  f = message.getFileIndex();
+  if (f !== 0) {
+    writer.writeInt32(
+      6,
+      f
+    );
+  }
+  f = message.getFileCount();
+  if (f !== 0) {
+    writer.writeInt32(
+      7,
+      f
+    );
+  }
+  f = message.getFileName();
+  if (f.length > 0) {
+    writer.writeString(
+      8,
+      f
+    );
+  }
+  f = message.getFileBytes();
+  if (f !== 0) {
+    writer.writeInt64(
+      9,
+      f
+    );
+  }
+  f = message.getFileTotal();
+  if (f !== 0) {
+    writer.writeInt64(
+      10,
+      f
+    );
+  }
+  f = message.getBytesDone();
+  if (f !== 0) {
+    writer.writeInt64(
+      11,
+      f
+    );
+  }
+  f = message.getBytesTotal();
+  if (f !== 0) {
+    writer.writeInt64(
+      12,
+      f
+    );
+  }
+  f = message.getRateBps();
+  if (f !== 0) {
+    writer.writeInt64(
+      13,
       f
     );
   }
@@ -3042,6 +3138,150 @@ proto.dropz.SyncQueueEntry.prototype.getCurrentOperation = function() {
  */
 proto.dropz.SyncQueueEntry.prototype.setCurrentOperation = function(value) {
   return jspb.Message.setProto3StringField(this, 5, value);
+};
+
+
+/**
+ * optional int32 file_index = 6;
+ * @return {number}
+ */
+proto.dropz.SyncQueueEntry.prototype.getFileIndex = function() {
+  return /** @type {number} */ (jspb.Message.getFieldWithDefault(this, 6, 0));
+};
+
+
+/**
+ * @param {number} value
+ * @return {!proto.dropz.SyncQueueEntry} returns this
+ */
+proto.dropz.SyncQueueEntry.prototype.setFileIndex = function(value) {
+  return jspb.Message.setProto3IntField(this, 6, value);
+};
+
+
+/**
+ * optional int32 file_count = 7;
+ * @return {number}
+ */
+proto.dropz.SyncQueueEntry.prototype.getFileCount = function() {
+  return /** @type {number} */ (jspb.Message.getFieldWithDefault(this, 7, 0));
+};
+
+
+/**
+ * @param {number} value
+ * @return {!proto.dropz.SyncQueueEntry} returns this
+ */
+proto.dropz.SyncQueueEntry.prototype.setFileCount = function(value) {
+  return jspb.Message.setProto3IntField(this, 7, value);
+};
+
+
+/**
+ * optional string file_name = 8;
+ * @return {string}
+ */
+proto.dropz.SyncQueueEntry.prototype.getFileName = function() {
+  return /** @type {string} */ (jspb.Message.getFieldWithDefault(this, 8, ""));
+};
+
+
+/**
+ * @param {string} value
+ * @return {!proto.dropz.SyncQueueEntry} returns this
+ */
+proto.dropz.SyncQueueEntry.prototype.setFileName = function(value) {
+  return jspb.Message.setProto3StringField(this, 8, value);
+};
+
+
+/**
+ * optional int64 file_bytes = 9;
+ * @return {number}
+ */
+proto.dropz.SyncQueueEntry.prototype.getFileBytes = function() {
+  return /** @type {number} */ (jspb.Message.getFieldWithDefault(this, 9, 0));
+};
+
+
+/**
+ * @param {number} value
+ * @return {!proto.dropz.SyncQueueEntry} returns this
+ */
+proto.dropz.SyncQueueEntry.prototype.setFileBytes = function(value) {
+  return jspb.Message.setProto3IntField(this, 9, value);
+};
+
+
+/**
+ * optional int64 file_total = 10;
+ * @return {number}
+ */
+proto.dropz.SyncQueueEntry.prototype.getFileTotal = function() {
+  return /** @type {number} */ (jspb.Message.getFieldWithDefault(this, 10, 0));
+};
+
+
+/**
+ * @param {number} value
+ * @return {!proto.dropz.SyncQueueEntry} returns this
+ */
+proto.dropz.SyncQueueEntry.prototype.setFileTotal = function(value) {
+  return jspb.Message.setProto3IntField(this, 10, value);
+};
+
+
+/**
+ * optional int64 bytes_done = 11;
+ * @return {number}
+ */
+proto.dropz.SyncQueueEntry.prototype.getBytesDone = function() {
+  return /** @type {number} */ (jspb.Message.getFieldWithDefault(this, 11, 0));
+};
+
+
+/**
+ * @param {number} value
+ * @return {!proto.dropz.SyncQueueEntry} returns this
+ */
+proto.dropz.SyncQueueEntry.prototype.setBytesDone = function(value) {
+  return jspb.Message.setProto3IntField(this, 11, value);
+};
+
+
+/**
+ * optional int64 bytes_total = 12;
+ * @return {number}
+ */
+proto.dropz.SyncQueueEntry.prototype.getBytesTotal = function() {
+  return /** @type {number} */ (jspb.Message.getFieldWithDefault(this, 12, 0));
+};
+
+
+/**
+ * @param {number} value
+ * @return {!proto.dropz.SyncQueueEntry} returns this
+ */
+proto.dropz.SyncQueueEntry.prototype.setBytesTotal = function(value) {
+  return jspb.Message.setProto3IntField(this, 12, value);
+};
+
+
+/**
+ * optional int64 rate_bps = 13;
+ * @return {number}
+ */
+proto.dropz.SyncQueueEntry.prototype.getRateBps = function() {
+  return /** @type {number} */ (jspb.Message.getFieldWithDefault(this, 13, 0));
+};
+
+
+/**
+ * @param {number} value
+ * @return {!proto.dropz.SyncQueueEntry} returns this
+ */
+proto.dropz.SyncQueueEntry.prototype.setRateBps = function(value) {
+  return jspb.Message.setProto3IntField(this, 13, value);
 };
 
 

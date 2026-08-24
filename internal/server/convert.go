@@ -67,6 +67,14 @@ func toProtoSyncQueueEntry(e *model.SyncQueueEntry) *protocol.SyncQueueEntry {
 		Priority:         e.Priority,
 		ProgressPercent:  e.ProgressPercent,
 		CurrentOperation: e.CurrentOperation,
+		FileIndex:        e.FileIndex,
+		FileCount:        e.FileCount,
+		FileName:         e.FileName,
+		FileBytes:        e.FileBytes,
+		FileTotal:        e.FileTotal,
+		BytesDone:        e.BytesDone,
+		BytesTotal:       e.BytesTotal,
+		RateBps:          e.RateBps,
 	}
 }
 

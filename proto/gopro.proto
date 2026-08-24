@@ -71,6 +71,16 @@ message SyncQueueEntry {
   int32 priority = 3;  // Higher numbers = higher priority (manual sync = 10, auto sync = 5)
   int32 progress_percent = 4;
   string current_operation = 5;  // Text description of current operation
+  // Download detail, present only while the download step runs.
+  // Byte fields are 0 when the camera did not report sizes.
+  int32 file_index = 6;  // 1-based, among the files actually downloading
+  int32 file_count = 7;
+  string file_name = 8;
+  int64 file_bytes = 9;  // current file bytes on disk
+  int64 file_total = 10;
+  int64 bytes_done = 11;  // whole sync
+  int64 bytes_total = 12;
+  int64 rate_bps = 13;  // smoothed recent throughput
 }
 
 // Group of cameras

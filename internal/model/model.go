@@ -134,6 +134,16 @@ type SyncQueueEntry struct {
 	Priority         int32     `json:"priority"` // Higher numbers = higher priority (manual sync = 10, auto sync = 5)
 	ProgressPercent  int32     `json:"progress_percent"`
 	CurrentOperation string    `json:"current_operation"`
+	// Download detail, populated only while the download step runs.
+	// Byte fields are 0 when the camera did not report sizes.
+	FileIndex  int32  `json:"file_index,omitempty"` // 1-based
+	FileCount  int32  `json:"file_count,omitempty"`
+	FileName   string `json:"file_name,omitempty"`
+	FileBytes  int64  `json:"file_bytes,omitempty"`
+	FileTotal  int64  `json:"file_total,omitempty"`
+	BytesDone  int64  `json:"bytes_done,omitempty"`  // whole sync
+	BytesTotal int64  `json:"bytes_total,omitempty"`
+	RateBps    int64  `json:"rate_bps,omitempty"`
 	// FileNames limits the download to exactly these files (media browser
 	// selection); empty means the normal date-threshold sync.
 	FileNames []string `json:"file_names,omitempty"`

@@ -18,6 +18,8 @@ let logs = $state([]);
 let logsExpanded = $state(false);
 let showBackendLogs = $state(true);
 let logLevel = $state('info');
+// Group sections the user folded on the Cameras tab, by group id
+let collapsedGroups = $state(loadCollapsed());
 // Files that arrived after this moment count as new in the library.
 // Starts at first launch so an existing library is not all "new".
 let libraryLastVisit = $state(loadLastVisit());
@@ -45,6 +47,23 @@ export function getLogsExpanded() { return logsExpanded; }
 export function getShowBackendLogs() { return showBackendLogs; }
 export function getLogLevel() { return logLevel; }
 export function getLibraryLastVisit() { return libraryLastVisit; }
+
+export function isGroupCollapsed(id) { return collapsedGroups.has(id); }
+export function toggleGroupCollapsed(id) {
+  const next = new Set(collapsedGroups);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  collapsedGroups = next;
+  try { localStorage.setItem('collapsedGroups', JSON.stringify([...next])); } catch (_) {}
+}
+
+function loadCollapsed() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('collapsedGroups') || '[]');
+    if (Array.isArray(saved)) return new Set(saved);
+  } catch (_) {}
+  return new Set();
+}
 
 export function setActiveTab(tab) {
   // Leaving the library is the moment "new" resets; staying on it keeps

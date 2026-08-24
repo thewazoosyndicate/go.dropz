@@ -7,7 +7,7 @@
   import ToastContainer from './components/ToastContainer.svelte';
   import { loadThemePreference } from './lib/stores/ui.svelte.js';
   import { startDeviceStreaming, cancelAllStreams } from './lib/grpc/streams.js';
-  import { loadConfig } from './lib/grpc/actions.js';
+  import { loadConfig, loadGroups } from './lib/grpc/actions.js';
   import { setServiceRunning } from './lib/stores/connection.svelte.js';
   import { addLog } from './lib/stores/ui.svelte.js';
   import { cleanupStaleDevices } from './lib/stores/devices.svelte.js';
@@ -50,6 +50,8 @@
   grpcReady.then(() => {
     startDeviceStreaming();
     loadConfig();
+    // Groups shape the Cameras tab, so they load with the streams
+    loadGroups();
   });
 
   // Cleanup stale devices every 30s

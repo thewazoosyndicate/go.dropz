@@ -1,6 +1,7 @@
 <script>
-  import { addToSyncQueue, cancelSync, toggleDeviceManaged, setCameraAlias } from '../lib/grpc/actions.js';
+  import { addToSyncQueue, cancelSync, toggleDeviceManaged, setCameraAlias, moveCamerasToGroup } from '../lib/grpc/actions.js';
   import { getSyncEntryForCamera, getQueuePosition, getActiveSyncEntry } from '../lib/stores/sync.svelte.js';
+  import { getGroups } from '../lib/stores/groups.svelte.js';
   import { displayName, factoryName, findDeviceById } from '../lib/stores/devices.svelte.js';
   import { openCameraSettings, openLibrary, openActivity, addToast } from '../lib/stores/ui.svelte.js';
   import { formatBytes, formatRate, formatEta, formatTimeAgo, plural } from '../lib/format.js';
@@ -113,8 +114,21 @@
     else if (e.key === 'Escape') renaming = false;
   }
 
+  let groupItems = $derived.by(() => {
+    const items = getGroups().map(g => ({
+      label: g.name, icon: g.syncPaused ? 'fa-pause' : 'fa-layer-group',
+      checked: device.groupId === g.id, disabled: device.groupId === g.id,
+      onclick: () => moveCamerasToGroup([device.id], g.id),
+    }));
+    if (device.groupId) {
+      items.push({ label: 'No group', icon: 'fa-minus', onclick: () => moveCamerasToGroup([device.id], '') });
+    }
+    return items;
+  });
+
   let menuItems = $derived([
     { label: 'Rename', icon: 'fa-pen', onclick: startRename },
+    { label: 'Move to group', icon: 'fa-layer-group', items: groupItems, disabled: groupItems.length === 0 || !device.id },
     { label: 'Browse media', icon: 'fa-photo-film', onclick: () => openLibrary(device.id), disabled: !device.id },
     { label: 'Camera settings', icon: 'fa-sliders-h', onclick: handleSettings, disabled: device.isSyncing || !device.isReachable },
     { label: 'Show activity', icon: 'fa-wave-square', onclick: () => openActivity(device.id) },

@@ -42,7 +42,8 @@
   // prop chains to a derived that changes identity on every device
   // stream update, so an effect's teardown fired (and disarmed) every
   // few hundred ms. The component is keyed by camera in VideoLibrary,
-  // so one instance = one camera, captured once here.
+  // so one instance = one camera; the initial value IS the value.
+  // svelte-ignore state_referenced_locally
   const sessionCameraId = cameraId;
   onDestroy(() => {
     setPreviewSession(sessionCameraId, false).catch(() => {});

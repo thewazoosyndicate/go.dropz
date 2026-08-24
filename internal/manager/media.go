@@ -2,18 +2,12 @@ package manager
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
-	syncpkg "github.com/dropz/dropz/internal/manager/sync"
+	"github.com/dropz/dropz/internal/manager/syncer"
 	"github.com/dropz/dropz/internal/model"
 )
-
-func fileExistsNonEmpty(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && fi.Size() > 0
-}
 
 // cameraFolder returns the per-camera download folder, empty when the
 // camera has no WiFi SSID yet (never paired).
@@ -36,7 +30,7 @@ func (m *GoProManager) GetCameraMedia(cameraID string) ([]model.CameraMediaItem,
 	if folder == "" {
 		return nil, time.Time{}, nil
 	}
-	return syncpkg.ReadCatalog(folder)
+	return syncer.ReadCatalog(folder)
 }
 
 // RequestMediaDownload queues a selection download (or catalog-only

@@ -20,14 +20,7 @@ func (s *DropzServer) GetCameraMedia(ctx context.Context, req *protocol.GetCamer
 	}
 	resp := &protocol.GetCameraMediaResponse{}
 	for _, item := range items {
-		resp.Items = append(resp.Items, &protocol.CameraMediaItem{
-			Name:          item.Name,
-			CameraPath:    item.CameraPath,
-			SizeBytes:     item.SizeBytes,
-			CreatedAt:     timestamppb.New(item.CreatedAt),
-			ThumbnailPath: item.ThumbnailPath,
-			Downloaded:    item.Downloaded,
-		})
+		resp.Items = append(resp.Items, toProtoCameraMediaItem(item))
 	}
 	if !updated.IsZero() {
 		resp.UpdatedAt = timestamppb.New(updated)

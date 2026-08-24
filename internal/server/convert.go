@@ -115,6 +115,25 @@ func toProtoCameraSettings(settings []model.CameraSetting) []*protocol.CameraSet
 	return out
 }
 
+func toProtoCameraMediaItem(item model.CameraMediaItem) *protocol.CameraMediaItem {
+	return &protocol.CameraMediaItem{
+		Name:          item.Name,
+		CameraPath:    item.CameraPath,
+		SizeBytes:     item.SizeBytes,
+		CreatedAt:     timestamppb.New(item.CreatedAt),
+		ThumbnailPath: item.ThumbnailPath,
+		Downloaded:    item.Downloaded,
+	}
+}
+
+func toProtoCameraSettingsResult(cameraID, errMsg string, results []model.SettingApplyResult) *protocol.CameraSettingsResult {
+	return &protocol.CameraSettingsResult{
+		CameraId: cameraID,
+		Error:    errMsg,
+		Results:  toProtoSettingApplyResults(results),
+	}
+}
+
 func toProtoSettingApplyResults(results []model.SettingApplyResult) []*protocol.SettingApplyResult {
 	out := make([]*protocol.SettingApplyResult, 0, len(results))
 	for _, r := range results {

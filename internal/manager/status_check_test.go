@@ -51,8 +51,10 @@ func TestParseIntStatus(t *testing.T) {
 		{[]byte{0x01, 0x02}, 258},
 		{be32(70000), 70000},
 		{be32(0xFFFFFFFF), -1}, // HERO13+ sentinel
-		{nil, 0},
-		{[]byte{1, 2, 3}, 0},
+		// Invalid lengths must parse as invalid (-1), not a fake zero
+		// that would overwrite stored counts and disable detection.
+		{nil, -1},
+		{[]byte{1, 2, 3}, -1},
 	}
 	for _, c := range cases {
 		if got := parseIntStatus(c.in); got != c.want {

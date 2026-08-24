@@ -110,11 +110,6 @@ func (c *CameraWithState) InDiscoveredPool() bool {
 	return !c.InManagedPool()
 }
 
-// EligibleForSyncQueue reports whether the camera can be queued for sync.
-func (c *CameraWithState) EligibleForSyncQueue() bool {
-	return c.Status.IsReachable && c.InManagedPool() && !c.Status.IsSynced
-}
-
 // DiscoveredCamera represents a camera that is not managed or paired
 type DiscoveredCamera struct {
 	CameraState *CameraWithState `json:"camera_state"`

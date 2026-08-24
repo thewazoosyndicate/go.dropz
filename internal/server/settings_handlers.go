@@ -50,10 +50,9 @@ func (s *DropzServer) ApplyCameraSettings(ctx context.Context, req *protocol.App
 		if err != nil {
 			return nil, rpcError(err)
 		}
-		return &protocol.ApplyCameraSettingsResponse{Cameras: []*protocol.CameraSettingsResult{{
-			CameraId: cameraID,
-			Results:  toProtoSettingApplyResults(results),
-		}}}, nil
+		return &protocol.ApplyCameraSettingsResponse{Cameras: []*protocol.CameraSettingsResult{
+			toProtoCameraSettingsResult(cameraID, "", results),
+		}}, nil
 	}
 
 	groupResults, err := s.manager.ApplyGroupSettings(req.GetGroupId(), changes)
@@ -62,11 +61,7 @@ func (s *DropzServer) ApplyCameraSettings(ctx context.Context, req *protocol.App
 	}
 	resp := &protocol.ApplyCameraSettingsResponse{}
 	for _, gr := range groupResults {
-		resp.Cameras = append(resp.Cameras, &protocol.CameraSettingsResult{
-			CameraId: gr.CameraID,
-			Error:    gr.Error,
-			Results:  toProtoSettingApplyResults(gr.Results),
-		})
+		resp.Cameras = append(resp.Cameras, toProtoCameraSettingsResult(gr.CameraID, gr.Error, gr.Results))
 	}
 	return resp, nil
 }

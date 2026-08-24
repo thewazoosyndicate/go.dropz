@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dropz/dropz/internal/ble"
 	"github.com/dropz/dropz/internal/model"
 	"github.com/dropz/dropz/internal/protocol"
 	"google.golang.org/grpc"
@@ -61,9 +60,7 @@ func rpcError(err error) error {
 	switch {
 	case errors.Is(err, model.ErrCameraNotFound), errors.Is(err, model.ErrGroupNotFound):
 		return status.Error(codes.NotFound, err.Error())
-	case errors.Is(err, model.ErrNotManagedPaired):
-		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ble.ErrBluetoothUnavailable):
+	case errors.Is(err, model.ErrNotManagedPaired), errors.Is(err, model.ErrBluetoothUnavailable):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	default:
 		return status.Error(codes.Internal, err.Error())

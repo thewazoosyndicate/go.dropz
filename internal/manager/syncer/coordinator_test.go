@@ -1,4 +1,4 @@
-package sync
+package syncer
 
 import (
 	"context"
@@ -19,7 +19,7 @@ func newTestCoordinator(t *testing.T) (*Coordinator, *store.Store) {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	c := NewCoordinator(context.Background(), st, nil, log, func() {}, nil)
+	c := NewCoordinator(context.Background(), st, nil, log, func() {}, nil, nil)
 	return c, st
 }
 

@@ -3,6 +3,7 @@
 package ble
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,17 @@ import (
 )
 
 const agentPath = "/org/bluez/dropz/agent"
+
+// isDbusAlreadyExists matches BlueZ's "already paired" by D-Bus error name,
+// with a text fallback for wrapped errors; matching wording alone breaks
+// when BlueZ rephrases and then a valid bond reads as a pairing failure.
+func isDbusAlreadyExists(err error) bool {
+	var dbusErr dbus.Error
+	if errors.As(err, &dbusErr) {
+		return dbusErr.Name == "org.bluez.Error.AlreadyExists"
+	}
+	return strings.Contains(err.Error(), "AlreadyExists")
+}
 
 // justWorksAgent implements org.bluez.Agent1 for unauthenticated "Just Works" pairing.
 type justWorksAgent struct{}
@@ -66,7 +78,11 @@ func (m *Manager) pairViaDbus(macAddress string) error {
 		"type='signal',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged',path='%s',arg0='org.bluez.Device1'",
 		devPath,
 	)
-	conn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0, matchRule)
+	if call := conn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0, matchRule); call.Err != nil {
+		// Signal path dead: pairing then rests on Pair()'s return alone,
+		// which hangs on an already-connected device (full 15s timeout).
+		m.log.Warn("Failed to add D-Bus match for pairing signals", "ble_addr", macAddress, "err", call.Err)
+	}
 	sigCh := make(chan *dbus.Signal, 10)
 	conn.Signal(sigCh)
 	defer func() {
@@ -100,7 +116,7 @@ func (m *Manager) pairViaDbus(macAddress string) error {
 
 		case result := <-pairDone:
 			if result.Err != nil {
-				if strings.Contains(result.Err.Error(), "AlreadyExists") {
+				if isDbusAlreadyExists(result.Err) {
 					m.log.Debug("Device already paired", "ble_addr", macAddress, "via", "pair_call")
 					return nil
 				}

@@ -15,12 +15,13 @@ const videoProto = appRequire('./src/proto/video_pb');
 
 let _client = null;
 
+// Mirrors the backend's -server-addr flag so a second instance (bench
+// harness, screenshot driver) can run beside the real app.
+const address = window.process?.env?.DROPZ_GRPC_ADDR || '127.0.0.1:50051';
+
 export function getClient() {
   if (!_client) {
-    _client = new serviceGrpc.DropzServiceClient(
-      '127.0.0.1:50051',
-      grpc.credentials.createInsecure()
-    );
+    _client = new serviceGrpc.DropzServiceClient(address, grpc.credentials.createInsecure());
   }
   return _client;
 }

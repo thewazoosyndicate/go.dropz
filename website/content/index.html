@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dropz: every GoPro in the room, synced before anyone leaves</title>
+  <meta name="description" content="Dropz finds GoPro cameras over Bluetooth, pairs them, and pulls every new clip over Wi-Fi to one computer. A team of twenty, a film crew, or a fleet in the field. Free and open source for macOS and Linux.">
+  <meta property="og:title" content="Dropz">
+  <meta property="og:description" content="Any number of GoPro cameras, one laptop. No cables, no card readers, no missed files.">
+  <meta property="og:image" content="https://dropz.cloud/assets/demo-poster.jpg">
+  <meta property="og:url" content="https://dropz.cloud/">
+  <meta name="theme-color" content="#000616">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="nav">
+  <a class="brand" href="/" aria-label="Dropz home">
+    <img src="favicon.svg" alt="" width="28" height="26">
+    <span>dropz</span>
+  </a>
+  <nav>
+    <a href="#features">Features</a>
+    <a href="#download">Download</a>
+    <a href="https://github.com/thewazoosyndicate/go.dropz" rel="noopener">GitHub</a>
+  </nav>
+</header>
+
+<main>
+
+<section class="hero">
+  <img class="wordmark" src="logo.svg" alt="dropz" width="268" height="121">
+  <h1>Every GoPro in the room,<br>synced before anyone leaves.</h1>
+  <p class="lead">
+    One laptop, any number of cameras.
+    Dropz finds GoPro cameras over Bluetooth, pairs them once,
+    and pulls every new clip over Wi-Fi to your computer.
+    No cables, no card readers, no missed files.
+  </p>
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/thewazoosyndicate/go.dropz/releases/download/v0.7.0/Dropz-0.7.0-arm64.dmg" data-dl="dmg">
+      <span class="os">macOS</span><small>Apple Silicon, .dmg</small>
+    </a>
+    <a class="btn primary" href="https://github.com/thewazoosyndicate/go.dropz/releases/latest/download/Dropz.AppImage" data-dl="appimage">
+      <span class="os">Linux</span><small>x86_64, AppImage</small>
+    </a>
+  </div>
+  <p class="version">
+    Latest release <a href="https://github.com/thewazoosyndicate/go.dropz/releases/latest" data-release="v0.7.0">v0.7.0</a>,
+    free and open source, Apache 2.0.
+  </p>
+</section>
+
+<section class="demo" aria-label="Product demo">
+  <div class="frame">
+    <video autoplay muted loop playsinline preload="metadata" poster="assets/demo-poster.jpg">
+      <source src="assets/demo.mp4" type="video/mp4">
+      <img src="assets/demo-poster.jpg" alt="The Dropz Cameras tab with a group of GoPro cameras syncing">
+    </video>
+  </div>
+  <p class="caption">Cameras found, paired, and synced, new clips in the library, one lossless trim. Real app, prop footage.</p>
+</section>
+
+<section class="who" aria-label="Who it is for">
+  <ul>
+    <li>
+      <h3>Coaches and teams</h3>
+      <p>Twenty athletes, twenty cameras, one laptop at the bench. Name each camera after its owner and the footage sorts itself.</p>
+    </li>
+    <li>
+      <h3>Film crews and multi-cam shoots</h3>
+      <p>Save each setup as a group. Pause it between takes, switch to the next setup with one click, and never unpair a camera.</p>
+    </li>
+    <li>
+      <h3>Fleets in the field</h3>
+      <p>Research, rentals, driving schools, race days. Cameras come back, get switched on, and empty themselves while you do the paperwork.</p>
+    </li>
+  </ul>
+</section>
+
+<section class="steps" aria-label="How it works">
+  <ol>
+    <li>
+      <span class="n">1</span>
+      <h3>Switch the cameras on</h3>
+      <p>Dropz sees every GoPro in Bluetooth range and pairs the ones you pick. Once. Give each a name: a player, a car, a mount.</p>
+    </li>
+    <li>
+      <span class="n">2</span>
+      <h3>Keep shooting</h3>
+      <p>Each camera wakes in turn, joins Wi-Fi, and hands over what is new. Downloads resume, failures retry.</p>
+    </li>
+    <li>
+      <span class="n">3</span>
+      <h3>Review and cut</h3>
+      <p>Clips land as plain MP4 files in your Videos folder. Preview them, trim losslessly, keep the telemetry.</p>
+    </li>
+  </ol>
+</section>
+
+<section id="features" class="features">
+  <h2>Built for many cameras, not one.</h2>
+  <div class="grid">
+    <article>
+      <h3>Groups for a team, a shoot, a session</h3>
+      <p>Put cameras in a group, pause it, resume it, or say "use only this group" to switch lineups without unpairing anything. Ungrouped cameras keep working on their own.</p>
+    </article>
+    <article>
+      <h3>See every sync at three depths</h3>
+      <p>The status bar shows which camera is on the radio, file x of y, and an ETA. Each card shows one state. The Activity tab keeps per-file rows and a history with where a failed run stopped.</p>
+    </article>
+    <article>
+      <h3>Nothing lost on a bad link</h3>
+      <p>Transfers resume where they broke. A failed file is retried after the rest of the pass. Files already on disk are never fetched twice.</p>
+    </article>
+    <article>
+      <h3>Lossless trim from the player</h3>
+      <p>Set in and out points with I and O. The cut snaps to real keyframes and copies video, audio, and GPMF telemetry untouched. The original stays.</p>
+    </article>
+    <article>
+      <h3>Library with previews</h3>
+      <p>Thumbnails and low-res proxies for every clip, new arrivals marked, one click from a camera card to its footage.</p>
+    </article>
+    <article>
+      <h3>Your files, your machine</h3>
+      <p>No account, no cloud, no upload. A Go backend and an Electron app talking over gRPC on localhost. Apache 2.0, source on GitHub.</p>
+    </article>
+  </div>
+</section>
+
+<section class="shots" aria-label="Screenshots">
+  <figure>
+    <img src="assets/shot-cameras.png" alt="Cameras tab: managed cards in groups, one syncing" loading="lazy">
+    <figcaption>Cameras, in groups</figcaption>
+  </figure>
+  <figure>
+    <img src="assets/shot-activity.png" alt="Activity tab: per-file rows for the running sync and a history" loading="lazy">
+    <figcaption>Activity: this sync, then history</figcaption>
+  </figure>
+  <figure>
+    <img src="assets/shot-library.png" alt="Library tab: grid of clips with thumbnails" loading="lazy">
+    <figcaption>Library, new clips marked</figcaption>
+  </figure>
+  <figure>
+    <img src="assets/shot-trim.png" alt="Player in Trim mode with in and out handles on the scrubber" loading="lazy">
+    <figcaption>Trim, snapped to keyframes</figcaption>
+  </figure>
+</section>
+
+<section id="download" class="download">
+  <h2>Download</h2>
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/thewazoosyndicate/go.dropz/releases/download/v0.7.0/Dropz-0.7.0-arm64.dmg" data-dl="dmg">
+      <span class="os">macOS</span><small>Apple Silicon, .dmg</small>
+    </a>
+    <a class="btn primary" href="https://github.com/thewazoosyndicate/go.dropz/releases/latest/download/Dropz.AppImage" data-dl="appimage">
+      <span class="os">Linux</span><small>x86_64, AppImage</small>
+    </a>
+  </div>
+  <dl class="notes">
+    <dt>macOS</dt>
+    <dd>The build is ad-hoc signed. On first launch, right-click the app and choose Open.</dd>
+    <dt>Linux</dt>
+    <dd><code>chmod +x Dropz.AppImage</code> then run it. Needs NetworkManager and a Bluetooth LE adapter.</dd>
+    <dt>Cameras</dt>
+    <dd>Built on the Open GoPro protocol. Validated on HERO11 Black; HERO12 and HERO13 on the bench.</dd>
+    <dt>ffmpeg</dt>
+    <dd>Bundled. Previews and trims work out of the box.</dd>
+  </dl>
+  <p class="all">Older builds and release notes: <a href="https://github.com/thewazoosyndicate/go.dropz/releases">all releases on GitHub</a>.</p>
+</section>
+
+</main>
+
+<footer>
+  <span>dropz.cloud</span>
+  <a href="https://github.com/thewazoosyndicate/go.dropz" rel="noopener">Source</a>
+  <a href="https://github.com/thewazoosyndicate/go.dropz/blob/main/LICENSE" rel="noopener">Apache 2.0</a>
+  <a href="https://github.com/thewazoosyndicate/go.dropz/issues" rel="noopener">Issues</a>
+</footer>
+
+</body>
+</html>

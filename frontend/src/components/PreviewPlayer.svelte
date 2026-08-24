@@ -145,8 +145,13 @@
     if (inTime < 0) inTime = 0;
   }
 
+  // Both handles live on the keyframe grid. The end could technically
+  // fall anywhere, but two handles with different rules on one bar read
+  // as a bug; the clip's very end stays reachable past the last keyframe.
   function setOut(t) {
-    outTime = Math.max(clamp(t), inTime + MIN_LEN);
+    const c = clamp(t);
+    const v = c >= duration - 0.05 ? duration : snapNearest(c);
+    outTime = Math.max(v, inTime + MIN_LEN);
   }
 
   // Transport
@@ -232,16 +237,14 @@
     else return;
     e.preventDefault();
     e.stopPropagation();
-    if (which === 'in') {
-      // The in point walks keyframe to keyframe: that is the only place it can be
-      let t = inTime;
-      for (let i = 0; i < big; i++) t = neighborKeyframe(t, delta);
-      setIn(t);
-      seek(inTime, true);
-    } else {
-      setOut(outTime + delta * big);
-      seek(outTime, true);
+    // Handles walk keyframe to keyframe; the end also reaches the clip's tail
+    let t = which === 'in' ? inTime : outTime;
+    for (let i = 0; i < big; i++) {
+      const n = neighborKeyframe(t, delta);
+      t = (which === 'out' && delta > 0 && n === t) ? duration : n;
     }
+    if (which === 'in') { setIn(t); seek(inTime, true); }
+    else { setOut(t); seek(outTime, true); }
   }
 
   function onKeydown(e) {
@@ -364,7 +367,7 @@
              onclick={togglePlay} ondblclick={toggleFullscreen}></video>
 
       <div class="controls">
-      <div class="transport">
+      <div class="transport" class:dragging={!!dragging}>
         <IconButton icon={playing ? 'fa-pause' : 'fa-play'} title={playing ? 'Pause (Space)' : 'Play (Space)'} onclick={togglePlay} />
         <span class="time" aria-live="off">{fmt(currentTime)} <span class="muted">/ {fmt(duration)}</span></span>
 
@@ -445,9 +448,9 @@
                 {#if estimatedBytes > 0}<span class="muted">· about {formatBytes(estimatedBytes)}</span>{/if}
               </span>
             </div>
-            <span class="hint" title="No re-encode: the video, audio, and GPS telemetry are copied as they are. A cut can only start on a keyframe, about one per second on a GoPro.">
+            <span class="hint" title="No re-encode: the video, audio, and GPS telemetry are copied as they are. Cuts land on keyframes, about one per second on a GoPro, so both handles snap to them.">
               <i class="fas fa-lock-open" aria-hidden="true"></i>
-              Lossless{#if keyframesLoaded && Math.abs(snappedIn - inTime) > 0.01} · starts at the keyframe {fmt(snappedIn)}{/if}
+              Lossless · on keyframes
             </span>
             <span class="spacer"></span>
             <Button size="sm" icon={loopSelection && playing ? 'fa-pause' : 'fa-repeat'}
@@ -463,7 +466,7 @@
         <div class="keys">
           <span><kbd>I</kbd> <kbd>O</kbd> set in / out</span>
           <span><kbd>[</kbd> <kbd>]</kbd> jump</span>
-          <span><kbd>←</kbd> <kbd>→</kbd> step, <kbd>Shift</kbd> for 5 s</span>
+          <span><kbd>←</kbd> <kbd>→</kbd> next keyframe, <kbd>Shift</kbd> for 5</span>
           <span><kbd>Space</kbd> play</span>
           <span><kbd>Enter</kbd> save</span>
           <span><kbd>Esc</kbd> leave trim</span>
@@ -530,19 +533,31 @@
     padding: 14px 12px 10px;
   }
 
-  .volume { display: flex; align-items: center; gap: 6px; }
+  /* The slider pops up above the button, so nothing in the row moves;
+     while a trim handle is dragged past it, it stays inert */
+  .volume { position: relative; display: flex; align-items: center; }
   .volume input[type="range"] {
     -webkit-appearance: none;
     appearance: none;
-    width: 0;
+    position: absolute;
+    bottom: calc(100% + 6px);
+    right: 0;
+    width: 96px;
     height: 4px;
+    margin: 0;
+    padding: 12px 0;
     border-radius: 2px;
-    background: var(--border-color);
+    background: linear-gradient(var(--border-color), var(--border-color)) center / 100% 4px no-repeat, var(--panel-bg);
+    box-shadow: var(--shadow-md);
+    border-radius: 6px;
     cursor: pointer;
-    transition: width 0.15s, opacity 0.15s;
     opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s;
   }
-  .volume:hover input[type="range"], .volume input[type="range"]:focus-visible { width: 72px; opacity: 1; }
+  .volume:hover input[type="range"], .volume:focus-within input[type="range"] { opacity: 1; pointer-events: auto; }
+  .transport.dragging .volume { pointer-events: none; }
+  .transport.dragging .volume input[type="range"] { opacity: 0; }
   .volume input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     width: 12px;
@@ -613,11 +628,13 @@
   }
   .muted { color: var(--text-muted); }
 
-  /* Timeline: a 44px tall hit area around a thin track */
+  /* Timeline: a 44px tall hit area around a thin track. The side margins
+     keep a handle at either end clear of the neighbouring buttons. */
   .timeline {
     position: relative;
     flex: 1;
     height: 44px;
+    margin: 0 14px;
     cursor: pointer;
     touch-action: none;
     user-select: none;

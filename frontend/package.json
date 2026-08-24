@@ -1,6 +1,6 @@
 {
   "name": "dropz-electron",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Electron frontend for Dropz",
   "main": "src/main.js",
   "homepage": "https://dropz.cloud",

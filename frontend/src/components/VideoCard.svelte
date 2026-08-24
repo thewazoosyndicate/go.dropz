@@ -9,6 +9,7 @@
 
   let sizeText = $derived(formatSize(video.sizeBytes));
   let dateText = $derived(video.createdAt ? video.createdAt.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '');
+  let metaText = $derived([cameraName, sizeText, dateText].filter(Boolean).join(' · '));
 
   function formatSize(bytes) {
     if (!bytes) return '';
@@ -26,51 +27,53 @@
   }
 </script>
 
-<div class="card">
-  {#if video.thumbnailPath}
-    <div class="thumb">
+<!-- Mirrors CameraMediaBrowser's media-card so both library tabs read the same -->
+<div class="media-card">
+  <div class="thumb">
+    {#if video.thumbnailPath}
       <img src={'file://' + video.thumbnailPath} alt={video.name} loading="lazy" />
-    </div>
-  {/if}
-  <div class="card-header">
-    <i class="fas {icon} file-icon"></i>
-    <div class="file-info">
-      <span class="filename" title={video.name}>{video.name}</span>
-      <span class="meta">{cameraName}</span>
-    </div>
+    {:else}
+      <i class="fas {icon}"></i>
+    {/if}
   </div>
-  <div class="card-body">
-    <span class="detail">{sizeText}</span>
-    <span class="detail">{dateText}</span>
+  <div class="media-info">
+    <span class="media-name" title={video.name}>{video.name}</span>
+    <span class="media-meta">{metaText}</span>
   </div>
   <div class="card-actions">
-    <button class="btn btn-primary" onclick={openFile}>Open</button>
-    <button class="btn btn-outline" onclick={showInFolder}>Show</button>
+    <button class="mini-btn primary" onclick={openFile}>
+      <i class="fas fa-play"></i> Open
+    </button>
+    <button class="mini-btn" onclick={showInFolder} title="Show in folder" aria-label="Show in folder">
+      <i class="fas fa-folder-open"></i>
+    </button>
   </div>
 </div>
 
 <style>
-  .card {
+  .media-card {
     background-color: var(--panel-bg);
-    border: 1px solid var(--border-color);
+    border: 2px solid var(--border-color);
     border-radius: 8px;
-    padding: 14px;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    transition: all 0.2s;
+    transition: border-color 0.15s;
   }
 
-  .card:hover {
-    box-shadow: var(--shadow-md);
+  .media-card:hover {
+    border-color: var(--text-secondary);
   }
 
   .thumb {
-    margin: -14px -14px 0;
-    aspect-ratio: 16 / 9;
+    position: relative;
+    aspect-ratio: 4 / 3;
     background-color: var(--light-bg);
-    overflow: hidden;
-    border-radius: 8px 8px 0 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-size: 1.6rem;
   }
 
   .thumb img {
@@ -79,80 +82,52 @@
     object-fit: cover;
   }
 
-  .card-header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .file-icon {
-    font-size: 1.4rem;
-    color: var(--primary-color);
-    flex-shrink: 0;
-  }
-
-  .file-info {
-    min-width: 0;
+  .media-info {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    padding: 6px 8px;
   }
 
-  .filename {
-    font-weight: 600;
-    font-size: 0.9rem;
+  .media-name {
+    font-size: 0.82rem;
     color: var(--text-primary);
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
-  .meta {
-    font-size: 0.75rem;
+  .media-meta {
+    font-size: 0.72rem;
     color: var(--text-muted);
-  }
-
-  .card-body {
-    display: flex;
-    gap: 12px;
-  }
-
-  .detail {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .card-actions {
     display: flex;
-    gap: 8px;
-    margin-top: auto;
+    gap: 6px;
+    padding: 0 8px 8px;
   }
 
-  .btn {
-    flex: 1;
-    padding: 8px 12px;
-    border: none;
-    border-radius: 6px;
-    font-size: 0.8rem;
-    font-weight: 500;
-    cursor: pointer;
-    color: white;
-    min-height: 36px;
-    transition: all 0.2s;
-  }
-
-  .btn:hover { transform: translateY(-1px); }
-  .btn:active { transform: translateY(0); }
-
-  .btn-primary { background-color: var(--primary-color); }
-  .btn-primary:hover { background-color: var(--primary-dark); }
-
-  .btn-outline {
-    background-color: transparent;
+  .mini-btn {
     border: 1px solid var(--border-color);
-    color: var(--text-secondary);
+    background: none;
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
   }
-  .btn-outline:hover {
-    border-color: var(--text-secondary);
+
+  .mini-btn.primary {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+    color: white;
+    flex: 1;
+    justify-content: center;
   }
 </style>

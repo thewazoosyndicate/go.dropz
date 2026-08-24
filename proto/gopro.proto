@@ -282,6 +282,8 @@ message CameraMediaItem {
   google.protobuf.Timestamp created_at = 4;
   string thumbnail_path = 5; // absolute local path, empty if not cached
   bool downloaded = 6;
+  string local_path = 7;   // absolute local path once downloaded
+  string preview_path = 8; // cached LRV proxy, empty until previewed
 }
 
 message GetCameraMediaRequest {
@@ -292,6 +294,15 @@ message GetCameraMediaResponse {
   repeated CameraMediaItem items = 1;
   google.protobuf.Timestamp updated_at = 2; // when the catalog was captured
 }
+
+// Ask for a clip's low-res LRV proxy to be fetched into the preview
+// cache, opening a short camera session on demand.
+message PreviewMediaRequest {
+  string camera_id = 1;
+  string camera_path = 2;
+}
+
+message PreviewMediaResponse {}
 
 message RequestMediaDownloadRequest {
   string camera_id = 1;

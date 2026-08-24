@@ -58,6 +58,7 @@ type wifiClient interface {
 	SetTurboTransfer(ctx context.Context, enable bool) error
 	DownloadVideos(ctx context.Context, destDir string, daysInPast int, fileNames []string, progress wifi.ProgressFunc) ([]string, error)
 	DownloadThumbnail(ctx context.Context, cameraPath, outPath string) error
+	DownloadLRV(ctx context.Context, cameraPath, outPath string) error
 }
 
 // SyncTask represents a camera sync task
@@ -79,7 +80,11 @@ type Coordinator struct {
 	ble          bleClient
 	log          *slog.Logger
 	activeTasks  map[string]*SyncTask
-	mutex        sync.RWMutex
+	// Open interactive preview sessions, keyed like activeTasks; a camera
+	// appears in both while its preview link is up.
+	previewSessions map[string]*previewSession
+	previewIdle     time.Duration // tests shrink the linger window
+	mutex           sync.RWMutex
 	notifier     func()
 	bleOperation ble.Operation
 	ctx          context.Context
@@ -98,15 +103,17 @@ func NewCoordinator(ctx context.Context, db *store.Store, bleManager bleClient, 
 		wifiFactory = func() wifiClient { return wifi.NewWiFiManager(log) }
 	}
 	return &Coordinator{
-		db:           db,
-		ble:          bleManager,
-		log:          log.With("component", "sync"),
-		activeTasks:  make(map[string]*SyncTask),
-		notifier:     notifier,
-		bleOperation: bleOperation,
-		ctx:          ctx,
-		syncSem:      make(chan struct{}, 1),
-		wifiFactory:  wifiFactory,
+		db:              db,
+		ble:             bleManager,
+		log:             log.With("component", "sync"),
+		activeTasks:     make(map[string]*SyncTask),
+		previewSessions: make(map[string]*previewSession),
+		previewIdle:     previewLinger,
+		notifier:        notifier,
+		bleOperation:    bleOperation,
+		ctx:             ctx,
+		syncSem:         make(chan struct{}, 1),
+		wifiFactory:     wifiFactory,
 	}
 }
 

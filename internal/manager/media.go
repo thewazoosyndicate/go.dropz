@@ -38,3 +38,8 @@ func (m *GoProManager) GetCameraMedia(cameraID string) ([]model.CameraMediaItem,
 func (m *GoProManager) RequestMediaDownload(cameraID string, fileNames []string) (*model.SyncQueueEntry, error) {
 	return m.syncCoordinator.RequestMediaDownload(cameraID, fileNames)
 }
+
+// PreviewMedia fetches a clip's LRV proxy into the preview cache.
+func (m *GoProManager) PreviewMedia(cameraID, cameraPath string) error {
+	return m.syncCoordinator.RequestPreview(cameraID, cameraPath)
+}

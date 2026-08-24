@@ -40,6 +40,7 @@ type Manager interface {
 	// Media browser
 	GetCameraMedia(cameraID string) ([]model.CameraMediaItem, time.Time, error)
 	RequestMediaDownload(cameraID string, fileNames []string) (*model.SyncQueueEntry, error)
+	PreviewMedia(cameraID, cameraPath string) error
 	// Camera settings (BLE)
 	GetCameraSettings(cameraID string) ([]model.CameraSetting, time.Time, error)
 	RefreshCameraSettings(cameraID string) ([]model.CameraSetting, time.Time, error)

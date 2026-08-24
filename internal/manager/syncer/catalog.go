@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/dropz/dropz/internal/model"
@@ -18,6 +19,7 @@ import (
 const (
 	catalogFileName  = ".catalog.json"
 	thumbnailDirName = ".thumbnails"
+	previewDirName   = ".previews"
 )
 
 type catalogEntry struct {
@@ -35,6 +37,13 @@ type catalogFile struct {
 // ThumbnailPath returns where a file's preview is stored locally.
 func ThumbnailPath(cameraFolder, name string) string {
 	return filepath.Join(cameraFolder, thumbnailDirName, name+".jpg")
+}
+
+// PreviewPath returns where a video's cached LRV proxy lives. The .mp4
+// extension keeps the system player association; LRV is a plain MP4.
+func PreviewPath(cameraFolder, localName string) string {
+	base := strings.TrimSuffix(localName, filepath.Ext(localName))
+	return filepath.Join(cameraFolder, previewDirName, base+".lrv.mp4")
 }
 
 // WriteCatalog persists the camera's media list (tmp + rename).
@@ -97,7 +106,13 @@ func ReadCatalog(cameraFolder string) ([]model.CameraMediaItem, time.Time, error
 		if thumb := ThumbnailPath(cameraFolder, local); fileExists(thumb) {
 			item.ThumbnailPath = thumb
 		}
-		item.Downloaded = fileExists(filepath.Join(cameraFolder, local))
+		if preview := PreviewPath(cameraFolder, local); fileExists(preview) {
+			item.PreviewPath = preview
+		}
+		if localPath := filepath.Join(cameraFolder, local); fileExists(localPath) {
+			item.Downloaded = true
+			item.LocalPath = localPath
+		}
 		items = append(items, item)
 	}
 	return items, cat.UpdatedAt, nil

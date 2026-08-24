@@ -161,6 +161,8 @@ type CameraMediaItem struct {
 	CreatedAt     time.Time `json:"created_at"`
 	ThumbnailPath string    `json:"thumbnail_path,omitempty"` // absolute local path
 	Downloaded    bool      `json:"downloaded"`
+	LocalPath     string    `json:"local_path,omitempty"`   // set when Downloaded
+	PreviewPath   string    `json:"preview_path,omitempty"` // cached LRV proxy
 }
 
 // Group represents a collection of cameras that can be managed together

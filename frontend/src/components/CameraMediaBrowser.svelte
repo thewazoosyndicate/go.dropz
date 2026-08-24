@@ -1,7 +1,8 @@
 <script>
-  import { fetchCameraMedia, requestMediaDownload } from '../lib/grpc/actions.js';
+  import { fetchCameraMedia, requestMediaDownload, previewMedia } from '../lib/grpc/actions.js';
   import { addToast, addLog } from '../lib/stores/ui.svelte.js';
   import { getSyncQueue } from '../lib/stores/sync.svelte.js';
+  const { ipcRenderer } = window.require('electron');
 
   let { cameraId, cameraName } = $props();
 
@@ -46,6 +47,30 @@
     hadSync = syncing;
   });
 
+  // Preview flow: the session streams "Preview ready" when an LRV lands;
+  // reload so the item gains its previewPath, then auto-open the one the
+  // user asked for.
+  let pendingPreview = $state(null);
+  let lastOp = $state('');
+  $effect(() => {
+    const op = syncEntry?.currentOperation || '';
+    if (op === lastOp) return;
+    lastOp = op;
+    if (op === 'Preview ready') load();
+    if (op === 'Preview failed' && pendingPreview) {
+      pendingPreview = null;
+      addToast('Preview failed, see logs', 'error');
+    }
+  });
+  $effect(() => {
+    if (!pendingPreview) return;
+    const item = items.find(i => i.cameraPath === pendingPreview);
+    if (item?.previewPath) {
+      pendingPreview = null;
+      ipcRenderer.send('desktop-open', item.previewPath);
+    }
+  });
+
   async function load() {
     loading = true;
     loadError = '';
@@ -75,6 +100,24 @@
     } catch (e) {
       addToast('Failed to queue download', 'error');
       addLog(`Queue download failed: ${e.message}`, 'error');
+    }
+  }
+
+  // Only GX/GH videos carry an LRV proxy on the card
+  function canPreview(item) {
+    return /^G[XH].*\.MP4$/.test(item.name);
+  }
+
+  async function preview(item, ev) {
+    ev.stopPropagation();
+    if (item.localPath) return ipcRenderer.send('desktop-open', item.localPath);
+    if (item.previewPath) return ipcRenderer.send('desktop-open', item.previewPath);
+    try {
+      await previewMedia(cameraId, item.cameraPath);
+      pendingPreview = item.cameraPath;
+      addToast('Fetching preview from camera...', 'info');
+    } catch (e) {
+      addToast(e.message || 'Preview failed', 'error');
     }
   }
 
@@ -157,6 +200,15 @@
               <span class="state-badge downloaded-badge"><i class="fas fa-check"></i></span>
             {:else if selected[item.cameraPath]}
               <span class="state-badge selected-badge"><i class="fas fa-check"></i></span>
+            {/if}
+            {#if canPreview(item)}
+              <span class="preview-btn" role="button" tabindex="0"
+                    class:fetching={pendingPreview === item.cameraPath}
+                    title={item.localPath ? 'Play local file' : item.previewPath ? 'Play cached preview' : 'Preview from camera'}
+                    onclick={(e) => preview(item, e)}
+                    onkeydown={(e) => e.key === 'Enter' && preview(item, e)}>
+                <i class="fas {pendingPreview === item.cameraPath ? 'fa-spinner fa-spin' : 'fa-play'}"></i>
+              </span>
             {/if}
           </div>
           <div class="media-info">
@@ -296,6 +348,25 @@
 
   .downloaded-badge { background-color: var(--secondary-color); }
   .selected-badge { background-color: var(--primary-color); }
+
+  .preview-btn {
+    position: absolute;
+    bottom: 6px;
+    left: 6px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    color: white;
+    background-color: rgba(0, 0, 0, 0.55);
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .media-card:hover .preview-btn, .preview-btn.fetching { opacity: 1; }
+  .preview-btn:hover { background-color: var(--primary-color); }
 
   .media-info {
     display: flex;

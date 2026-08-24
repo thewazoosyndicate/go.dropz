@@ -131,6 +131,8 @@ func toProtoCameraMediaItem(item model.CameraMediaItem) *protocol.CameraMediaIte
 		CreatedAt:     timestamppb.New(item.CreatedAt),
 		ThumbnailPath: item.ThumbnailPath,
 		Downloaded:    item.Downloaded,
+		LocalPath:     item.LocalPath,
+		PreviewPath:   item.PreviewPath,
 	}
 }
 

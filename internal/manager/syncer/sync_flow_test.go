@@ -74,6 +74,9 @@ func (f *fakeWiFi) DownloadVideos(_ context.Context, destDir string, _ int, file
 	return []string{"GX010001.MP4"}, nil
 }
 func (f *fakeWiFi) DownloadThumbnail(context.Context, string, string) error { return nil }
+func (f *fakeWiFi) DownloadLRV(_ context.Context, _, outPath string) error {
+	return os.WriteFile(outPath, []byte("lrv"), 0644)
+}
 
 func newFlowCoordinator(t *testing.T) (*Coordinator, *fakeBLE, *fakeWiFi, *SyncTask) {
 	t.Helper()

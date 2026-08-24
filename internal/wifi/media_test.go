@@ -5,6 +5,24 @@ import (
 	"testing"
 )
 
+func TestLRVCameraPath(t *testing.T) {
+	cases := map[string]struct {
+		want string
+		ok   bool
+	}{
+		"100GOPRO/GX019795.MP4": {"100GOPRO/GL019795.LRV", true},
+		"101GOPRO/GH010002.MP4": {"101GOPRO/GL010002.LRV", true},
+		"100GOPRO/G0010001.JPG": {"", false},
+		"100GOPRO/GL019795.LRV": {"", false},
+	}
+	for in, c := range cases {
+		got, ok := LRVCameraPath(in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("LRVCameraPath(%q) = %q,%v want %q,%v", in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
 // HERO13 cards reuse names across GOPRO directories after folder rollover;
 // duplicated names get the directory prefix, unique ones stay bare.
 func TestLocalMediaNameDisambiguatesDuplicates(t *testing.T) {

@@ -453,9 +453,23 @@ export function fetchCameraMedia(cameraId) {
           createdAt: i.getCreatedAt()?.toDate(),
           thumbnailPath: i.getThumbnailPath(),
           downloaded: i.getDownloaded(),
+          localPath: i.getLocalPath(),
+          previewPath: i.getPreviewPath(),
         })),
       });
     });
+  });
+}
+
+// Fetch a clip's LRV proxy into the preview cache (opens a short camera
+// session on demand); resolves when the request is accepted, not done.
+export function previewMedia(cameraId, cameraPath) {
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.PreviewMediaRequest();
+    request.setCameraId(cameraId);
+    request.setCameraPath(cameraPath);
+    client.previewMedia(request, (error) => (error ? reject(error) : resolve()));
   });
 }
 

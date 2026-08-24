@@ -287,6 +287,54 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 	return downloadedFiles, nil
 }
 
+// LRVCameraPath returns the camera path of a video's low-res proxy:
+// GoPro stores GL<id>.LRV beside GX/GH<id>.MP4. false when the file has
+// no proxy (photos, other formats).
+func LRVCameraPath(cameraPath string) (string, bool) {
+	dir, name := filepath.Split(cameraPath)
+	if !strings.HasSuffix(name, ".MP4") ||
+		(!strings.HasPrefix(name, "GX") && !strings.HasPrefix(name, "GH")) {
+		return "", false
+	}
+	return dir + "GL" + strings.TrimSuffix(name[2:], ".MP4") + ".LRV", true
+}
+
+// DownloadLRV fetches a video's LRV proxy to outPath (tmp + rename so
+// readers never see partials). LRVs are ~5% of the clip; no resume.
+func (m *WiFiManager) DownloadLRV(ctx context.Context, cameraPath, outPath string) error {
+	lrvPath, ok := LRVCameraPath(cameraPath)
+	if !ok {
+		return fmt.Errorf("no LRV proxy for %s", cameraPath)
+	}
+	url := fmt.Sprintf("%s/videos/DCIM/%s", GoProBaseURL, lrvPath)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := downloadClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("LRV request failed: %s", resp.Status)
+	}
+	tmp := outPath + ".partial"
+	f, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, outPath)
+}
+
 // DownloadThumbnail fetches the camera-generated preview JPEG for one file
 // and writes it to outPath (tmp + rename so readers never see partials).
 func (m *WiFiManager) DownloadThumbnail(ctx context.Context, cameraPath, outPath string) error {

@@ -39,3 +39,14 @@ func (s *DropzServer) RequestMediaDownload(ctx context.Context, req *protocol.Re
 	}
 	return &protocol.RequestMediaDownloadResponse{Entry: toProtoSyncQueueEntry(entry)}, nil
 }
+
+// PreviewMedia fetches one clip's LRV proxy into the preview cache.
+func (s *DropzServer) PreviewMedia(ctx context.Context, req *protocol.PreviewMediaRequest) (*protocol.PreviewMediaResponse, error) {
+	if req.GetCameraId() == "" || req.GetCameraPath() == "" {
+		return nil, status.Error(codes.InvalidArgument, "camera_id and camera_path required")
+	}
+	if err := s.manager.PreviewMedia(req.GetCameraId(), req.GetCameraPath()); err != nil {
+		return nil, rpcError(err)
+	}
+	return &protocol.PreviewMediaResponse{}, nil
+}

@@ -194,8 +194,9 @@ func toProtoGroup(g *model.Group) *protocol.Group {
 		Id:        g.ID,
 		Name:      g.Name,
 		CameraIds: make([]string, len(g.CameraIDs)),
-		CreatedAt: timestamppb.New(g.CreatedAt),
-		UpdatedAt: timestamppb.New(g.UpdatedAt),
+		CreatedAt:  timestamppb.New(g.CreatedAt),
+		UpdatedAt:  timestamppb.New(g.UpdatedAt),
+		SyncPaused: g.SyncPaused,
 	}
 	copy(protoGroup.CameraIds, g.CameraIDs)
 	return protoGroup

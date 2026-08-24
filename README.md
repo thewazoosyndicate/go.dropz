@@ -58,6 +58,22 @@ Electron spawns it with `--log-format=json` and parses each line for the diagnos
 Verbosity has one knob: the `log_level` setting (diagnostics dropdown or gRPC), applied live.
 Use `trace` to see scan cycles and download resume detail.
 
+## Groups
+
+A group is the day's rig. Cameras belong to at most one group and stay
+managed whatever the group does; the Cameras tab shows one section per
+group, paused groups after active ones, ungrouped cameras last.
+
+```
+Pause auto-sync        Members stay visible, get no status checks and no
+                       auto-sync; a manual Sync still runs
+Use only this group    Resumes this group and pauses every other one:
+                       the rig switch, without unmanaging anything
+Add cameras in range   Pulls every managed camera that is switched on
+                       nearby into the group
+New group              From cameras in range, from all managed, or empty
+```
+
 ## Sync visibility
 
 Every sync is visible at three depths, all fed by the same queue stream:

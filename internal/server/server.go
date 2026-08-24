@@ -39,6 +39,8 @@ type Manager interface {
 	DeleteGroup(groupID string) error
 	LoadGroup(groupID string) error
 	SaveManagedAsGroup(name string) (*model.Group, error)
+	MoveCamerasToGroup(cameraIDs []string, groupID string) ([]*model.Group, error)
+	SetGroupSync(groupID string, paused, exclusive bool) ([]*model.Group, error)
 	// Media browser
 	GetCameraMedia(cameraID string) ([]model.CameraMediaItem, time.Time, error)
 	RequestMediaDownload(cameraID string, fileNames []string) (*model.SyncQueueEntry, error)
@@ -612,6 +614,34 @@ func (s *DropzServer) SaveManagedAsGroup(ctx context.Context, req *protocol.Save
 
 	s.NotifyUpdate()
 	return toProtoGroup(group), nil
+}
+
+func toProtoGroups(groups []*model.Group) *protocol.GetGroupsResponse {
+	out := make([]*protocol.Group, len(groups))
+	for i, g := range groups {
+		out[i] = toProtoGroup(g)
+	}
+	return &protocol.GetGroupsResponse{Groups: out}
+}
+
+// MoveCamerasToGroup implements the MoveCamerasToGroup RPC method
+func (s *DropzServer) MoveCamerasToGroup(ctx context.Context, req *protocol.MoveCamerasToGroupRequest) (*protocol.GetGroupsResponse, error) {
+	groups, err := s.manager.MoveCamerasToGroup(req.CameraIds, req.GroupId)
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	s.NotifyUpdate()
+	return toProtoGroups(groups), nil
+}
+
+// SetGroupSync implements the SetGroupSync RPC method
+func (s *DropzServer) SetGroupSync(ctx context.Context, req *protocol.SetGroupSyncRequest) (*protocol.GetGroupsResponse, error) {
+	groups, err := s.manager.SetGroupSync(req.GroupId, req.Paused, req.Exclusive)
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	s.NotifyUpdate()
+	return toProtoGroups(groups), nil
 }
 
 // GetVideos implements the GetVideos RPC method

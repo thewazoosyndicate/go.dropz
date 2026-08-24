@@ -178,13 +178,28 @@ message SetCameraAliasResponse {
   CameraWithState camera = 1;
 }
 
-// Group of cameras
+// Group of cameras: the day's rig. A camera belongs to at most one group.
 message Group {
   string id = 1;
   string name = 2;
   repeated string camera_ids = 3;  // References to managed cameras
   google.protobuf.Timestamp created_at = 4;
   google.protobuf.Timestamp updated_at = 5;
+  // Paused groups keep their cameras managed and visible but never
+  // auto-sync; manual syncs still run.
+  bool sync_paused = 6;
+}
+
+message MoveCamerasToGroupRequest {
+  repeated string camera_ids = 1;
+  string group_id = 2;  // empty removes the cameras from their group
+}
+
+message SetGroupSyncRequest {
+  string group_id = 1;
+  bool paused = 2;
+  // exclusive: resume this group and pause every other one (switch rig)
+  bool exclusive = 3;
 }
 
 // Request to get all discovered cameras

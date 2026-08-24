@@ -6,6 +6,8 @@
   or the user presses Retry. A bounded retry (once the camera is idle and in
   range, with backoff) would make the card copy "retries on its own" true.
 - Nearby panel could collapse to a rail once at least one camera is managed.
+- Groups: drag a card between sections; library source chips per group;
+  LoadGroup rpc is unused by the UI and can go once nothing else calls it.
 - Tray icon with the sync state, for the hands-off case.
 - CI actions still target Node 20 (deprecation warning in the tag build).
 

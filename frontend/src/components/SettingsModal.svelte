@@ -198,7 +198,7 @@
           </div>
 
           <div class="actions">
-            <span class="shortcut-hint">Ctrl+1..4 switch tabs, Ctrl+, opens settings</span>
+            <span class="shortcut-hint">Ctrl+1..3 switch tabs, Ctrl+, opens settings</span>
             <Button variant={confirmingReset ? 'danger' : 'danger-outline'} icon="fa-undo" onclick={handleReset}>
               {confirmingReset ? 'Confirm reset' : 'Reset all'}
             </Button>

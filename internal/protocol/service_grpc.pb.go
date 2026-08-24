@@ -40,6 +40,8 @@ const (
 	DropzService_DeleteGroup_FullMethodName            = "/dropz.DropzService/DeleteGroup"
 	DropzService_LoadGroup_FullMethodName              = "/dropz.DropzService/LoadGroup"
 	DropzService_SaveManagedAsGroup_FullMethodName     = "/dropz.DropzService/SaveManagedAsGroup"
+	DropzService_MoveCamerasToGroup_FullMethodName     = "/dropz.DropzService/MoveCamerasToGroup"
+	DropzService_SetGroupSync_FullMethodName           = "/dropz.DropzService/SetGroupSync"
 	DropzService_GetVideos_FullMethodName              = "/dropz.DropzService/GetVideos"
 	DropzService_GetCameraMedia_FullMethodName         = "/dropz.DropzService/GetCameraMedia"
 	DropzService_RequestMediaDownload_FullMethodName   = "/dropz.DropzService/RequestMediaDownload"
@@ -87,6 +89,8 @@ type DropzServiceClient interface {
 	DeleteGroup(ctx context.Context, in *DeleteGroupRequest, opts ...grpc.CallOption) (*OperationResponse, error)
 	LoadGroup(ctx context.Context, in *LoadGroupRequest, opts ...grpc.CallOption) (*LoadGroupResponse, error)
 	SaveManagedAsGroup(ctx context.Context, in *SaveManagedAsGroupRequest, opts ...grpc.CallOption) (*Group, error)
+	MoveCamerasToGroup(ctx context.Context, in *MoveCamerasToGroupRequest, opts ...grpc.CallOption) (*GetGroupsResponse, error)
+	SetGroupSync(ctx context.Context, in *SetGroupSyncRequest, opts ...grpc.CallOption) (*GetGroupsResponse, error)
 	// Video management
 	GetVideos(ctx context.Context, in *GetVideosRequest, opts ...grpc.CallOption) (*GetVideosResponse, error)
 	// Media browser: cached per-camera catalogs with selective download
@@ -348,6 +352,26 @@ func (c *dropzServiceClient) SaveManagedAsGroup(ctx context.Context, in *SaveMan
 	return out, nil
 }
 
+func (c *dropzServiceClient) MoveCamerasToGroup(ctx context.Context, in *MoveCamerasToGroupRequest, opts ...grpc.CallOption) (*GetGroupsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetGroupsResponse)
+	err := c.cc.Invoke(ctx, DropzService_MoveCamerasToGroup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dropzServiceClient) SetGroupSync(ctx context.Context, in *SetGroupSyncRequest, opts ...grpc.CallOption) (*GetGroupsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetGroupsResponse)
+	err := c.cc.Invoke(ctx, DropzService_SetGroupSync_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *dropzServiceClient) GetVideos(ctx context.Context, in *GetVideosRequest, opts ...grpc.CallOption) (*GetVideosResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetVideosResponse)
@@ -492,6 +516,8 @@ type DropzServiceServer interface {
 	DeleteGroup(context.Context, *DeleteGroupRequest) (*OperationResponse, error)
 	LoadGroup(context.Context, *LoadGroupRequest) (*LoadGroupResponse, error)
 	SaveManagedAsGroup(context.Context, *SaveManagedAsGroupRequest) (*Group, error)
+	MoveCamerasToGroup(context.Context, *MoveCamerasToGroupRequest) (*GetGroupsResponse, error)
+	SetGroupSync(context.Context, *SetGroupSyncRequest) (*GetGroupsResponse, error)
 	// Video management
 	GetVideos(context.Context, *GetVideosRequest) (*GetVideosResponse, error)
 	// Media browser: cached per-camera catalogs with selective download
@@ -578,6 +604,12 @@ func (UnimplementedDropzServiceServer) LoadGroup(context.Context, *LoadGroupRequ
 }
 func (UnimplementedDropzServiceServer) SaveManagedAsGroup(context.Context, *SaveManagedAsGroupRequest) (*Group, error) {
 	return nil, status.Error(codes.Unimplemented, "method SaveManagedAsGroup not implemented")
+}
+func (UnimplementedDropzServiceServer) MoveCamerasToGroup(context.Context, *MoveCamerasToGroupRequest) (*GetGroupsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MoveCamerasToGroup not implemented")
+}
+func (UnimplementedDropzServiceServer) SetGroupSync(context.Context, *SetGroupSyncRequest) (*GetGroupsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetGroupSync not implemented")
 }
 func (UnimplementedDropzServiceServer) GetVideos(context.Context, *GetVideosRequest) (*GetVideosResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetVideos not implemented")
@@ -990,6 +1022,42 @@ func _DropzService_SaveManagedAsGroup_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DropzService_MoveCamerasToGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MoveCamerasToGroupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).MoveCamerasToGroup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_MoveCamerasToGroup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).MoveCamerasToGroup(ctx, req.(*MoveCamerasToGroupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DropzService_SetGroupSync_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetGroupSyncRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).SetGroupSync(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_SetGroupSync_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).SetGroupSync(ctx, req.(*SetGroupSyncRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _DropzService_GetVideos_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetVideosRequest)
 	if err := dec(in); err != nil {
@@ -1266,6 +1334,14 @@ var DropzService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SaveManagedAsGroup",
 			Handler:    _DropzService_SaveManagedAsGroup_Handler,
+		},
+		{
+			MethodName: "MoveCamerasToGroup",
+			Handler:    _DropzService_MoveCamerasToGroup_Handler,
+		},
+		{
+			MethodName: "SetGroupSync",
+			Handler:    _DropzService_SetGroupSync_Handler,
 		},
 		{
 			MethodName: "GetVideos",

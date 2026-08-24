@@ -69,9 +69,10 @@
   let tickSpacing = $derived(keyframes.length > 1 && timeline ? timeline.clientWidth / (duration / (keyframes[1] - keyframes[0])) : 0);
   let showTicks = $derived(tickSpacing >= 5);
 
-  // Reset per clip
+  // Reset per clip, and take focus so the shortcuts work at once
   $effect(() => {
     if (!target) return;
+    setTimeout(() => player?.focus(), 0);
     trimming = false;
     saved = null;
     saving = false;
@@ -338,10 +339,11 @@
 <svelte:document onfullscreenchange={onFullscreenChange} />
 
 {#if target}
-  <div class="player-overlay" onclick={closePlayer} role="presentation">
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="player-overlay" onclick={(e) => { if (e.target === e.currentTarget) closePlayer(); }}>
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class="player" class:fullscreen class:idle bind:this={player}
-         onclick={(e) => e.stopPropagation()} onmousemove={wake} onpointerdown={wake}
+    <div class="player" class:fullscreen class:idle bind:this={player} tabindex="-1"
+         onmousemove={wake} onpointerdown={wake}
          role="dialog" aria-modal="true" aria-label={target.title}>
       <div class="player-header">
         <span class="player-title">{target.title}</span>

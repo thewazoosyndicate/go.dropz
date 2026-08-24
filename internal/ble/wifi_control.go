@@ -88,6 +88,39 @@ func (m *Manager) WaitForWiFiAPReady(macAddress string, timeout time.Duration) e
 	}
 }
 
+const mediaCountsReadyPoll = time.Second
+
+// QueryStatusesWhenReady polls the given status IDs until the media counts
+// parse as valid values or the timeout passes, returning the last response.
+// HERO13+ answer with sentinel counts until the SD card is readable shortly
+// after wake; the sentinel is the camera's own not-ready signal, so poll it
+// like WaitForWiFiAPReady polls AP Mode. At the deadline the last response
+// is returned anyway: callers guard against sentinels themselves.
+func (m *Manager) QueryStatusesWhenReady(macAddress string, statusIDs []byte, timeout time.Duration) (map[byte][]byte, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		statuses, err := m.QueryStatuses(macAddress, statusIDs)
+		if err != nil {
+			return nil, err
+		}
+		if !countsAreSentinel(statuses) || time.Now().After(deadline) {
+			return statuses, nil
+		}
+		logging.Trace(m.log, "Media counts not ready, waiting", "ble_addr", macAddress)
+		time.Sleep(mediaCountsReadyPoll)
+	}
+}
+
+// countsAreSentinel reports post-wake sentinel media counts (HERO13+).
+func countsAreSentinel(statuses map[byte][]byte) bool {
+	for _, id := range []byte{StatusNumTotalPhotos, StatusNumTotalVideos} {
+		if v, ok := statuses[id]; ok && ParseIntStatus(v) < 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // GetHardwareInfo retrieves hardware information from the camera
 func (m *Manager) GetHardwareInfo(macAddress string) (*HardwareInfo, error) {
 	response, err := m.sendCommand(macAddress, CmdGetHardwareInfo, nil)

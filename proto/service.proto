@@ -48,6 +48,7 @@ service DropzService {
   rpc GetCameraMedia(GetCameraMediaRequest) returns (GetCameraMediaResponse);
   rpc RequestMediaDownload(RequestMediaDownloadRequest) returns (RequestMediaDownloadResponse);
   rpc PreviewMedia(PreviewMediaRequest) returns (PreviewMediaResponse);
+  rpc PreviewVideo(PreviewVideoRequest) returns (PreviewVideoResponse);
   
   // Configuration & Settings
   rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);

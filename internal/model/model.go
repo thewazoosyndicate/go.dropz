@@ -187,6 +187,7 @@ type VideoFile struct {
 	DurationSeconds int32     `json:"duration_seconds"`
 	ThumbnailPath   string    `json:"thumbnail_path"`
 	HasProcessed    bool      `json:"has_processed"`
+	PreviewPath     string    `json:"preview_path,omitempty"` // in-app playable WebM
 }
 
 // Config represents the system-wide configuration settings

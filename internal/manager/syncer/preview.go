@@ -111,7 +111,7 @@ func (c *Coordinator) RequestPreview(cameraID, cameraPath string) error {
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
-			c.performLocalPreview(task, src, folder, local)
+			c.performLocalPreview(task, src)
 		}()
 		return nil
 	}
@@ -275,7 +275,7 @@ func (c *Coordinator) fetchPreview(run *syncRun, previewDir, cameraPath string) 
 }
 
 // performLocalPreview transcodes an already-downloaded clip; no radio.
-func (c *Coordinator) performLocalPreview(task *SyncTask, src, folder, local string) {
+func (c *Coordinator) performLocalPreview(task *SyncTask, src string) {
 	defer func() {
 		c.mutex.Lock()
 		delete(c.activeTasks, task.CameraID)
@@ -284,22 +284,79 @@ func (c *Coordinator) performLocalPreview(task *SyncTask, src, folder, local str
 		c.notifier()
 	}()
 
-	ctx, cancel := context.WithTimeout(task.Ctx, 10*time.Minute)
-	defer cancel()
-	out := PreviewPath(folder, local)
-	if err := os.MkdirAll(filepath.Dir(out), 0755); err != nil {
-		c.log.Warn("Cannot create preview dir", "err", err)
-		return
-	}
-	if err := c.transcode(ctx, src, out); err != nil {
-		c.log.Warn("Local preview transcode failed", "camera", task.CameraName, "src", src, "err", err)
+	if _, err := c.GeneratePreviewFile(src); err != nil {
 		c.updateProgress(task, "Preview failed", 100)
 		return
 	}
-	c.log.Info("Preview generated from local file", "camera", task.CameraName, "src", src)
 	// The label streams before the defer removes the entry; either signal
 	// (label or entry removal) makes the browser reload and open it.
 	c.updateProgress(task, "Preview ready", 100)
+}
+
+// GeneratePreviewFile transcodes a local clip into its cached preview
+// and returns the preview path. Synchronous; concurrent requests for the
+// same file share one transcode.
+func (c *Coordinator) GeneratePreviewFile(src string) (string, error) {
+	out := PreviewPath(filepath.Dir(src), filepath.Base(src))
+	if fileExists(out) {
+		return out, nil
+	}
+	// Prefer the LRV sidecar fetched at sync time: transcoding 480p HEVC
+	// beats decoding the full-res original by ~20x. Consumed on success.
+	sidecar := rawLRVPath(filepath.Dir(src), filepath.Base(src))
+	if fileExists(sidecar) {
+		src = sidecar
+	} else {
+		sidecar = ""
+	}
+
+	c.mutex.Lock()
+	if c.previewGen == nil {
+		c.previewGen = make(map[string]*previewGen)
+	}
+	g, running := c.previewGen[src]
+	if !running {
+		g = &previewGen{done: make(chan struct{})}
+		c.previewGen[src] = g
+	}
+	c.mutex.Unlock()
+
+	if running {
+		<-g.done
+		if g.err != nil {
+			return "", g.err
+		}
+		return out, nil
+	}
+
+	defer func() {
+		c.mutex.Lock()
+		delete(c.previewGen, src)
+		c.mutex.Unlock()
+		close(g.done)
+	}()
+
+	ctx, cancel := context.WithTimeout(c.ctx, 15*time.Minute)
+	defer cancel()
+	if err := os.MkdirAll(filepath.Dir(out), 0755); err != nil {
+		g.err = err
+		return "", err
+	}
+	c.log.Info("Generating library preview", "src", src)
+	if err := c.transcode(ctx, src, out); err != nil {
+		c.log.Warn("Library preview transcode failed", "src", src, "err", err)
+		g.err = err
+		return "", err
+	}
+	if sidecar != "" {
+		_ = os.Remove(sidecar)
+	}
+	return out, nil
+}
+
+type previewGen struct {
+	done chan struct{}
+	err  error
 }
 
 // localNameFor resolves a camera path to its local media name via the

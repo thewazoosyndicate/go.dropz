@@ -50,4 +50,5 @@ export const proto = {
   GetCameraMediaRequest: goProProto.GetCameraMediaRequest,
   RequestMediaDownloadRequest: goProProto.RequestMediaDownloadRequest,
   PreviewMediaRequest: goProProto.PreviewMediaRequest,
+  PreviewVideoRequest: goProProto.PreviewVideoRequest,
 };

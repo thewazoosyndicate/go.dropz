@@ -131,7 +131,8 @@ proto.dropz.VideoFile.toObject = function(includeInstance, msg) {
     mimeType: jspb.Message.getFieldWithDefault(msg, 8, ""),
     durationSeconds: jspb.Message.getFieldWithDefault(msg, 9, 0),
     thumbnailPath: jspb.Message.getFieldWithDefault(msg, 10, ""),
-    hasProcessed: jspb.Message.getBooleanFieldWithDefault(msg, 11, false)
+    hasProcessed: jspb.Message.getBooleanFieldWithDefault(msg, 11, false),
+    previewPath: jspb.Message.getFieldWithDefault(msg, 12, "")
   };
 
   if (includeInstance) {
@@ -213,6 +214,10 @@ proto.dropz.VideoFile.deserializeBinaryFromReader = function(msg, reader) {
     case 11:
       var value = /** @type {boolean} */ (reader.readBool());
       msg.setHasProcessed(value);
+      break;
+    case 12:
+      var value = /** @type {string} */ (reader.readString());
+      msg.setPreviewPath(value);
       break;
     default:
       reader.skipField();
@@ -319,6 +324,13 @@ proto.dropz.VideoFile.serializeBinaryToWriter = function(message, writer) {
   if (f) {
     writer.writeBool(
       11,
+      f
+    );
+  }
+  f = message.getPreviewPath();
+  if (f.length > 0) {
+    writer.writeString(
+      12,
       f
     );
   }
@@ -558,6 +570,24 @@ proto.dropz.VideoFile.prototype.getHasProcessed = function() {
  */
 proto.dropz.VideoFile.prototype.setHasProcessed = function(value) {
   return jspb.Message.setProto3BooleanField(this, 11, value);
+};
+
+
+/**
+ * optional string preview_path = 12;
+ * @return {string}
+ */
+proto.dropz.VideoFile.prototype.getPreviewPath = function() {
+  return /** @type {string} */ (jspb.Message.getFieldWithDefault(this, 12, ""));
+};
+
+
+/**
+ * @param {string} value
+ * @return {!proto.dropz.VideoFile} returns this
+ */
+proto.dropz.VideoFile.prototype.setPreviewPath = function(value) {
+  return jspb.Message.setProto3StringField(this, 12, value);
 };
 
 

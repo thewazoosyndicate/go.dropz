@@ -249,6 +249,20 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 			}
 			continue
 		}
+		// The LRV sidecar (~5% of the clip) makes later in-app previews
+		// cheap: transcoding it beats decoding the 4K original by ~20x.
+		// Best effort; the preview flow falls back to the original.
+		if _, hasLRV := LRVCameraPath(media.CameraPath); hasLRV {
+			lrvOut := LRVSidecarPath(destDir, localName(media))
+			if exists, _ := m.fileExistsWithSize(lrvOut, 0); !exists {
+				if err := os.MkdirAll(filepath.Dir(lrvOut), 0755); err == nil {
+					if err := m.DownloadLRV(ctx, media.CameraPath, lrvOut); err != nil {
+						logging.Trace(m.log, "LRV sidecar fetch failed", "file", media.Name, "err", err)
+					}
+				}
+			}
+		}
+
 		// Throughput per file: the number that settles turbo-vs-not debates
 		bytesDone += media.Size // stat below corrects unknown (0) sizes
 		if fi, statErr := os.Stat(outputPath); statErr == nil {
@@ -285,6 +299,17 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 		m.log.Info("Download finished", "downloaded", actualDownloads, "skipped", skippedCount)
 	}
 	return downloadedFiles, nil
+}
+
+// PreviewsDirName is the per-camera cache of preview material: raw LRV
+// sidecars fetched at sync time and the transcoded WebMs played in-app.
+const PreviewsDirName = ".previews"
+
+// LRVSidecarPath is where a clip's raw LRV lands next to its download;
+// consumed (transcoded, then deleted) on first play.
+func LRVSidecarPath(destDir, localName string) string {
+	base := strings.TrimSuffix(localName, filepath.Ext(localName))
+	return filepath.Join(destDir, PreviewsDirName, base+".lrv")
 }
 
 // LRVCameraPath returns the camera path of a video's low-res proxy:

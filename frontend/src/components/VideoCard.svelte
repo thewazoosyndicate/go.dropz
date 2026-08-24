@@ -2,10 +2,18 @@
   // shell.openPath / showItemInFolder can block the UI on Linux;
   // main runs them detached instead (desktop-open / desktop-show)
   const { ipcRenderer } = window.require('electron');
+  import { previewVideo } from '../lib/grpc/actions.js';
+  import { addToast, openPlayer } from '../lib/stores/ui.svelte.js';
 
   let { video, cameraName } = $props();
 
-  let icon = $derived(video.mimeType?.startsWith('image/') ? 'fa-image' : 'fa-film');
+  let isImage = $derived(video.mimeType?.startsWith('image/'));
+  let icon = $derived(isImage ? 'fa-image' : 'fa-film');
+  // Local cache of a preview generated this session; the store refreshes
+  // previewPath only on the next library reload.
+  let generatedPath = $state(null);
+  let generating = $state(false);
+  let playablePath = $derived(generatedPath || video.previewPath);
 
   let sizeText = $derived(formatSize(video.sizeBytes));
   let dateText = $derived(video.createdAt ? video.createdAt.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '');
@@ -25,6 +33,21 @@
   function showInFolder() {
     ipcRenderer.send('desktop-show', video.path);
   }
+
+  // Full-res camera files are HEVC, which the renderer cannot decode;
+  // playback goes through the transcoded WebM preview.
+  async function play() {
+    if (playablePath) return openPlayer(playablePath, video.name);
+    generating = true;
+    try {
+      generatedPath = await previewVideo(video.path);
+      openPlayer(generatedPath, video.name);
+    } catch (e) {
+      addToast(e.message || 'Preview generation failed', 'error');
+    } finally {
+      generating = false;
+    }
+  }
 </script>
 
 <!-- Mirrors CameraMediaBrowser's media-card so both library tabs read the same -->
@@ -41,9 +64,17 @@
     <span class="media-meta">{metaText}</span>
   </div>
   <div class="card-actions">
-    <button class="mini-btn primary" onclick={openFile}>
-      <i class="fas fa-play"></i> Open
-    </button>
+    {#if isImage}
+      <button class="mini-btn primary" onclick={openFile}>
+        <i class="fas fa-image"></i> Open
+      </button>
+    {:else}
+      <button class="mini-btn primary" onclick={play} disabled={generating}
+              title={playablePath ? 'Play preview' : 'Generate and play preview'}>
+        <i class="fas {generating ? 'fa-spinner fa-spin' : 'fa-play'}"></i>
+        {generating ? 'Preparing...' : 'Play'}
+      </button>
+    {/if}
     <button class="mini-btn" onclick={showInFolder} title="Show in folder" aria-label="Show in folder">
       <i class="fas fa-folder-open"></i>
     </button>

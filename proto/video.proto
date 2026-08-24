@@ -18,6 +18,7 @@ message VideoFile {
   int32 duration_seconds = 9;
   string thumbnail_path = 10;
   bool has_processed = 11;
+  string preview_path = 12; // cached in-app playable WebM, empty until generated
 }
 
 // Request to get all downloaded videos

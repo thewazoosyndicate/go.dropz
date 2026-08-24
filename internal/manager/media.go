@@ -2,7 +2,9 @@ package manager
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/dropz/dropz/internal/manager/syncer"
@@ -42,4 +44,22 @@ func (m *GoProManager) RequestMediaDownload(cameraID string, fileNames []string)
 // PreviewMedia fetches a clip's LRV proxy into the preview cache.
 func (m *GoProManager) PreviewMedia(cameraID, cameraPath string) error {
 	return m.syncCoordinator.RequestPreview(cameraID, cameraPath)
+}
+
+// PreviewVideo generates (or reuses) the in-app playable preview of a
+// library file. Synchronous; long clips take a while.
+func (m *GoProManager) PreviewVideo(videoPath string) (string, error) {
+	dest := m.db.GetConfig().DestinationFolder
+	if dest == "" {
+		return "", fmt.Errorf("no destination folder configured")
+	}
+	// The RPC hands us a path; only files inside the library may be read
+	clean := filepath.Clean(videoPath)
+	if !strings.HasPrefix(clean, filepath.Clean(dest)+string(filepath.Separator)) {
+		return "", fmt.Errorf("path outside the library: %s", videoPath)
+	}
+	if fi, err := os.Stat(clean); err != nil || fi.IsDir() {
+		return "", fmt.Errorf("no such library file: %s", videoPath)
+	}
+	return m.syncCoordinator.GeneratePreviewFile(clean)
 }

@@ -103,6 +103,7 @@ func toProtoVideoFile(v *model.VideoFile) *protocol.VideoFile {
 		DurationSeconds: v.DurationSeconds,
 		ThumbnailPath:   v.ThumbnailPath,
 		HasProcessed:    v.HasProcessed,
+		PreviewPath:     v.PreviewPath,
 	}
 }
 

@@ -93,6 +93,9 @@ func (c *Coordinator) GetVideosByCamera(cameraID string, startDate, endDate time
 			if thumb := ThumbnailPath(subdir, f.Name()); fileExists(thumb) {
 				video.ThumbnailPath = thumb
 			}
+			if preview := PreviewPath(subdir, f.Name()); fileExists(preview) {
+				video.PreviewPath = preview
+			}
 			allVideos = append(allVideos, video)
 		}
 	}

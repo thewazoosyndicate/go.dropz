@@ -41,6 +41,7 @@ type Manager interface {
 	GetCameraMedia(cameraID string) ([]model.CameraMediaItem, time.Time, error)
 	RequestMediaDownload(cameraID string, fileNames []string) (*model.SyncQueueEntry, error)
 	PreviewMedia(cameraID, cameraPath string) error
+	PreviewVideo(videoPath string) (string, error)
 	// Camera settings (BLE)
 	GetCameraSettings(cameraID string) ([]model.CameraSetting, time.Time, error)
 	RefreshCameraSettings(cameraID string) ([]model.CameraSetting, time.Time, error)

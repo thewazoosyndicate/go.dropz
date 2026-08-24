@@ -42,6 +42,7 @@ const (
 	DropzService_GetCameraMedia_FullMethodName         = "/dropz.DropzService/GetCameraMedia"
 	DropzService_RequestMediaDownload_FullMethodName   = "/dropz.DropzService/RequestMediaDownload"
 	DropzService_PreviewMedia_FullMethodName           = "/dropz.DropzService/PreviewMedia"
+	DropzService_PreviewVideo_FullMethodName           = "/dropz.DropzService/PreviewVideo"
 	DropzService_GetConfig_FullMethodName              = "/dropz.DropzService/GetConfig"
 	DropzService_UpdateConfig_FullMethodName           = "/dropz.DropzService/UpdateConfig"
 	DropzService_GetSetting_FullMethodName             = "/dropz.DropzService/GetSetting"
@@ -86,6 +87,7 @@ type DropzServiceClient interface {
 	GetCameraMedia(ctx context.Context, in *GetCameraMediaRequest, opts ...grpc.CallOption) (*GetCameraMediaResponse, error)
 	RequestMediaDownload(ctx context.Context, in *RequestMediaDownloadRequest, opts ...grpc.CallOption) (*RequestMediaDownloadResponse, error)
 	PreviewMedia(ctx context.Context, in *PreviewMediaRequest, opts ...grpc.CallOption) (*PreviewMediaResponse, error)
+	PreviewVideo(ctx context.Context, in *PreviewVideoRequest, opts ...grpc.CallOption) (*PreviewVideoResponse, error)
 	// Configuration & Settings
 	GetConfig(ctx context.Context, in *GetConfigRequest, opts ...grpc.CallOption) (*GetConfigResponse, error)
 	UpdateConfig(ctx context.Context, in *UpdateConfigRequest, opts ...grpc.CallOption) (*UpdateConfigResponse, error)
@@ -359,6 +361,16 @@ func (c *dropzServiceClient) PreviewMedia(ctx context.Context, in *PreviewMediaR
 	return out, nil
 }
 
+func (c *dropzServiceClient) PreviewVideo(ctx context.Context, in *PreviewVideoRequest, opts ...grpc.CallOption) (*PreviewVideoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PreviewVideoResponse)
+	err := c.cc.Invoke(ctx, DropzService_PreviewVideo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *dropzServiceClient) GetConfig(ctx context.Context, in *GetConfigRequest, opts ...grpc.CallOption) (*GetConfigResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetConfigResponse)
@@ -446,6 +458,7 @@ type DropzServiceServer interface {
 	GetCameraMedia(context.Context, *GetCameraMediaRequest) (*GetCameraMediaResponse, error)
 	RequestMediaDownload(context.Context, *RequestMediaDownloadRequest) (*RequestMediaDownloadResponse, error)
 	PreviewMedia(context.Context, *PreviewMediaRequest) (*PreviewMediaResponse, error)
+	PreviewVideo(context.Context, *PreviewVideoRequest) (*PreviewVideoResponse, error)
 	// Configuration & Settings
 	GetConfig(context.Context, *GetConfigRequest) (*GetConfigResponse, error)
 	UpdateConfig(context.Context, *UpdateConfigRequest) (*UpdateConfigResponse, error)
@@ -530,6 +543,9 @@ func (UnimplementedDropzServiceServer) RequestMediaDownload(context.Context, *Re
 }
 func (UnimplementedDropzServiceServer) PreviewMedia(context.Context, *PreviewMediaRequest) (*PreviewMediaResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PreviewMedia not implemented")
+}
+func (UnimplementedDropzServiceServer) PreviewVideo(context.Context, *PreviewVideoRequest) (*PreviewVideoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PreviewVideo not implemented")
 }
 func (UnimplementedDropzServiceServer) GetConfig(context.Context, *GetConfigRequest) (*GetConfigResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetConfig not implemented")
@@ -960,6 +976,24 @@ func _DropzService_PreviewMedia_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DropzService_PreviewVideo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PreviewVideoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).PreviewVideo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_PreviewVideo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).PreviewVideo(ctx, req.(*PreviewVideoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _DropzService_GetConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetConfigRequest)
 	if err := dec(in); err != nil {
@@ -1136,6 +1170,10 @@ var DropzService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PreviewMedia",
 			Handler:    _DropzService_PreviewMedia_Handler,
+		},
+		{
+			MethodName: "PreviewVideo",
+			Handler:    _DropzService_PreviewVideo_Handler,
 		},
 		{
 			MethodName: "GetConfig",

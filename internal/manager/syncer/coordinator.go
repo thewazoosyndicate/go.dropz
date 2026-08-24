@@ -86,6 +86,8 @@ type Coordinator struct {
 	previewIdle     time.Duration // tests shrink the linger window
 	// Preview transcoder, swappable so tests run without ffmpeg
 	transcode func(ctx context.Context, src, dst string) error
+	// In-flight library preview transcodes, keyed by source path
+	previewGen map[string]*previewGen
 	mutex           sync.RWMutex
 	notifier     func()
 	bleOperation ble.Operation

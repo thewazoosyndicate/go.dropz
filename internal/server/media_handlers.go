@@ -50,3 +50,15 @@ func (s *DropzServer) PreviewMedia(ctx context.Context, req *protocol.PreviewMed
 	}
 	return &protocol.PreviewMediaResponse{}, nil
 }
+
+// PreviewVideo generates the in-app playable preview of a library file.
+func (s *DropzServer) PreviewVideo(ctx context.Context, req *protocol.PreviewVideoRequest) (*protocol.PreviewVideoResponse, error) {
+	if req.GetVideoPath() == "" {
+		return nil, status.Error(codes.InvalidArgument, "video_path required")
+	}
+	preview, err := s.manager.PreviewVideo(req.GetVideoPath())
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	return &protocol.PreviewVideoResponse{PreviewPath: preview}, nil
+}

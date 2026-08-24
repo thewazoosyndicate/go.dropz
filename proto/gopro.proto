@@ -304,6 +304,16 @@ message PreviewMediaRequest {
 
 message PreviewMediaResponse {}
 
+// Generate (or reuse) the in-app playable preview of a library file.
+// Synchronous: answers once the preview exists.
+message PreviewVideoRequest {
+  string video_path = 1;
+}
+
+message PreviewVideoResponse {
+  string preview_path = 1;
+}
+
 message RequestMediaDownloadRequest {
   string camera_id = 1;
   // Empty = refresh the catalog and thumbnails without downloading.

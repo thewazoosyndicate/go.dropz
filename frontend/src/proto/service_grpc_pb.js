@@ -414,6 +414,28 @@ function deserialize_dropz_PreviewMediaResponse(buffer_arg) {
   return gopro_pb.PreviewMediaResponse.deserializeBinary(new Uint8Array(buffer_arg));
 }
 
+function serialize_dropz_PreviewVideoRequest(arg) {
+  if (!(arg instanceof gopro_pb.PreviewVideoRequest)) {
+    throw new Error('Expected argument of type dropz.PreviewVideoRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_PreviewVideoRequest(buffer_arg) {
+  return gopro_pb.PreviewVideoRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_PreviewVideoResponse(arg) {
+  if (!(arg instanceof gopro_pb.PreviewVideoResponse)) {
+    throw new Error('Expected argument of type dropz.PreviewVideoResponse');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_PreviewVideoResponse(buffer_arg) {
+  return gopro_pb.PreviewVideoResponse.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
 function serialize_dropz_RequestMediaDownloadRequest(arg) {
   if (!(arg instanceof gopro_pb.RequestMediaDownloadRequest)) {
     throw new Error('Expected argument of type dropz.RequestMediaDownloadRequest');
@@ -787,6 +809,17 @@ getCameraMedia: {
     requestDeserialize: deserialize_dropz_PreviewMediaRequest,
     responseSerialize: serialize_dropz_PreviewMediaResponse,
     responseDeserialize: deserialize_dropz_PreviewMediaResponse,
+  },
+  previewVideo: {
+    path: '/dropz.DropzService/PreviewVideo',
+    requestStream: false,
+    responseStream: false,
+    requestType: gopro_pb.PreviewVideoRequest,
+    responseType: gopro_pb.PreviewVideoResponse,
+    requestSerialize: serialize_dropz_PreviewVideoRequest,
+    requestDeserialize: deserialize_dropz_PreviewVideoRequest,
+    responseSerialize: serialize_dropz_PreviewVideoResponse,
+    responseDeserialize: deserialize_dropz_PreviewVideoResponse,
   },
   // Configuration & Settings
 getConfig: {

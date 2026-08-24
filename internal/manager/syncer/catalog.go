@@ -19,7 +19,7 @@ import (
 const (
 	catalogFileName  = ".catalog.json"
 	thumbnailDirName = ".thumbnails"
-	previewDirName   = ".previews"
+	previewDirName   = wifi.PreviewsDirName
 )
 
 type catalogEntry struct {
@@ -46,11 +46,10 @@ func PreviewPath(cameraFolder, localName string) string {
 	return filepath.Join(cameraFolder, previewDirName, base+".webm")
 }
 
-// rawLRVPath is the fetch-time intermediate next to the preview; kept
-// only between download and transcode.
+// rawLRVPath is the raw LRV next to the preview: written by the preview
+// session or the sync's sidecar fetch, consumed by the transcode.
 func rawLRVPath(cameraFolder, localName string) string {
-	base := strings.TrimSuffix(localName, filepath.Ext(localName))
-	return filepath.Join(cameraFolder, previewDirName, base+".lrv")
+	return wifi.LRVSidecarPath(cameraFolder, localName)
 }
 
 // WriteCatalog persists the camera's media list (tmp + rename).

@@ -297,6 +297,7 @@ export function loadVideos(cameraId = '', limit = 200, offset = 0) {
       cameraId: v.getCameraId(),
       mimeType: v.getMimeType(),
       thumbnailPath: v.getThumbnailPath(),
+      previewPath: v.getPreviewPath(),
     }));
 
     setVideos(videos, response.getTotalCount());
@@ -470,6 +471,18 @@ export function previewMedia(cameraId, cameraPath) {
     request.setCameraId(cameraId);
     request.setCameraPath(cameraPath);
     client.previewMedia(request, (error) => (error ? reject(error) : resolve()));
+  });
+}
+
+// Generate (or reuse) a library file's in-app preview. Synchronous on
+// the backend; long clips take a while, keep the UI in a pending state.
+export function previewVideo(videoPath) {
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.PreviewVideoRequest();
+    request.setVideoPath(videoPath);
+    client.previewVideo(request, (error, response) =>
+      error ? reject(error) : resolve(response.getPreviewPath()));
   });
 }
 

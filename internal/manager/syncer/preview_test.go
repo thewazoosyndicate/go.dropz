@@ -102,6 +102,43 @@ func TestPreviewFromLocalFileSkipsRadio(t *testing.T) {
 	}
 }
 
+// The sync fetches LRV sidecars; preview generation must transcode the
+// small sidecar instead of the full-res original, then consume it.
+func TestGeneratePreviewPrefersLRVSidecar(t *testing.T) {
+	c, _ := newPreviewCoordinator(t)
+	folder := filepath.Join(c.db.GetConfig().DestinationFolder, "GP12345678")
+	src := filepath.Join(folder, "GX010001.MP4")
+	sidecar := rawLRVPath(folder, "GX010001.MP4")
+	if err := os.MkdirAll(filepath.Dir(sidecar), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte("full-res"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sidecar, []byte("lrv"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var gotSrc string
+	c.transcode = func(_ context.Context, s, dst string) error {
+		gotSrc = s
+		return os.WriteFile(dst, []byte("webm"), 0644)
+	}
+
+	out, err := c.GeneratePreviewFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotSrc != sidecar {
+		t.Errorf("transcoded %s, want the sidecar %s", gotSrc, sidecar)
+	}
+	if out != PreviewPath(folder, "GX010001.MP4") {
+		t.Errorf("preview at %s", out)
+	}
+	if _, err := os.Stat(sidecar); !os.IsNotExist(err) {
+		t.Error("sidecar must be consumed after transcode")
+	}
+}
+
 func TestPreviewRejectsNonVideo(t *testing.T) {
 	c, _ := newPreviewCoordinator(t)
 	if err := c.RequestPreview("cam1", "100GOPRO/G0010001.JPG"); err == nil {

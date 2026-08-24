@@ -56,7 +56,7 @@
     <div class="header-actions">
       {#if source === 'local'}
         <span class="badge">{totalCount} files</span>
-        <button class="refresh-btn" onclick={() => loadVideos()} disabled={loading}>
+        <button class="refresh-btn" onclick={() => loadVideos()} disabled={loading} aria-label="Refresh library">
           <i class="fas fa-refresh" class:spinning={loading}></i>
         </button>
       {/if}

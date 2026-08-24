@@ -100,6 +100,7 @@
 </script>
 
 {#if target}
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="modal-overlay" onclick={handleOverlayClick}>
     <div class="modal">
       <div class="modal-header">

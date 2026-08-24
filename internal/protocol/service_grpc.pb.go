@@ -43,6 +43,8 @@ const (
 	DropzService_MoveCamerasToGroup_FullMethodName     = "/dropz.DropzService/MoveCamerasToGroup"
 	DropzService_SetGroupSync_FullMethodName           = "/dropz.DropzService/SetGroupSync"
 	DropzService_GetVideos_FullMethodName              = "/dropz.DropzService/GetVideos"
+	DropzService_GetVideoKeyframes_FullMethodName      = "/dropz.DropzService/GetVideoKeyframes"
+	DropzService_TrimVideo_FullMethodName              = "/dropz.DropzService/TrimVideo"
 	DropzService_GetCameraMedia_FullMethodName         = "/dropz.DropzService/GetCameraMedia"
 	DropzService_RequestMediaDownload_FullMethodName   = "/dropz.DropzService/RequestMediaDownload"
 	DropzService_PreviewMedia_FullMethodName           = "/dropz.DropzService/PreviewMedia"
@@ -93,6 +95,8 @@ type DropzServiceClient interface {
 	SetGroupSync(ctx context.Context, in *SetGroupSyncRequest, opts ...grpc.CallOption) (*GetGroupsResponse, error)
 	// Video management
 	GetVideos(ctx context.Context, in *GetVideosRequest, opts ...grpc.CallOption) (*GetVideosResponse, error)
+	GetVideoKeyframes(ctx context.Context, in *GetVideoKeyframesRequest, opts ...grpc.CallOption) (*GetVideoKeyframesResponse, error)
+	TrimVideo(ctx context.Context, in *TrimVideoRequest, opts ...grpc.CallOption) (*TrimVideoResponse, error)
 	// Media browser: cached per-camera catalogs with selective download
 	GetCameraMedia(ctx context.Context, in *GetCameraMediaRequest, opts ...grpc.CallOption) (*GetCameraMediaResponse, error)
 	RequestMediaDownload(ctx context.Context, in *RequestMediaDownloadRequest, opts ...grpc.CallOption) (*RequestMediaDownloadResponse, error)
@@ -382,6 +386,26 @@ func (c *dropzServiceClient) GetVideos(ctx context.Context, in *GetVideosRequest
 	return out, nil
 }
 
+func (c *dropzServiceClient) GetVideoKeyframes(ctx context.Context, in *GetVideoKeyframesRequest, opts ...grpc.CallOption) (*GetVideoKeyframesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetVideoKeyframesResponse)
+	err := c.cc.Invoke(ctx, DropzService_GetVideoKeyframes_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dropzServiceClient) TrimVideo(ctx context.Context, in *TrimVideoRequest, opts ...grpc.CallOption) (*TrimVideoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TrimVideoResponse)
+	err := c.cc.Invoke(ctx, DropzService_TrimVideo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *dropzServiceClient) GetCameraMedia(ctx context.Context, in *GetCameraMediaRequest, opts ...grpc.CallOption) (*GetCameraMediaResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetCameraMediaResponse)
@@ -520,6 +544,8 @@ type DropzServiceServer interface {
 	SetGroupSync(context.Context, *SetGroupSyncRequest) (*GetGroupsResponse, error)
 	// Video management
 	GetVideos(context.Context, *GetVideosRequest) (*GetVideosResponse, error)
+	GetVideoKeyframes(context.Context, *GetVideoKeyframesRequest) (*GetVideoKeyframesResponse, error)
+	TrimVideo(context.Context, *TrimVideoRequest) (*TrimVideoResponse, error)
 	// Media browser: cached per-camera catalogs with selective download
 	GetCameraMedia(context.Context, *GetCameraMediaRequest) (*GetCameraMediaResponse, error)
 	RequestMediaDownload(context.Context, *RequestMediaDownloadRequest) (*RequestMediaDownloadResponse, error)
@@ -613,6 +639,12 @@ func (UnimplementedDropzServiceServer) SetGroupSync(context.Context, *SetGroupSy
 }
 func (UnimplementedDropzServiceServer) GetVideos(context.Context, *GetVideosRequest) (*GetVideosResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetVideos not implemented")
+}
+func (UnimplementedDropzServiceServer) GetVideoKeyframes(context.Context, *GetVideoKeyframesRequest) (*GetVideoKeyframesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetVideoKeyframes not implemented")
+}
+func (UnimplementedDropzServiceServer) TrimVideo(context.Context, *TrimVideoRequest) (*TrimVideoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TrimVideo not implemented")
 }
 func (UnimplementedDropzServiceServer) GetCameraMedia(context.Context, *GetCameraMediaRequest) (*GetCameraMediaResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetCameraMedia not implemented")
@@ -1076,6 +1108,42 @@ func _DropzService_GetVideos_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DropzService_GetVideoKeyframes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetVideoKeyframesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).GetVideoKeyframes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_GetVideoKeyframes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).GetVideoKeyframes(ctx, req.(*GetVideoKeyframesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DropzService_TrimVideo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TrimVideoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).TrimVideo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_TrimVideo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).TrimVideo(ctx, req.(*TrimVideoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _DropzService_GetCameraMedia_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetCameraMediaRequest)
 	if err := dec(in); err != nil {
@@ -1346,6 +1414,14 @@ var DropzService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetVideos",
 			Handler:    _DropzService_GetVideos_Handler,
+		},
+		{
+			MethodName: "GetVideoKeyframes",
+			Handler:    _DropzService_GetVideoKeyframes_Handler,
+		},
+		{
+			MethodName: "TrimVideo",
+			Handler:    _DropzService_TrimVideo_Handler,
 		},
 		{
 			MethodName: "GetCameraMedia",

@@ -41,6 +41,8 @@ export const proto = {
   UpdateSettingRequest: configProto.UpdateSettingRequest,
   ResetSettingRequest: configProto.ResetSettingRequest,
   GetVideosRequest: videoProto.GetVideosRequest,
+  GetVideoKeyframesRequest: videoProto.GetVideoKeyframesRequest,
+  TrimVideoRequest: videoProto.TrimVideoRequest,
   GetGroupsRequest: goProProto.GetGroupsRequest,
   CreateGroupRequest: goProProto.CreateGroupRequest,
   UpdateGroupRequest: goProProto.UpdateGroupRequest,

@@ -7,7 +7,9 @@ let cameraSettingsTarget = $state(null);
 // {source: 'local'|cameraId, filter?: 'all'|'new'|{sessionId}} or null;
 // consumed once by the library view
 let libraryTarget = $state(null);
-// {path, title} or null; the in-app video player overlay
+// {path, title, sourcePath, sizeBytes} or null; the in-app video player
+// overlay. sourcePath is the full-res library file the proxy stands for,
+// empty when there is none to trim.
 let playerTarget = $state(null);
 // cameraId or null; consumed once by the activity view
 let activityTarget = $state(null);
@@ -37,7 +39,9 @@ export function getActivityTarget() { return activityTarget; }
 export function openActivity(cameraId = null) { activityTarget = { cameraId }; setActiveTab('activity'); }
 export function clearActivityTarget() { activityTarget = null; }
 export function getPlayerTarget() { return playerTarget; }
-export function openPlayer(path, title) { playerTarget = { path, title }; }
+export function openPlayer(path, title, sourcePath = '', sizeBytes = 0) {
+  playerTarget = { path, title, sourcePath, sizeBytes };
+}
 export function closePlayer() { playerTarget = null; }
 export function getSearchQuery() { return searchQuery; }
 export function getSortBy() { return sortBy; }

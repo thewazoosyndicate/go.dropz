@@ -313,6 +313,18 @@ type VideoFile struct {
 	PreviewPath     string    `json:"preview_path,omitempty"` // in-app playable WebM
 }
 
+// TrimResult describes the file a lossless trim produced. StartMs is the
+// keyframe the cut actually starts on, which can precede what was asked.
+type TrimResult struct {
+	OutputPath    string
+	Name          string
+	ThumbnailPath string
+	PreviewPath   string
+	SizeBytes     int64
+	StartMs       int64
+	EndMs         int64
+}
+
 // Config represents the system-wide configuration settings
 type Config struct {
 	PairModeEnabled            bool   `json:"pair_mode_enabled"`

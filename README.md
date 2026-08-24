@@ -58,6 +58,17 @@ Electron spawns it with `--log-format=json` and parses each line for the diagnos
 Verbosity has one knob: the `log_level` setting (diagnostics dropdown or gRPC), applied live.
 Use `trace` to see scan cycles and download resume detail.
 
+## Trim
+
+The player's Trim mode cuts a clip losslessly: two handles on the
+scrubber, `I` and `O` set them at the playhead, Enter saves. The in
+point snaps to the file's real keyframes, read from its `stss` table
+(`internal/media`), because a stream copy can only start there; GoPro
+writes one about every second. ffmpeg copies the video, audio, and GPMF
+telemetry tracks unchanged and drops the timecode track it cannot write.
+The cut lands next to the original as `<name>_trim-<mmss>-<mmss>.MP4`
+with a thumbnail and, when the source has a proxy, its own preview.
+The original is never modified.
 ## Groups
 
 A group is the day's rig. Cameras belong to at most one group and stay

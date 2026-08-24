@@ -27,6 +27,15 @@ jobs:
       - name: Build Go universal binary
         run: make build-darwin-universal
 
+      # Previews and trims spawn ffmpeg next to the backend; the DMG is
+      # arm64 only, so a single static arm64 build is enough.
+      - name: Bundle ffmpeg
+        run: |
+          curl -sSL -o /tmp/ffmpeg.zip https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip
+          unzip -o -j /tmp/ffmpeg.zip ffmpeg -d bin
+          chmod +x bin/ffmpeg
+          bin/ffmpeg -version | head -1
+
       - name: Install frontend dependencies
         run: cd frontend && npm ci
 
@@ -72,6 +81,9 @@ jobs:
 
       - name: Build Go binary
         run: make build
+
+      - name: Bundle ffmpeg
+        run: make bin/ffmpeg && bin/ffmpeg -version | head -1
 
       - name: Install frontend dependencies
         run: cd frontend && npm ci

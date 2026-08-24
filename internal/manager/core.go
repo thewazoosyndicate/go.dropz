@@ -244,7 +244,12 @@ func (m *GoProManager) ManageCamera(cameraID string) (*model.ManagedCamera, erro
 	}
 
 	if cs.Status.IsManaged {
-		managedCamera, _ := m.db.GetManagedCameraByID(cameraID)
+		// Managed but unpaired misses the managed pool (pool needs both);
+		// fall back to raw state so a re-manage never reads as NotFound.
+		managedCamera, ok := m.db.GetManagedCameraByID(cameraID)
+		if !ok {
+			managedCamera = &model.ManagedCamera{CameraState: cs}
+		}
 		return managedCamera, nil
 	}
 

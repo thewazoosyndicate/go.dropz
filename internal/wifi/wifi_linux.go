@@ -43,7 +43,11 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 	for attempt := 1; attempt <= 10; attempt++ {
 		// Trigger a WiFi rescan so nmcli can discover the new AP
 		_ = exec.CommandContext(ctx, "nmcli", "device", "wifi", "rescan").Run()
-		time.Sleep(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
 
 		upCmd := exec.CommandContext(ctx, "nmcli", "connection", "up", "id", connName)
 		if output, err := upCmd.CombinedOutput(); err != nil {
@@ -79,37 +83,34 @@ func (m *WiFiManager) Connect(ctx context.Context, ssid, password string) error 
 	return fmt.Errorf("timed out waiting for connection to %s", ssid)
 }
 
-// Disconnect disconnects from the current WiFi network
+// Disconnect brings down only the dropz-created camera profiles; the user's
+// own WiFi connections must survive a sync. Bounded by its own timeout so a
+// hung nmcli cannot stall sync teardown forever.
 func (m *WiFiManager) Disconnect() error {
-	cmd := exec.Command("nmcli", "-t", "-f", "NAME,TYPE", "connection", "show", "--active")
-	output, err := cmd.Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	output, err := exec.CommandContext(ctx, "nmcli", "-t", "-f", "NAME,TYPE", "connection", "show", "--active").Output()
 	if err != nil {
 		return fmt.Errorf("failed to get active connections: %w", err)
 	}
 
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, ":802-11-wireless") {
-			parts := strings.Split(line, ":")
-			if len(parts) < 1 {
-				continue
-			}
-
-			ssid := parts[0]
-
-			cmd = exec.Command("nmcli", "connection", "down", "id", ssid)
-			if output, err := cmd.CombinedOutput(); err != nil {
-				altName := fmt.Sprintf("dropz-%s", ssid)
-				cmd = exec.Command("nmcli", "connection", "down", "id", altName)
-				if altOutput, altErr := cmd.CombinedOutput(); altErr != nil {
-					return fmt.Errorf("failed to disconnect from %s: %w (nmcli: %s; fallback: %w, %s)",
-						ssid, err, strings.TrimSpace(string(output)), altErr, strings.TrimSpace(string(altOutput)))
-				}
-			}
+	var firstErr error
+	for _, line := range strings.Split(string(output), "\n") {
+		// TrimSuffix, not Split: an SSID may itself contain colons
+		if !strings.HasSuffix(line, ":802-11-wireless") {
+			continue
+		}
+		name := strings.TrimSuffix(line, ":802-11-wireless")
+		if !strings.HasPrefix(name, "dropz-") {
+			continue
+		}
+		if out, downErr := exec.CommandContext(ctx, "nmcli", "connection", "down", "id", name).CombinedOutput(); downErr != nil && firstErr == nil {
+			firstErr = fmt.Errorf("failed to disconnect from %s: %w (nmcli: %s)",
+				name, downErr, strings.TrimSpace(string(out)))
 		}
 	}
-
-	return nil
+	return firstErr
 }
 
 // isConnectedTo checks if currently connected to the specified SSID

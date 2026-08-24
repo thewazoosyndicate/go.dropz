@@ -148,9 +148,15 @@ func (m *Manager) newConn(macAddress string, device *bluetooth.Device) *conn {
 		if cb == nil {
 			return
 		}
-		for id, value := range parseTLVPairs(msg.Payload) {
-			cb(macAddress, id, value)
-		}
+		// Async: the handler runs under the tracker's lock on the
+		// notification goroutine, and the callback persists to the store;
+		// doing that inline blocks command routing for the whole write.
+		// Pushes are low-rate (battery), so a goroutine per message is fine.
+		go func() {
+			for id, value := range parseTLVPairs(msg.Payload) {
+				cb(macAddress, id, value)
+			}
+		}()
 	})
 	return c
 }

@@ -16,10 +16,15 @@ import (
 	"github.com/dropz/dropz/internal/model"
 )
 
+// maxSyncHistory bounds the kept sessions; per-file lists make each one
+// a few KB and the whole store rewrites on every save.
+const maxSyncHistory = 200
+
 // Store is the in-memory state with JSON persistence
 type Store struct {
 	cameraStates map[string]*model.CameraWithState
 	syncQueue    []*model.SyncQueueEntry
+	syncHistory  []*model.SyncSession // newest first
 	groups       []*model.Group
 	config       model.Config
 	filePath     string
@@ -33,6 +38,7 @@ type Store struct {
 type storeJSON struct {
 	CameraStates map[string]*model.CameraWithState `json:"camera_states"`
 	SyncQueue    []*model.SyncQueueEntry           `json:"sync_queue"`
+	SyncHistory  []*model.SyncSession              `json:"sync_history"`
 	Groups       []*model.Group                    `json:"groups"`
 	Config       *model.Config                     `json:"config"`
 }
@@ -41,6 +47,7 @@ func (db *Store) MarshalJSON() ([]byte, error) {
 	return json.Marshal(storeJSON{
 		CameraStates: db.cameraStates,
 		SyncQueue:    db.syncQueue,
+		SyncHistory:  db.syncHistory,
 		Groups:       db.groups,
 		Config:       &db.config,
 	})
@@ -60,6 +67,10 @@ func (db *Store) UnmarshalJSON(data []byte) error {
 	db.syncQueue = aux.SyncQueue
 	if db.syncQueue == nil {
 		db.syncQueue = make([]*model.SyncQueueEntry, 0)
+	}
+	db.syncHistory = aux.SyncHistory
+	if db.syncHistory == nil {
+		db.syncHistory = make([]*model.SyncSession, 0)
 	}
 	db.groups = aux.Groups
 	if db.groups == nil {
@@ -81,6 +92,7 @@ func New(filePath string, log *slog.Logger) (*Store, error) {
 	db := &Store{
 		cameraStates: make(map[string]*model.CameraWithState),
 		syncQueue:    make([]*model.SyncQueueEntry, 0),
+		syncHistory:  make([]*model.SyncSession, 0),
 		groups:       make([]*model.Group, 0),
 		config:       model.DefaultConfig(),
 		log:          log.With("component", "store"),
@@ -181,6 +193,16 @@ func (db *Store) groupIDFor(cameraID string) string {
 		}
 	}
 	return ""
+}
+
+// copyEntry deep-copies a queue entry so readers never share its slices
+// with the progress writer.
+func copyEntry(e *model.SyncQueueEntry) *model.SyncQueueEntry {
+	ec := *e
+	ec.Files = append([]model.SyncFile(nil), e.Files...)
+	ec.Phases = append([]model.SyncPhaseTiming(nil), e.Phases...)
+	ec.FileNames = append([]string(nil), e.FileNames...)
+	return &ec
 }
 
 // copyCamera returns a copy with the derived GroupID filled in.
@@ -357,7 +379,9 @@ func (db *Store) GetSyncQueue() []*model.SyncQueueEntry {
 	defer db.mutex.RUnlock()
 
 	queue := make([]*model.SyncQueueEntry, len(db.syncQueue))
-	copy(queue, db.syncQueue)
+	for i, e := range db.syncQueue {
+		queue[i] = copyEntry(e)
+	}
 
 	// Sort by priority (highest first), then by queued time (oldest first)
 	sort.Slice(queue, func(i, j int) bool {
@@ -383,6 +407,46 @@ func (db *Store) RemoveSyncQueueEntry(cameraID string) error {
 		}
 	}
 	return nil
+}
+
+// copySession deep-copies a session so callers never share the stored slices.
+func copySession(s *model.SyncSession) *model.SyncSession {
+	sc := *s
+	sc.Files = append([]model.SyncFile(nil), s.Files...)
+	sc.Phases = append([]model.SyncPhaseTiming(nil), s.Phases...)
+	return &sc
+}
+
+// AddSyncSession records a finished sync at the head of the history,
+// dropping the oldest beyond maxSyncHistory.
+func (db *Store) AddSyncSession(session *model.SyncSession) error {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+
+	db.syncHistory = append([]*model.SyncSession{copySession(session)}, db.syncHistory...)
+	if len(db.syncHistory) > maxSyncHistory {
+		db.syncHistory = db.syncHistory[:maxSyncHistory]
+	}
+	return db.saveToFile()
+}
+
+// GetSyncHistory returns finished syncs newest first, optionally for one
+// camera; limit <= 0 returns everything kept.
+func (db *Store) GetSyncHistory(limit int, cameraID string) []*model.SyncSession {
+	db.mutex.RLock()
+	defer db.mutex.RUnlock()
+
+	out := make([]*model.SyncSession, 0, len(db.syncHistory))
+	for _, s := range db.syncHistory {
+		if cameraID != "" && s.CameraID != cameraID {
+			continue
+		}
+		out = append(out, copySession(s))
+		if limit > 0 && len(out) == limit {
+			break
+		}
+	}
+	return out
 }
 
 // copyGroup deep-copies a group so callers never share the stored pointer.
@@ -567,6 +631,13 @@ func (db *Store) SetLastSyncErrorByID(cameraID string, errMsg string) error {
 	return db.updateCameraStatusByID(cameraID, func(s *model.CameraStatus) bool {
 		s.LastSyncError = errMsg
 		return true
+	})
+}
+
+// SetCameraAliasByID stores the user's name for a camera; empty clears it.
+func (db *Store) SetCameraAliasByID(cameraID, alias string) error {
+	return db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
+		cs.Camera.Alias = alias
 	})
 }
 

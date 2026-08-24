@@ -32,6 +32,7 @@ func toProtoCameraWithState(c *model.CameraWithState) *protocol.CameraWithState 
 			LastSyncError:  c.Status.LastSyncError,
 			InPairingMode:  c.Status.InPairingMode,
 			PreviewEnabled: c.Status.PreviewEnabled,
+			NewMediaCount:  c.NewMediaCount(),
 		},
 		GroupId: c.GroupID,
 		Metadata: &protocol.CameraMetadata{
@@ -62,7 +63,7 @@ func toProtoManagedCamera(c *model.ManagedCamera) *protocol.ManagedCamera {
 }
 
 func toProtoSyncQueueEntry(e *model.SyncQueueEntry) *protocol.SyncQueueEntry {
-	return &protocol.SyncQueueEntry{
+	out := &protocol.SyncQueueEntry{
 		CameraId:         e.CameraID,
 		QueuedAt:         timestamppb.New(e.QueuedAt),
 		Priority:         e.Priority,
@@ -76,6 +77,115 @@ func toProtoSyncQueueEntry(e *model.SyncQueueEntry) *protocol.SyncQueueEntry {
 		BytesDone:        e.BytesDone,
 		BytesTotal:       e.BytesTotal,
 		RateBps:          e.RateBps,
+		Phase:            toProtoSyncPhase(e.Phase),
+		Phases:           toProtoPhaseTimings(e.Phases),
+		Files:            toProtoSyncFiles(e.Files),
+		StepIndex:        e.StepIndex,
+		StepCount:        e.StepCount,
+	}
+	if !e.StartedAt.IsZero() {
+		out.StartedAt = timestamppb.New(e.StartedAt)
+	}
+	return out
+}
+
+func toProtoSyncPhase(p model.SyncPhase) protocol.SyncPhase {
+	switch p {
+	case model.SyncPhaseConnect:
+		return protocol.SyncPhase_SYNC_PHASE_CONNECT
+	case model.SyncPhaseLink:
+		return protocol.SyncPhase_SYNC_PHASE_LINK
+	case model.SyncPhaseCatalog:
+		return protocol.SyncPhase_SYNC_PHASE_CATALOG
+	case model.SyncPhaseTransfer:
+		return protocol.SyncPhase_SYNC_PHASE_TRANSFER
+	default:
+		return protocol.SyncPhase_SYNC_PHASE_WAITING
+	}
+}
+
+func toProtoPhaseTimings(timings []model.SyncPhaseTiming) []*protocol.SyncPhaseTiming {
+	out := make([]*protocol.SyncPhaseTiming, 0, len(timings))
+	for _, t := range timings {
+		pt := &protocol.SyncPhaseTiming{
+			Phase:     toProtoSyncPhase(t.Phase),
+			StartedAt: timestamppb.New(t.StartedAt),
+		}
+		if !t.FinishedAt.IsZero() {
+			pt.FinishedAt = timestamppb.New(t.FinishedAt)
+		}
+		out = append(out, pt)
+	}
+	return out
+}
+
+func toProtoSyncFileState(s model.SyncFileState) protocol.SyncFileState {
+	switch s {
+	case model.SyncFileDownloading:
+		return protocol.SyncFileState_SYNC_FILE_DOWNLOADING
+	case model.SyncFileDone:
+		return protocol.SyncFileState_SYNC_FILE_DONE
+	case model.SyncFileFailed:
+		return protocol.SyncFileState_SYNC_FILE_FAILED
+	case model.SyncFileSkipped:
+		return protocol.SyncFileState_SYNC_FILE_SKIPPED
+	default:
+		return protocol.SyncFileState_SYNC_FILE_QUEUED
+	}
+}
+
+func toProtoSyncFiles(files []model.SyncFile) []*protocol.SyncFile {
+	out := make([]*protocol.SyncFile, 0, len(files))
+	for _, f := range files {
+		out = append(out, &protocol.SyncFile{
+			Name:       f.Name,
+			CameraPath: f.CameraPath,
+			SizeBytes:  f.SizeBytes,
+			State:      toProtoSyncFileState(f.State),
+			BytesDone:  f.BytesDone,
+			Error:      f.Error,
+			LocalPath:  f.LocalPath,
+			DurationMs: f.DurationMs,
+		})
+	}
+	return out
+}
+
+func toProtoSyncOutcome(o model.SyncOutcome) protocol.SyncOutcome {
+	switch o {
+	case model.SyncOutcomeComplete:
+		return protocol.SyncOutcome_SYNC_OUTCOME_COMPLETE
+	case model.SyncOutcomeUpToDate:
+		return protocol.SyncOutcome_SYNC_OUTCOME_UP_TO_DATE
+	case model.SyncOutcomeCatalogRefreshed:
+		return protocol.SyncOutcome_SYNC_OUTCOME_CATALOG_REFRESHED
+	case model.SyncOutcomeFailed:
+		return protocol.SyncOutcome_SYNC_OUTCOME_FAILED
+	case model.SyncOutcomeCancelled:
+		return protocol.SyncOutcome_SYNC_OUTCOME_CANCELLED
+	default:
+		return protocol.SyncOutcome_SYNC_OUTCOME_UNSPECIFIED
+	}
+}
+
+func toProtoSyncSession(s *model.SyncSession) *protocol.SyncSession {
+	return &protocol.SyncSession{
+		Id:              s.ID,
+		CameraId:        s.CameraID,
+		StartedAt:       timestamppb.New(s.StartedAt),
+		FinishedAt:      timestamppb.New(s.FinishedAt),
+		Outcome:         toProtoSyncOutcome(s.Outcome),
+		Error:           s.Error,
+		FailedStep:      s.FailedStep,
+		StepIndex:       s.StepIndex,
+		StepCount:       s.StepCount,
+		FilesDownloaded: s.FilesDownloaded,
+		FilesFailed:     s.FilesFailed,
+		FilesSkipped:    s.FilesSkipped,
+		BytesDownloaded: s.BytesDownloaded,
+		Files:           toProtoSyncFiles(s.Files),
+		Phases:          toProtoPhaseTimings(s.Phases),
+		Selection:       s.Selection,
 	}
 }
 

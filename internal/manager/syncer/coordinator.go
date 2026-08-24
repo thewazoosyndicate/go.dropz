@@ -348,11 +348,27 @@ type syncRun struct {
 	folder      string
 	downloaded  int
 	cleanups    []func()
+	// session is the history record being built; files and phases are
+	// mirrored into the queue entry as they change and copied here at
+	// the end, so a cancel that drops the entry loses nothing.
+	session *model.SyncSession
+	files   []model.SyncFile
+	phases  []model.SyncPhaseTiming
 }
 
 // cleanup registers teardown to run when the sync ends, in reverse order.
 func (r *syncRun) cleanup(f func()) {
 	r.cleanups = append(r.cleanups, f)
+}
+
+// finish records how the sync ended; the first call wins so a cancel
+// racing a step failure keeps the truthful outcome.
+func (r *syncRun) finish(outcome model.SyncOutcome, errMsg string) {
+	if r.session.Outcome != "" {
+		return
+	}
+	r.session.Outcome = outcome
+	r.session.Error = errMsg
 }
 
 // errCatalogOnly ends a catalog-only run successfully after the catalog step.
@@ -366,6 +382,7 @@ type syncStep struct {
 	label   string // progress label while the step runs
 	percent int32
 	failMsg string // user-visible last-sync error when the step fails
+	phase   model.SyncPhase
 	run     func(*syncRun) error
 }
 
@@ -406,17 +423,28 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 	syncCtx, cancel := context.WithTimeout(task.Ctx, syncOverallTimeout)
 	defer cancel()
 
+	started := time.Now()
 	run := &syncRun{
 		task:       task,
 		camera:     camera,
 		bleAddress: bleAddress,
 		config:     c.db.GetConfig(),
 		ctx:        syncCtx,
+		session: &model.SyncSession{
+			ID:        fmt.Sprintf("%s-%d", task.CameraID, started.UnixMilli()),
+			CameraID:  task.CameraID,
+			StartedAt: started,
+			Selection: task.CatalogOnly || len(task.FileNames) > 0,
+		},
 	}
+	_, _ = c.db.MutateSyncQueueEntry(task.CameraID, func(entry *model.SyncQueueEntry) {
+		entry.StartedAt = started
+	})
 	defer func() {
 		for i := len(run.cleanups) - 1; i >= 0; i-- {
 			run.cleanups[i]()
 		}
+		c.recordSession(run)
 	}()
 
 	// Serialize with status checks and settings sessions on this camera.
@@ -425,23 +453,31 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		c.updateProgress(task, "Camera busy", 0)
 		c.log.Warn("Sync could not acquire BLE session", "camera", task.CameraName, "err", sessionErr)
 		_ = c.db.SetLastSyncErrorByID(task.CameraID, "Camera busy with another operation")
+		run.finish(model.SyncOutcomeFailed, "Camera busy with another operation")
 		return
 	}
 	defer release()
 
 	steps := []syncStep{
-		{"Connecting via BLE", 10, "BLE connection failed", c.stepConnectBLE},
-		{"Checking for changes", 15, "", c.stepSkipIfClean},
-		{"Waiting for camera to be idle", 20, "Camera busy or recording", c.stepWaitIdle},
-		{"Waiting for camera WiFi AP", 25, "", c.stepWaitAP},
-		{"Connecting to WiFi", 30, "WiFi connection failed", c.stepConnectWiFi},
-		{"Waiting for GoPro API", 40, "GoPro API unreachable", c.stepAwaitAPI},
-		{"Preparing download", 50, "Failed to create destination folder", c.stepPrepareFolders},
-		{"Updating media catalog", 55, "", c.stepCatalog},
-		{"Downloading media", 60, "Media download failed", c.stepDownload},
+		{"Connecting via BLE", 10, "BLE connection failed", model.SyncPhaseConnect, c.stepConnectBLE},
+		{"Checking for changes", 15, "", model.SyncPhaseConnect, c.stepSkipIfClean},
+		{"Waiting for camera to be idle", 20, "Camera busy or recording", model.SyncPhaseConnect, c.stepWaitIdle},
+		{"Waiting for camera WiFi AP", 25, "", model.SyncPhaseLink, c.stepWaitAP},
+		{"Connecting to WiFi", 30, "WiFi connection failed", model.SyncPhaseLink, c.stepConnectWiFi},
+		{"Waiting for GoPro API", 40, "GoPro API unreachable", model.SyncPhaseLink, c.stepAwaitAPI},
+		{"Preparing download", 50, "Failed to create destination folder", model.SyncPhaseCatalog, c.stepPrepareFolders},
+		{"Updating media catalog", 55, "", model.SyncPhaseCatalog, c.stepCatalog},
+		{"Downloading media", 60, "Media download failed", model.SyncPhaseTransfer, c.stepDownload},
 	}
+	run.session.StepCount = int32(len(steps))
 
-	for _, step := range steps {
+	for i, step := range steps {
+		run.session.StepIndex = int32(i + 1)
+		_, _ = c.db.MutateSyncQueueEntry(task.CameraID, func(entry *model.SyncQueueEntry) {
+			entry.StepIndex = int32(i + 1)
+			entry.StepCount = int32(len(steps))
+		})
+		c.startPhase(run, step.phase)
 		c.updateProgress(task, step.label, step.percent)
 		err := step.run(run)
 		if err == nil {
@@ -450,6 +486,7 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		if errors.Is(err, errCatalogOnly) {
 			_ = c.db.SetLastSyncErrorByID(task.CameraID, "")
 			c.log.Info("Media catalog refreshed, no download requested", "camera", task.CameraName)
+			run.finish(model.SyncOutcomeCatalogRefreshed, "")
 			return
 		}
 		if errors.Is(err, errUpToDate) {
@@ -460,9 +497,21 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 			_ = c.db.SetLastSyncErrorByID(task.CameraID, "")
 			c.updateProgress(task, "Already up to date", 100)
 			c.log.Info("Camera already up to date, WiFi skipped", camera.LogAttrs()...)
+			run.finish(model.SyncOutcomeUpToDate, "")
+			return
+		}
+		if task.Ctx.Err() != nil {
+			// User cancel: the error is a consequence, not a fault
+			run.finish(model.SyncOutcomeCancelled, "")
 			return
 		}
 		failMsg := step.failMsg
+		if failMsg == "" {
+			failMsg = "Sync failed"
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			failMsg = "Sync timed out"
+		}
 		if errors.Is(err, ble.ErrBondLost) {
 			// The camera dropped its side of the bond (HERO13 without a
 			// completed pairing finish); connects abort until both sides
@@ -477,6 +526,8 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		c.updateProgress(task, failMsg, step.percent)
 		c.log.Error("Sync failed", append(camera.LogAttrs(), "step", step.label, "err", err)...)
 		_ = c.db.SetLastSyncErrorByID(task.CameraID, failMsg)
+		run.session.FailedStep = step.label
+		run.finish(model.SyncOutcomeFailed, failMsg)
 		return
 	}
 
@@ -492,6 +543,50 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 	// label into a success toast, like the up-to-date skip above.
 	c.updateProgress(task, "Sync complete", 100)
 	c.log.Info("Camera synced", append(camera.LogAttrs(), "files", run.downloaded)...)
+	run.finish(model.SyncOutcomeComplete, "")
+}
+
+// startPhase closes the running phase timing and opens the next one when
+// the step crosses a phase boundary; mirrored into the queue entry so the
+// UI shows the stepper live.
+func (c *Coordinator) startPhase(r *syncRun, phase model.SyncPhase) {
+	now := time.Now()
+	if n := len(r.phases); n > 0 {
+		if r.phases[n-1].Phase == phase {
+			return
+		}
+		r.phases[n-1].FinishedAt = now
+	}
+	r.phases = append(r.phases, model.SyncPhaseTiming{Phase: phase, StartedAt: now})
+	phases := append([]model.SyncPhaseTiming(nil), r.phases...)
+	_, _ = c.db.MutateSyncQueueEntry(r.task.CameraID, func(entry *model.SyncQueueEntry) {
+		entry.Phase = phase
+		entry.Phases = phases
+	})
+}
+
+// recordSession closes the timings and persists the history record. A
+// run that never reached finish (task cancelled between steps, or the
+// camera vanished) counts as cancelled.
+func (c *Coordinator) recordSession(r *syncRun) {
+	s := r.session
+	now := time.Now()
+	if n := len(r.phases); n > 0 && r.phases[n-1].FinishedAt.IsZero() {
+		r.phases[n-1].FinishedAt = now
+	}
+	if s.Outcome == "" {
+		s.Outcome = model.SyncOutcomeCancelled
+	}
+	s.FinishedAt = now
+	s.Files = r.files
+	s.Phases = r.phases
+	s.CountFiles()
+	if err := c.db.AddSyncSession(s); err != nil {
+		c.log.Warn("Sync history not saved", "camera", r.task.CameraName, "err", err)
+	}
+	c.log.Info("Sync recorded", "camera", r.task.CameraName, "outcome", s.Outcome,
+		"downloaded", s.FilesDownloaded, "failed", s.FilesFailed, "skipped", s.FilesSkipped,
+		"elapsed", now.Sub(s.StartedAt).Round(time.Second))
 }
 
 // stepConnectBLE connects, arranges disconnect, and starts the keep-alive.
@@ -773,7 +868,7 @@ func (c *Coordinator) stepDownload(r *syncRun) error {
 	}
 
 	downloadedFiles, err := r.wifi.DownloadVideos(r.downloadCtx, r.folder, int(r.config.DaysThreshold), r.task.FileNames,
-		func(p wifi.DownloadProgress) { c.updateDownloadProgress(r.task, p) })
+		func(p wifi.DownloadProgress) { c.updateDownloadProgress(r, p) })
 	if err != nil {
 		return err
 	}
@@ -781,10 +876,36 @@ func (c *Coordinator) stepDownload(r *syncRun) error {
 	return nil
 }
 
+// toSyncFiles converts a transfer snapshot for the queue entry and history.
+func toSyncFiles(files []wifi.FileStatus) []model.SyncFile {
+	if files == nil {
+		return nil
+	}
+	out := make([]model.SyncFile, len(files))
+	for i, f := range files {
+		out[i] = model.SyncFile{
+			Name:       f.Name,
+			CameraPath: f.CameraPath,
+			SizeBytes:  f.Size,
+			State:      model.SyncFileState(f.State),
+			BytesDone:  f.BytesDone,
+			Error:      f.Err,
+			LocalPath:  f.LocalPath,
+			DurationMs: f.Duration.Milliseconds(),
+		}
+	}
+	return out
+}
+
 // updateDownloadProgress streams byte-level download state into the queue
 // entry. Bytes map onto the 60..99 tail of the step scale; file counts
-// carry it when the camera reported no sizes.
-func (c *Coordinator) updateDownloadProgress(task *SyncTask, p wifi.DownloadProgress) {
+// carry it when the camera reported no sizes. The file list is kept on
+// the run too, for the history record.
+func (c *Coordinator) updateDownloadProgress(r *syncRun, p wifi.DownloadProgress) {
+	task := r.task
+	if p.Files != nil {
+		r.files = toSyncFiles(p.Files)
+	}
 	if task.Ctx != nil && task.Ctx.Err() != nil {
 		return
 	}
@@ -792,14 +913,19 @@ func (c *Coordinator) updateDownloadProgress(task *SyncTask, p wifi.DownloadProg
 	switch {
 	case p.BytesTotal > 0:
 		percent += int32(float64(p.BytesDone) / float64(p.BytesTotal) * 39)
-	case p.FileCount > 0:
+	case p.FileCount > 0 && p.FileIndex > 0:
 		percent += int32((p.FileIndex - 1) * 39 / p.FileCount)
 	}
 	if percent > 99 {
 		percent = 99
 	}
+	operation := "Downloading media"
+	if p.FileName != "" {
+		operation = "Downloading " + p.FileName
+	}
+	files := r.files
 	_, _ = c.db.MutateSyncQueueEntry(task.CameraID, func(entry *model.SyncQueueEntry) {
-		entry.CurrentOperation = "Downloading " + p.FileName
+		entry.CurrentOperation = operation
 		entry.ProgressPercent = percent
 		entry.FileIndex = int32(p.FileIndex)
 		entry.FileCount = int32(p.FileCount)
@@ -809,6 +935,9 @@ func (c *Coordinator) updateDownloadProgress(task *SyncTask, p wifi.DownloadProg
 		entry.BytesDone = p.BytesDone
 		entry.BytesTotal = p.BytesTotal
 		entry.RateBps = p.RateBps
+		if files != nil {
+			entry.Files = files
+		}
 	})
 	c.notifier()
 }
@@ -825,8 +954,10 @@ func (c *Coordinator) updateProgress(task *SyncTask, operation string, percent i
 	_, _ = c.db.MutateSyncQueueEntry(task.CameraID, func(entry *model.SyncQueueEntry) {
 		entry.CurrentOperation = operation
 		entry.ProgressPercent = percent
-		// Download detail belongs to the download step only; a step-level
+		// Byte detail belongs to the download step only; a step-level
 		// update means that step is over, so stale bytes must not linger.
+		// The file list stays: the final label ("Sync complete") is
+		// streamed with it so the UI can show what arrived.
 		entry.FileIndex = 0
 		entry.FileCount = 0
 		entry.FileName = ""

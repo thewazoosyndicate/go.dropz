@@ -30,6 +30,8 @@ type Manager interface {
 	// Sync
 	ForceSync(cameraID string) (*model.SyncQueueEntry, error)
 	CancelSync(cameraID string) error
+	GetSyncHistory(limit int, cameraID string) []*model.SyncSession
+	SetCameraAlias(cameraID, alias string) (*model.CameraWithState, error)
 	GetVideosByCamera(cameraID string, startDate, endDate time.Time, limit, offset int) ([]*model.VideoFile, int)
 	// Groups
 	CreateGroup(name string, cameraIDs []string) (*model.Group, error)
@@ -515,6 +517,30 @@ func (s *DropzServer) CancelSync(ctx context.Context, req *protocol.CancelSyncRe
 		Success: true,
 		Message: fmt.Sprintf("Camera %s sync cancelled and removed from queue", req.CameraId),
 	}, nil
+}
+
+// GetSyncHistory implements the GetSyncHistory RPC method
+func (s *DropzServer) GetSyncHistory(ctx context.Context, req *protocol.GetSyncHistoryRequest) (*protocol.GetSyncHistoryResponse, error) {
+	limit := int(req.Limit)
+	if limit <= 0 {
+		limit = 100
+	}
+	sessions := s.manager.GetSyncHistory(limit, req.CameraId)
+	proto := make([]*protocol.SyncSession, len(sessions))
+	for i, session := range sessions {
+		proto[i] = toProtoSyncSession(session)
+	}
+	return &protocol.GetSyncHistoryResponse{Sessions: proto}, nil
+}
+
+// SetCameraAlias implements the SetCameraAlias RPC method
+func (s *DropzServer) SetCameraAlias(ctx context.Context, req *protocol.SetCameraAliasRequest) (*protocol.SetCameraAliasResponse, error) {
+	camera, err := s.manager.SetCameraAlias(req.CameraId, req.Alias)
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	s.NotifyUpdate()
+	return &protocol.SetCameraAliasResponse{Camera: toProtoCameraWithState(camera)}, nil
 }
 
 // GetGroups implements the GetGroups RPC method

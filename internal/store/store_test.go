@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -140,6 +141,60 @@ func TestSyncQueuePriorityOrder(t *testing.T) {
 			ids[i] = e.CameraID
 		}
 		t.Errorf("queue order = %v, want [manual auto-old auto]", ids)
+	}
+}
+
+func TestSyncHistoryNewestFirstAndCapped(t *testing.T) {
+	st, path := newTestStore(t)
+	for i := 0; i < maxSyncHistory+5; i++ {
+		s := &model.SyncSession{
+			ID: fmt.Sprintf("s%d", i), CameraID: "cam", Outcome: model.SyncOutcomeComplete,
+			Files: []model.SyncFile{{Name: "GX.MP4", State: model.SyncFileDone}},
+		}
+		if err := st.AddSyncSession(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := st.GetSyncHistory(0, "")
+	if len(got) != maxSyncHistory {
+		t.Fatalf("kept %d sessions, want %d", len(got), maxSyncHistory)
+	}
+	if got[0].ID != fmt.Sprintf("s%d", maxSyncHistory+4) {
+		t.Errorf("first = %s, want the newest", got[0].ID)
+	}
+	// Copies: mutating a result must not touch the store
+	got[0].Files[0].State = model.SyncFileFailed
+	if st.GetSyncHistory(1, "")[0].Files[0].State != model.SyncFileDone {
+		t.Error("GetSyncHistory shared its file slice")
+	}
+	if n := len(st.GetSyncHistory(3, "")); n != 3 {
+		t.Errorf("limit 3 returned %d", n)
+	}
+	if n := len(st.GetSyncHistory(0, "other")); n != 0 {
+		t.Errorf("camera filter returned %d", n)
+	}
+
+	reloaded, err := New(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.GetSyncHistory(0, "")) != maxSyncHistory {
+		t.Error("history not persisted")
+	}
+}
+
+func TestSetCameraAlias(t *testing.T) {
+	st, _ := newTestStore(t)
+	addCamera(t, st, "cam1", "AA:01")
+	if err := st.SetCameraAliasByID("cam1", "Helmet cam"); err != nil {
+		t.Fatal(err)
+	}
+	cs, _ := st.GetCameraByID("cam1")
+	if cs.Camera.Alias != "Helmet cam" {
+		t.Errorf("alias = %q", cs.Camera.Alias)
+	}
+	if err := st.SetCameraAliasByID("ghost", "x"); err == nil {
+		t.Error("unknown camera accepted")
 	}
 }
 

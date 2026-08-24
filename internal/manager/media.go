@@ -2,18 +2,12 @@ package manager
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/dropz/dropz/internal/manager/syncer"
 	"github.com/dropz/dropz/internal/model"
 )
-
-func fileExistsNonEmpty(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && fi.Size() > 0
-}
 
 // cameraFolder returns the per-camera download folder, empty when the
 // camera has no WiFi SSID yet (never paired).

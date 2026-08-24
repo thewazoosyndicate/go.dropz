@@ -9,8 +9,9 @@ export function getManagedDevices() { return managedDevices; }
 export function getAllDevices() { return allDevices; }
 export function getPairingInProgress() { return pairingInProgress; }
 
-export function getSeenCount() {
-  return Object.values(allDevices).filter(d => d.isReachable).length;
+// Cameras in range that are not managed yet: what "nearby" means to the user
+export function getNearbyCount() {
+  return Object.values(discoveredDevices).filter(d => d.isReachable).length;
 }
 
 // The user's name first; the SSID is the stable factory identity

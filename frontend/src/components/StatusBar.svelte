@@ -1,12 +1,12 @@
 <script>
   import { getServiceRunning, isAnyReconnecting } from '../lib/stores/connection.svelte.js';
-  import { getDiscoveredDevices, getManagedDevices, findDeviceById, displayName } from '../lib/stores/devices.svelte.js';
+  import { getNearbyCount, getManagedDevices, findDeviceById, displayName } from '../lib/stores/devices.svelte.js';
   import { getSyncQueue, getActiveSyncEntry } from '../lib/stores/sync.svelte.js';
   import { toggleTheme, getTheme, setSettingsOpen, openActivity } from '../lib/stores/ui.svelte.js';
   import { formatEta, formatTimeAgo } from '../lib/format.js';
   import IconButton from './ui/IconButton.svelte';
 
-  let discoveredCount = $derived(Object.keys(getDiscoveredDevices()).length);
+  let discoveredCount = $derived(getNearbyCount());
   let managedCount = $derived(Object.keys(getManagedDevices()).length);
   let running = $derived(getServiceRunning());
   let reconnecting = $derived(isAnyReconnecting());

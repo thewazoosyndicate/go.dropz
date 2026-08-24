@@ -220,7 +220,9 @@
             <i class="fas fa-check" aria-hidden="true"></i> Up to date when it left
           {/if}
         </div>
-        <span class="detail">Checks for new clips when it returns.</span>
+        <span class="detail">
+          {#if device.lastSyncError}{device.lastSyncError}. {/if}Checks for new clips when it returns.
+        </span>
       </div>
     {:else if state === 'pairing'}
       <div class="block busy">

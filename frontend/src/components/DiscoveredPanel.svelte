@@ -2,13 +2,13 @@
   import SearchBar from './SearchBar.svelte';
   import DiscoveredRow from './DiscoveredRow.svelte';
   import Toggle from './ui/Toggle.svelte';
-  import { getDiscoveredDevices, getSeenCount } from '../lib/stores/devices.svelte.js';
+  import { getDiscoveredDevices, getNearbyCount } from '../lib/stores/devices.svelte.js';
   import { getSearchQuery, getSortBy } from '../lib/stores/ui.svelte.js';
   import { togglePairAll } from '../lib/grpc/actions.js';
   import { getAutoPair } from '../lib/stores/config.svelte.js';
 
   let autoPairEnabled = $derived(getAutoPair());
-  let seenCount = $derived(getSeenCount());
+  let seenCount = $derived(getNearbyCount());
 
   let filteredDevices = $derived.by(() => {
     const devices = Object.values(getDiscoveredDevices());

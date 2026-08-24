@@ -81,6 +81,17 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 
 	syncQueued = m.processStatusResults(cs, statuses)
 
+	// A sync already waiting in the queue must find the camera awake:
+	// Sleep here and the sync's connect races the camera's shutdown
+	// (observed on HERO13: GATT discovery fails against a camera going
+	// to sleep, and the camera BLE stack stays wedged afterwards).
+	for _, entry := range m.db.GetSyncQueue() {
+		if entry.CameraID == cs.Camera.ID {
+			syncQueued = true
+			break
+		}
+	}
+
 	// A busy or recording camera must not be put to sleep.
 	if ble.InUse(statuses) {
 		// Fires on every poll while recording, hence Debug

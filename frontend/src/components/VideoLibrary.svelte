@@ -94,11 +94,11 @@
   // playback goes through the transcoded WebM preview.
   let pendingKey = $state(null);
   async function play(item) {
-    if (item.previewPath) return openPlayer(item.previewPath, item.name);
+    if (item.previewPath) return openPlayer(item.previewPath, item.name, item.localPath, item.sizeBytes);
     pendingKey = item.key;
     try {
       const path = await previewVideo(item.localPath);
-      openPlayer(path, item.name);
+      openPlayer(path, item.name, item.localPath, item.sizeBytes);
       loadVideos();
     } catch (e) {
       addToast(e.message || 'Preview generation failed', 'error');

@@ -100,7 +100,7 @@
     const item = items.find(i => i.cameraPath === pendingPreview);
     if (item?.previewPath) {
       pendingPreview = null;
-      openPlayer(item.previewPath, item.name);
+      openPlayer(item.previewPath, item.name, item.downloaded ? item.localPath : '', item.sizeBytes);
     }
   });
 
@@ -146,7 +146,9 @@
   // Camera files are HEVC, which the renderer cannot decode; playback
   // always goes through the transcoded WebM proxy.
   async function play(item) {
-    if (item.previewPath) return openPlayer(item.previewPath, item.name);
+    if (item.previewPath) {
+      return openPlayer(item.previewPath, item.name, item.downloaded ? item.localPath : '', item.sizeBytes);
+    }
     try {
       await previewMedia(cameraId, item.cameraPath);
       pendingPreview = item.cameraPath;

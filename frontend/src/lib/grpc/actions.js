@@ -525,6 +525,45 @@ export function previewVideo(videoPath) {
   });
 }
 
+// Keyframe positions of a library clip: where a lossless cut can start.
+export function getVideoKeyframes(videoPath) {
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.GetVideoKeyframesRequest();
+    request.setVideoPath(videoPath);
+    client.getVideoKeyframes(request, (error, response) => {
+      if (error) return reject(error);
+      resolve({ keyframesMs: response.getKeyframeMsList(), durationMs: response.getDurationMs() });
+    });
+  });
+}
+
+// Lossless cut into a new file next to the original. Stream copy is
+// disk-bound: seconds for gigabytes, so a generous deadline covers slow
+// drives without a progress stream.
+export function trimVideo(videoPath, startMs, endMs) {
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.TrimVideoRequest();
+    request.setVideoPath(videoPath);
+    request.setStartMs(Math.round(startMs));
+    request.setEndMs(Math.round(endMs));
+    const deadline = new Date(Date.now() + 600000);
+    client.trimVideo(request, { deadline }, (error, response) => {
+      if (error) return reject(error);
+      resolve({
+        outputPath: response.getOutputPath(),
+        name: response.getName(),
+        thumbnailPath: response.getThumbnailPath(),
+        previewPath: response.getPreviewPath(),
+        sizeBytes: response.getSizeBytes(),
+        startMs: response.getStartMs(),
+        endMs: response.getEndMs(),
+      });
+    });
+  });
+}
+
 // Empty fileNames queues a catalog-only refresh.
 export function requestMediaDownload(cameraId, fileNames) {
   return new Promise((resolve, reject) => {

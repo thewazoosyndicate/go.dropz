@@ -1,24 +1,429 @@
 <script>
-  import { getPlayerTarget, closePlayer } from '../lib/stores/ui.svelte.js';
+  // In-app player for the 480p proxy, with a lossless trim mode: two
+  // handles on the scrubber, the in-handle snapping to the full-res
+  // file's real keyframes so the saved cut is what the timeline showed.
+  import { getPlayerTarget, closePlayer, openPlayer, addToast, addLog } from '../lib/stores/ui.svelte.js';
+  import { getVideoKeyframes, trimVideo, loadVideos } from '../lib/grpc/actions.js';
+  import { formatBytes } from '../lib/format.js';
+  import Button from './ui/Button.svelte';
+  import IconButton from './ui/IconButton.svelte';
+
+  const { ipcRenderer } = window.require('electron');
 
   let target = $derived(getPlayerTarget());
 
-  function onKeydown(e) {
-    if (e.key === 'Escape' && target) closePlayer();
+  let video = $state(null);
+  let timeline = $state(null);
+  let duration = $state(0); // seconds, proxy timeline
+  let currentTime = $state(0);
+  let playing = $state(false);
+  let muted = $state(false);
+  let hoverTime = $state(null);
+
+  // Trim state, in seconds on the same timeline
+  let trimming = $state(false);
+  let inTime = $state(0);
+  let outTime = $state(0);
+  let keyframes = $state([]); // seconds, from the full-res file
+  let keyframesLoaded = $state(false);
+  let dragging = $state(null); // 'in' | 'out' | 'play' | null
+  let loopSelection = $state(false);
+  let saving = $state(false);
+  let saved = $state(null);
+
+  const MIN_LEN = 0.5;
+  let canTrim = $derived(!!target?.sourcePath);
+  let selectionLength = $derived(Math.max(0, outTime - inTime));
+  let estimatedBytes = $derived(target?.sizeBytes && duration > 0 ? target.sizeBytes * selectionLength / duration : 0);
+  let snappedIn = $derived(snapDown(inTime));
+  // Ticks only when they are far enough apart to read as marks
+  let tickSpacing = $derived(keyframes.length > 1 && timeline ? timeline.clientWidth / (duration / (keyframes[1] - keyframes[0])) : 0);
+  let showTicks = $derived(tickSpacing >= 5);
+
+  // Reset per clip
+  $effect(() => {
+    if (!target) return;
+    trimming = false;
+    saved = null;
+    saving = false;
+    keyframes = [];
+    keyframesLoaded = false;
+    inTime = 0;
+    outTime = 0;
+    loopSelection = false;
+  });
+
+  function snapDown(t) {
+    if (keyframes.length === 0) return t;
+    let best = keyframes[0];
+    for (const k of keyframes) {
+      if (k > t + 1e-6) break;
+      best = k;
+    }
+    return best;
   }
+
+  function snapNearest(t) {
+    if (keyframes.length === 0) return t;
+    let best = keyframes[0];
+    for (const k of keyframes) {
+      if (Math.abs(k - t) < Math.abs(best - t)) best = k;
+    }
+    return best;
+  }
+
+  function neighborKeyframe(t, dir) {
+    if (keyframes.length === 0) return clamp(t + dir);
+    if (dir > 0) {
+      const next = keyframes.find(k => k > t + 1e-3);
+      return next ?? t;
+    }
+    let prev = t;
+    for (const k of keyframes) {
+      if (k < t - 1e-3) prev = k;
+      else break;
+    }
+    return prev;
+  }
+
+  function clamp(t) { return Math.max(0, Math.min(duration, t)); }
+
+  async function toggleTrim() {
+    if (!canTrim) return;
+    if (trimming) { trimming = false; loopSelection = false; return; }
+    trimming = true;
+    saved = null;
+    if (outTime === 0) {
+      inTime = 0;
+      outTime = duration;
+    }
+    if (!keyframesLoaded) {
+      try {
+        const r = await getVideoKeyframes(target.sourcePath);
+        keyframes = r.keyframesMs.map(ms => ms / 1000);
+        keyframesLoaded = true;
+        if (r.durationMs > 0 && outTime >= duration) outTime = Math.min(duration, r.durationMs / 1000);
+      } catch (e) {
+        addToast(e.message || 'Could not read keyframes', 'error');
+      }
+    }
+  }
+
+  function setIn(t) {
+    const v = snapNearest(clamp(t));
+    inTime = Math.min(v, outTime - MIN_LEN);
+    if (inTime < 0) inTime = 0;
+  }
+
+  function setOut(t) {
+    outTime = Math.max(clamp(t), inTime + MIN_LEN);
+  }
+
+  // Transport
+  function togglePlay() {
+    if (!video) return;
+    if (video.paused) video.play(); else video.pause();
+  }
+
+  function seek(t, scrub = false) {
+    if (!video) return;
+    const v = clamp(t);
+    video.currentTime = v;
+    currentTime = v;
+    if (scrub && !video.paused) video.pause();
+  }
+
+  function playSelection() {
+    loopSelection = true;
+    seek(inTime);
+    video?.play();
+  }
+
+  function onTimeUpdate() {
+    if (!video || dragging) return;
+    currentTime = video.currentTime;
+    if (loopSelection && trimming && currentTime >= outTime - 0.05) {
+      seek(inTime);
+      if (video.paused) video.play();
+    }
+  }
+
+  function onLoaded() {
+    duration = video?.duration || 0;
+    if (trimming && outTime === 0) outTime = duration;
+  }
+
+  // Pointer interaction on the timeline: handles drag, the track seeks.
+  function timeAt(clientX) {
+    const rect = timeline.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    return duration * x / rect.width;
+  }
+
+  function onPointerDown(e, what) {
+    e.preventDefault();
+    e.stopPropagation();
+    dragging = what;
+    timeline.setPointerCapture(e.pointerId);
+    onPointerMove(e);
+  }
+
+  let scrubPending = false;
+  function onPointerMove(e) {
+    if (dragging) {
+      const t = timeAt(e.clientX);
+      if (dragging === 'in') setIn(t);
+      else if (dragging === 'out') setOut(t);
+      // Show the frame under the handle while it moves, throttled to
+      // one seek per animation frame so the decoder keeps up
+      const preview = dragging === 'in' ? inTime : dragging === 'out' ? outTime : t;
+      if (!scrubPending) {
+        scrubPending = true;
+        requestAnimationFrame(() => { scrubPending = false; seek(preview, true); });
+      }
+    } else {
+      hoverTime = timeAt(e.clientX);
+    }
+  }
+
+  function onPointerUp(e) {
+    if (!dragging) return;
+    try { timeline.releasePointerCapture(e.pointerId); } catch (_) {}
+    dragging = null;
+  }
+
+  function onHandleKey(e, which) {
+    const big = e.shiftKey ? 5 : 1;
+    let delta = 0;
+    if (e.key === 'ArrowLeft') delta = -1;
+    else if (e.key === 'ArrowRight') delta = 1;
+    else if (e.key === 'Home') { which === 'in' ? setIn(0) : setOut(inTime + MIN_LEN); e.preventDefault(); return; }
+    else if (e.key === 'End') { which === 'in' ? setIn(outTime - MIN_LEN) : setOut(duration); e.preventDefault(); return; }
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (which === 'in') {
+      // The in point walks keyframe to keyframe: that is the only place it can be
+      let t = inTime;
+      for (let i = 0; i < big; i++) t = neighborKeyframe(t, delta);
+      setIn(t);
+      seek(inTime, true);
+    } else {
+      setOut(outTime + delta * big);
+      seek(outTime, true);
+    }
+  }
+
+  function onKeydown(e) {
+    if (!target) return;
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target?.tagName)) return;
+    switch (e.key) {
+      case 'Escape':
+        if (trimming && !saving) { trimming = false; loopSelection = false; }
+        else closePlayer();
+        break;
+      case ' ':
+        e.preventDefault();
+        togglePlay();
+        break;
+      case 'ArrowLeft':
+        if (e.target?.getAttribute?.('role') === 'slider') return;
+        e.preventDefault();
+        seek(currentTime - (e.shiftKey ? 5 : 1));
+        break;
+      case 'ArrowRight':
+        if (e.target?.getAttribute?.('role') === 'slider') return;
+        e.preventDefault();
+        seek(currentTime + (e.shiftKey ? 5 : 1));
+        break;
+      case 'Home': seek(0); break;
+      case 'End': seek(duration); break;
+      case 'i': case 'I':
+        if (!trimming) toggleTrim();
+        setIn(currentTime);
+        break;
+      case 'o': case 'O':
+        if (!trimming) toggleTrim();
+        setOut(currentTime);
+        break;
+      case '[': if (trimming) seek(inTime); break;
+      case ']': if (trimming) seek(outTime); break;
+      case 't': case 'T': toggleTrim(); break;
+      case 'm': case 'M': muted = !muted; break;
+      case 'Enter': if (trimming && !saving) save(); break;
+    }
+  }
+
+  async function save() {
+    if (!canTrim || saving) return;
+    if (selectionLength < MIN_LEN) {
+      addToast('Selection is shorter than half a second', 'error');
+      return;
+    }
+    if (snappedIn <= 0 && outTime >= duration - 0.05) {
+      addToast('The selection covers the whole clip', 'info');
+      return;
+    }
+    saving = true;
+    video?.pause();
+    try {
+      const r = await trimVideo(target.sourcePath, snappedIn * 1000, outTime * 1000);
+      saved = r;
+      addToast(`Saved ${r.name} (${formatBytes(r.sizeBytes)})`, 'success');
+      addLog(`Trimmed ${target.title} to ${r.name}`, 'info');
+      loadVideos();
+    } catch (e) {
+      addToast(e.message || 'Trim failed', 'error');
+      addLog(`Trim failed: ${e.message}`, 'error');
+    } finally {
+      saving = false;
+    }
+  }
+
+  function playSaved() {
+    if (!saved?.previewPath) return;
+    const s = saved;
+    closePlayer();
+    // Re-open on the next tick so the reset effect runs for the new clip
+    setTimeout(() => openPlayer(s.previewPath, s.name, s.outputPath, s.sizeBytes), 0);
+  }
+
+  function showSaved() {
+    if (saved?.outputPath) ipcRenderer.send('desktop-show', saved.outputPath);
+  }
+
+  function fmt(t) {
+    if (!isFinite(t) || t < 0) t = 0;
+    const m = Math.floor(t / 60);
+    const s = t - m * 60;
+    return `${String(m).padStart(2, '0')}:${s.toFixed(1).padStart(4, '0')}`;
+  }
+
+  function pct(t) { return duration > 0 ? (100 * t / duration) : 0; }
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
 {#if target}
   <div class="player-overlay" onclick={closePlayer} role="presentation">
-    <div class="player" onclick={(e) => e.stopPropagation()} role="presentation">
+    <div class="player" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={target.title}>
       <div class="player-header">
         <span class="player-title">{target.title}</span>
-        <button class="player-close" onclick={closePlayer} aria-label="Close player">&times;</button>
+        <div class="header-actions">
+          {#if canTrim}
+            <Button size="sm" icon="fa-scissors" variant={trimming ? 'primary' : 'outline'} onclick={toggleTrim}
+                    title="Trim (T)">{trimming ? 'Trimming' : 'Trim'}</Button>
+          {/if}
+          <IconButton icon="fa-times" title="Close (Esc)" onclick={closePlayer} />
+        </div>
       </div>
+
       <!-- svelte-ignore a11y_media_has_caption -->
-      <video src={'file://' + target.path} controls autoplay></video>
+      <video bind:this={video} src={'file://' + target.path} autoplay {muted}
+             onloadedmetadata={onLoaded} ontimeupdate={onTimeUpdate}
+             onplay={() => playing = true} onpause={() => playing = false}
+             onclick={togglePlay}></video>
+
+      <div class="transport">
+        <IconButton icon={playing ? 'fa-pause' : 'fa-play'} title={playing ? 'Pause (Space)' : 'Play (Space)'} onclick={togglePlay} />
+        <span class="time" aria-live="off">{fmt(currentTime)} <span class="muted">/ {fmt(duration)}</span></span>
+
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="timeline" class:trimming bind:this={timeline}
+             onpointermove={onPointerMove} onpointerup={onPointerUp} onpointercancel={onPointerUp}
+             onpointerleave={() => { if (!dragging) hoverTime = null; }}
+             onpointerdown={(e) => onPointerDown(e, 'play')}>
+          <div class="track">
+            {#if trimming}
+              <div class="dim" style:left="0" style:width="{pct(inTime)}%"></div>
+              <div class="range" style:left="{pct(inTime)}%" style:width="{pct(outTime) - pct(inTime)}%"></div>
+              <div class="dim" style:left="{pct(outTime)}%" style:width="{100 - pct(outTime)}%"></div>
+            {:else}
+              <div class="played" style:width="{pct(currentTime)}%"></div>
+            {/if}
+          </div>
+          {#if trimming && showTicks}
+            <div class="ticks" aria-hidden="true">
+              {#each keyframes as k (k)}
+                <span class="tick" style:left="{pct(k)}%"></span>
+              {/each}
+            </div>
+          {/if}
+          <div class="playhead" style:left="{pct(currentTime)}%" aria-hidden="true"></div>
+          {#if hoverTime != null && !dragging}
+            <div class="hover-label" style:left="{pct(hoverTime)}%">{fmt(hoverTime)}</div>
+          {/if}
+          {#if trimming}
+            <div class="handle in" class:active={dragging === 'in'} style:left="{pct(inTime)}%"
+                 role="slider" tabindex="0" aria-label="Start of trim" aria-valuemin="0" aria-valuemax={duration}
+                 aria-valuenow={inTime} aria-valuetext={fmt(inTime)}
+                 onpointerdown={(e) => onPointerDown(e, 'in')} onkeydown={(e) => onHandleKey(e, 'in')}>
+              <span class="grip"></span>
+              <span class="label">{fmt(inTime)}</span>
+            </div>
+            <div class="handle out" class:active={dragging === 'out'} style:left="{pct(outTime)}%"
+                 role="slider" tabindex="0" aria-label="End of trim" aria-valuemin="0" aria-valuemax={duration}
+                 aria-valuenow={outTime} aria-valuetext={fmt(outTime)}
+                 onpointerdown={(e) => onPointerDown(e, 'out')} onkeydown={(e) => onHandleKey(e, 'out')}>
+              <span class="grip"></span>
+              <span class="label">{fmt(outTime)}</span>
+            </div>
+          {/if}
+        </div>
+
+        <IconButton icon={muted ? 'fa-volume-xmark' : 'fa-volume-high'} title={muted ? 'Unmute (M)' : 'Mute (M)'} onclick={() => muted = !muted} />
+      </div>
+
+      {#if trimming}
+        <div class="trim-bar">
+          {#if saved}
+            <div class="saved">
+              <i class="fas fa-check" aria-hidden="true"></i>
+              <span class="saved-text">Saved <strong>{saved.name}</strong> · {formatBytes(saved.sizeBytes)}</span>
+              <span class="spacer"></span>
+              {#if saved.previewPath}
+                <Button size="sm" icon="fa-play" onclick={playSaved}>Play it</Button>
+              {/if}
+              <Button size="sm" icon="fa-folder-open" onclick={showSaved}>Show in folder</Button>
+              <Button size="sm" variant="primary" onclick={() => { saved = null; }}>Trim again</Button>
+            </div>
+          {:else}
+            <div class="points">
+              <button class="point" onclick={() => setIn(currentTime)} title="Set start to the playhead (I)">
+                <span class="k">In</span> <span class="v">{fmt(inTime)}</span>
+              </button>
+              <button class="point" onclick={() => setOut(currentTime)} title="Set end to the playhead (O)">
+                <span class="k">Out</span> <span class="v">{fmt(outTime)}</span>
+              </button>
+              <span class="length">
+                <span class="k">Length</span> <span class="v">{selectionLength.toFixed(1)} s</span>
+                {#if estimatedBytes > 0}<span class="muted">· about {formatBytes(estimatedBytes)}</span>{/if}
+              </span>
+            </div>
+            <span class="hint" title="No re-encode: the video, audio, and GPS telemetry are copied as they are. A cut can only start on a keyframe, about one per second on a GoPro.">
+              <i class="fas fa-lock-open" aria-hidden="true"></i>
+              Lossless{#if keyframesLoaded && Math.abs(snappedIn - inTime) > 0.01} · starts at the keyframe {fmt(snappedIn)}{/if}
+            </span>
+            <span class="spacer"></span>
+            <Button size="sm" icon={loopSelection && playing ? 'fa-pause' : 'fa-repeat'}
+                    onclick={() => loopSelection && playing ? video.pause() : playSelection()} title="Loop the selection">
+              {loopSelection && playing ? 'Stop' : 'Loop selection'}
+            </Button>
+            <Button size="sm" variant="primary" icon={saving ? 'fa-spinner fa-spin' : 'fa-scissors'}
+                    disabled={saving || selectionLength < MIN_LEN} onclick={save} title="Save the selection as a new file (Enter)">
+              {saving ? 'Saving...' : 'Save trim'}
+            </Button>
+          {/if}
+        </div>
+        <div class="keys">
+          <span><kbd>I</kbd> <kbd>O</kbd> set in / out</span>
+          <span><kbd>[</kbd> <kbd>]</kbd> jump</span>
+          <span><kbd>←</kbd> <kbd>→</kbd> step, <kbd>Shift</kbd> for 5 s</span>
+          <span><kbd>Space</kbd> play</span>
+          <span><kbd>Enter</kbd> save</span>
+          <span><kbd>Esc</kbd> leave trim</span>
+        </div>
+      {/if}
     </div>
   </div>
 {/if}
@@ -38,7 +443,7 @@
     background: var(--panel-bg);
     border-radius: 10px;
     overflow: hidden;
-    width: min(880px, 92vw);
+    width: min(960px, 94vw);
     display: flex;
     flex-direction: column;
     box-shadow: var(--shadow-md);
@@ -48,8 +453,11 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 12px;
     padding: 8px 12px;
   }
+
+  .header-actions { display: flex; align-items: center; gap: 8px; }
 
   .player-title {
     font-size: 0.85rem;
@@ -60,20 +468,194 @@
     white-space: nowrap;
   }
 
-  .player-close {
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    font-size: 1.3rem;
-    cursor: pointer;
-    line-height: 1;
-  }
-  .player-close:hover { color: var(--text-primary); }
-
   video {
     width: 100%;
-    max-height: 70vh;
+    max-height: 62vh;
     background: black;
     display: block;
+    cursor: pointer;
+  }
+
+  .transport {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 12px 10px;
+  }
+
+  .time {
+    font-variant-numeric: tabular-nums;
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    white-space: nowrap;
+    min-width: 110px;
+  }
+  .muted { color: var(--text-muted); }
+
+  /* Timeline: a 44px tall hit area around a thin track */
+  .timeline {
+    position: relative;
+    flex: 1;
+    height: 44px;
+    cursor: pointer;
+    touch-action: none;
+    user-select: none;
+  }
+
+  .track {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 19px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--border-color);
+    overflow: hidden;
+    transition: height 0.1s, top 0.1s;
+  }
+  .timeline:hover .track { top: 18px; height: 8px; }
+
+  .played { height: 100%; background: var(--primary-color); }
+  .range { position: absolute; top: 0; height: 100%; background: var(--primary-color); opacity: 0.55; }
+  .dim { position: absolute; top: 0; height: 100%; background: transparent; }
+
+  .ticks { position: absolute; left: 0; right: 0; top: 27px; height: 4px; pointer-events: none; }
+  .tick { position: absolute; width: 1px; height: 4px; background: var(--text-muted); opacity: 0.5; }
+
+  .playhead {
+    position: absolute;
+    top: 14px;
+    width: 2px;
+    height: 16px;
+    margin-left: -1px;
+    background: var(--text-primary);
+    border-radius: 1px;
+    pointer-events: none;
+  }
+  .playhead::after {
+    content: '';
+    position: absolute;
+    left: -5px;
+    top: -6px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--text-primary);
+    box-shadow: 0 0 0 2px var(--panel-bg);
+  }
+  .trimming .playhead::after { display: none; }
+
+  .hover-label, .handle .label {
+    position: absolute;
+    bottom: 100%;
+    transform: translateX(-50%);
+    font-size: 0.7rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+    background: var(--panel-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 1px 6px;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .hover-label { margin-bottom: -6px; color: var(--text-secondary); }
+
+  /* Handles: 14px visible, 32px hit width, the whole 44px height */
+  .handle {
+    position: absolute;
+    top: 0;
+    width: 32px;
+    height: 44px;
+    margin-left: -16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: ew-resize;
+    outline: none;
+  }
+  .handle .grip {
+    width: 14px;
+    height: 28px;
+    border-radius: 5px;
+    background: var(--primary-color);
+    box-shadow: 0 0 0 2px var(--panel-bg);
+    position: relative;
+    transition: transform 0.1s;
+  }
+  .handle .grip::before, .handle .grip::after {
+    content: '';
+    position: absolute;
+    top: 8px;
+    width: 1px;
+    height: 12px;
+    background: rgba(255, 255, 255, 0.7);
+  }
+  .handle .grip::before { left: 5px; }
+  .handle .grip::after { left: 8px; }
+  .handle:hover .grip, .handle.active .grip, .handle:focus-visible .grip { transform: scaleY(1.12); }
+  .handle:focus-visible .grip { box-shadow: 0 0 0 2px var(--panel-bg), 0 0 0 4px var(--primary-color); }
+  .handle .label { left: 50%; margin-bottom: 2px; opacity: 0; transition: opacity 0.1s; }
+  .handle:hover .label, .handle.active .label, .handle:focus-visible .label { opacity: 1; }
+  .handle.in .label { transform: translateX(-100%); left: 16px; }
+  .handle.out .label { transform: none; left: 16px; }
+
+  .trim-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 12px 10px;
+    border-top: 1px solid var(--border-color);
+    flex-wrap: wrap;
+  }
+
+  .points { display: flex; align-items: center; gap: 8px; }
+  .point {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    background: var(--state-idle-tint);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 4px 10px;
+    min-height: 30px;
+    cursor: pointer;
+    color: var(--text-primary);
+    font-size: 0.8rem;
+  }
+  .point:hover { border-color: var(--text-secondary); }
+  .length { display: flex; align-items: baseline; gap: 6px; font-size: 0.8rem; padding: 4px 4px; }
+  .k { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+  .v { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  .hint { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-secondary); cursor: help; }
+  .hint i { color: var(--state-ok); }
+  .spacer { flex: 1; }
+
+  .saved { display: flex; align-items: center; gap: 10px; width: 100%; font-size: 0.8rem; }
+  .saved > i { color: var(--state-ok); }
+  .saved-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .keys {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 0 12px 10px;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+  }
+  kbd {
+    display: inline-block;
+    min-width: 16px;
+    padding: 0 4px;
+    border: 1px solid var(--border-color);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 0.68rem;
+    line-height: 16px;
+    text-align: center;
+    color: var(--text-secondary);
+    background: var(--light-bg);
   }
 </style>

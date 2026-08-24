@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,6 +46,9 @@ type Manager interface {
 	PreviewMedia(cameraID, cameraPath string) error
 	PreviewVideo(videoPath string) (string, error)
 	SetPreviewSession(cameraID string, enabled bool) error
+	// Trim
+	VideoKeyframes(videoPath string) ([]int64, int64, error)
+	TrimVideo(videoPath string, startMs, endMs int64) (*model.TrimResult, error)
 	// Camera settings (BLE)
 	GetCameraSettings(cameraID string) ([]model.CameraSetting, time.Time, error)
 	RefreshCameraSettings(cameraID string) ([]model.CameraSetting, time.Time, error)
@@ -633,6 +637,37 @@ func (s *DropzServer) GetVideos(ctx context.Context, req *protocol.GetVideosRequ
 	return &protocol.GetVideosResponse{
 		Videos:     protoVideos,
 		TotalCount: int32(totalCount),
+	}, nil
+}
+
+// GetVideoKeyframes implements the GetVideoKeyframes RPC method
+func (s *DropzServer) GetVideoKeyframes(ctx context.Context, req *protocol.GetVideoKeyframesRequest) (*protocol.GetVideoKeyframesResponse, error) {
+	keys, duration, err := s.manager.VideoKeyframes(req.VideoPath)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return &protocol.GetVideoKeyframesResponse{KeyframeMs: keys, DurationMs: duration}, nil
+}
+
+// TrimVideo implements the TrimVideo RPC method
+func (s *DropzServer) TrimVideo(ctx context.Context, req *protocol.TrimVideoRequest) (*protocol.TrimVideoResponse, error) {
+	result, err := s.manager.TrimVideo(req.VideoPath, req.StartMs, req.EndMs)
+	if err != nil {
+		// Bad path or range is the caller's mistake; an ffmpeg failure is ours
+		if strings.Contains(err.Error(), "ffmpeg") {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	s.NotifyUpdate()
+	return &protocol.TrimVideoResponse{
+		OutputPath:    result.OutputPath,
+		Name:          result.Name,
+		ThumbnailPath: result.ThumbnailPath,
+		PreviewPath:   result.PreviewPath,
+		SizeBytes:     result.SizeBytes,
+		StartMs:       result.StartMs,
+		EndMs:         result.EndMs,
 	}, nil
 }
 

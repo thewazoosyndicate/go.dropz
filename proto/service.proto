@@ -47,6 +47,8 @@ service DropzService {
 
   // Video management
   rpc GetVideos(GetVideosRequest) returns (GetVideosResponse);
+  rpc GetVideoKeyframes(GetVideoKeyframesRequest) returns (GetVideoKeyframesResponse);
+  rpc TrimVideo(TrimVideoRequest) returns (TrimVideoResponse);
 
   // Media browser: cached per-camera catalogs with selective download
   rpc GetCameraMedia(GetCameraMediaRequest) returns (GetCameraMediaResponse);

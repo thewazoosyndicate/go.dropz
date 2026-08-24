@@ -304,6 +304,28 @@ function deserialize_dropz_GetSyncQueueResponse(buffer_arg) {
   return gopro_pb.GetSyncQueueResponse.deserializeBinary(new Uint8Array(buffer_arg));
 }
 
+function serialize_dropz_GetVideoKeyframesRequest(arg) {
+  if (!(arg instanceof video_pb.GetVideoKeyframesRequest)) {
+    throw new Error('Expected argument of type dropz.GetVideoKeyframesRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_GetVideoKeyframesRequest(buffer_arg) {
+  return video_pb.GetVideoKeyframesRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_GetVideoKeyframesResponse(arg) {
+  if (!(arg instanceof video_pb.GetVideoKeyframesResponse)) {
+    throw new Error('Expected argument of type dropz.GetVideoKeyframesResponse');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_GetVideoKeyframesResponse(buffer_arg) {
+  return video_pb.GetVideoKeyframesResponse.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
 function serialize_dropz_GetVideosRequest(arg) {
   if (!(arg instanceof video_pb.GetVideosRequest)) {
     throw new Error('Expected argument of type dropz.GetVideosRequest');
@@ -544,6 +566,28 @@ function serialize_dropz_SetPreviewSessionResponse(arg) {
 
 function deserialize_dropz_SetPreviewSessionResponse(buffer_arg) {
   return gopro_pb.SetPreviewSessionResponse.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_TrimVideoRequest(arg) {
+  if (!(arg instanceof video_pb.TrimVideoRequest)) {
+    throw new Error('Expected argument of type dropz.TrimVideoRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_TrimVideoRequest(buffer_arg) {
+  return video_pb.TrimVideoRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_TrimVideoResponse(arg) {
+  if (!(arg instanceof video_pb.TrimVideoResponse)) {
+    throw new Error('Expected argument of type dropz.TrimVideoResponse');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_TrimVideoResponse(buffer_arg) {
+  return video_pb.TrimVideoResponse.deserializeBinary(new Uint8Array(buffer_arg));
 }
 
 function serialize_dropz_UnmanageCameraRequest(arg) {
@@ -864,6 +908,28 @@ getVideos: {
     requestDeserialize: deserialize_dropz_GetVideosRequest,
     responseSerialize: serialize_dropz_GetVideosResponse,
     responseDeserialize: deserialize_dropz_GetVideosResponse,
+  },
+  getVideoKeyframes: {
+    path: '/dropz.DropzService/GetVideoKeyframes',
+    requestStream: false,
+    responseStream: false,
+    requestType: video_pb.GetVideoKeyframesRequest,
+    responseType: video_pb.GetVideoKeyframesResponse,
+    requestSerialize: serialize_dropz_GetVideoKeyframesRequest,
+    requestDeserialize: deserialize_dropz_GetVideoKeyframesRequest,
+    responseSerialize: serialize_dropz_GetVideoKeyframesResponse,
+    responseDeserialize: deserialize_dropz_GetVideoKeyframesResponse,
+  },
+  trimVideo: {
+    path: '/dropz.DropzService/TrimVideo',
+    requestStream: false,
+    responseStream: false,
+    requestType: video_pb.TrimVideoRequest,
+    responseType: video_pb.TrimVideoResponse,
+    requestSerialize: serialize_dropz_TrimVideoRequest,
+    requestDeserialize: deserialize_dropz_TrimVideoRequest,
+    responseSerialize: serialize_dropz_TrimVideoResponse,
+    responseDeserialize: deserialize_dropz_TrimVideoResponse,
   },
   // Media browser: cached per-camera catalogs with selective download
 getCameraMedia: {

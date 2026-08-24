@@ -285,6 +285,257 @@ func (x *GetVideosResponse) GetTotalCount() int32 {
 	return 0
 }
 
+// Keyframe positions of a library clip, read from its sample tables.
+// A lossless trim can only start on one of these.
+type GetVideoKeyframesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	VideoPath     string                 `protobuf:"bytes,1,opt,name=video_path,json=videoPath,proto3" json:"video_path,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetVideoKeyframesRequest) Reset() {
+	*x = GetVideoKeyframesRequest{}
+	mi := &file_video_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetVideoKeyframesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetVideoKeyframesRequest) ProtoMessage() {}
+
+func (x *GetVideoKeyframesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_video_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetVideoKeyframesRequest.ProtoReflect.Descriptor instead.
+func (*GetVideoKeyframesRequest) Descriptor() ([]byte, []int) {
+	return file_video_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *GetVideoKeyframesRequest) GetVideoPath() string {
+	if x != nil {
+		return x.VideoPath
+	}
+	return ""
+}
+
+type GetVideoKeyframesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	KeyframeMs    []int64                `protobuf:"varint,1,rep,packed,name=keyframe_ms,json=keyframeMs,proto3" json:"keyframe_ms,omitempty"`
+	DurationMs    int64                  `protobuf:"varint,2,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetVideoKeyframesResponse) Reset() {
+	*x = GetVideoKeyframesResponse{}
+	mi := &file_video_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetVideoKeyframesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetVideoKeyframesResponse) ProtoMessage() {}
+
+func (x *GetVideoKeyframesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_video_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetVideoKeyframesResponse.ProtoReflect.Descriptor instead.
+func (*GetVideoKeyframesResponse) Descriptor() ([]byte, []int) {
+	return file_video_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *GetVideoKeyframesResponse) GetKeyframeMs() []int64 {
+	if x != nil {
+		return x.KeyframeMs
+	}
+	return nil
+}
+
+func (x *GetVideoKeyframesResponse) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+// Lossless cut of a library clip into a new file next to it.
+type TrimVideoRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	VideoPath     string                 `protobuf:"bytes,1,opt,name=video_path,json=videoPath,proto3" json:"video_path,omitempty"`
+	StartMs       int64                  `protobuf:"varint,2,opt,name=start_ms,json=startMs,proto3" json:"start_ms,omitempty"` // snapped to the keyframe at or before
+	EndMs         int64                  `protobuf:"varint,3,opt,name=end_ms,json=endMs,proto3" json:"end_ms,omitempty"`       // 0 = end of clip
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TrimVideoRequest) Reset() {
+	*x = TrimVideoRequest{}
+	mi := &file_video_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TrimVideoRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TrimVideoRequest) ProtoMessage() {}
+
+func (x *TrimVideoRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_video_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TrimVideoRequest.ProtoReflect.Descriptor instead.
+func (*TrimVideoRequest) Descriptor() ([]byte, []int) {
+	return file_video_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *TrimVideoRequest) GetVideoPath() string {
+	if x != nil {
+		return x.VideoPath
+	}
+	return ""
+}
+
+func (x *TrimVideoRequest) GetStartMs() int64 {
+	if x != nil {
+		return x.StartMs
+	}
+	return 0
+}
+
+func (x *TrimVideoRequest) GetEndMs() int64 {
+	if x != nil {
+		return x.EndMs
+	}
+	return 0
+}
+
+type TrimVideoResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OutputPath    string                 `protobuf:"bytes,1,opt,name=output_path,json=outputPath,proto3" json:"output_path,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	ThumbnailPath string                 `protobuf:"bytes,3,opt,name=thumbnail_path,json=thumbnailPath,proto3" json:"thumbnail_path,omitempty"` // empty when the thumbnail could not be made
+	PreviewPath   string                 `protobuf:"bytes,4,opt,name=preview_path,json=previewPath,proto3" json:"preview_path,omitempty"`       // empty when the source had no proxy
+	SizeBytes     int64                  `protobuf:"varint,5,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	StartMs       int64                  `protobuf:"varint,6,opt,name=start_ms,json=startMs,proto3" json:"start_ms,omitempty"` // where the cut really starts
+	EndMs         int64                  `protobuf:"varint,7,opt,name=end_ms,json=endMs,proto3" json:"end_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TrimVideoResponse) Reset() {
+	*x = TrimVideoResponse{}
+	mi := &file_video_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TrimVideoResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TrimVideoResponse) ProtoMessage() {}
+
+func (x *TrimVideoResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_video_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TrimVideoResponse.ProtoReflect.Descriptor instead.
+func (*TrimVideoResponse) Descriptor() ([]byte, []int) {
+	return file_video_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *TrimVideoResponse) GetOutputPath() string {
+	if x != nil {
+		return x.OutputPath
+	}
+	return ""
+}
+
+func (x *TrimVideoResponse) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *TrimVideoResponse) GetThumbnailPath() string {
+	if x != nil {
+		return x.ThumbnailPath
+	}
+	return ""
+}
+
+func (x *TrimVideoResponse) GetPreviewPath() string {
+	if x != nil {
+		return x.PreviewPath
+	}
+	return ""
+}
+
+func (x *TrimVideoResponse) GetSizeBytes() int64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
+func (x *TrimVideoResponse) GetStartMs() int64 {
+	if x != nil {
+		return x.StartMs
+	}
+	return 0
+}
+
+func (x *TrimVideoResponse) GetEndMs() int64 {
+	if x != nil {
+		return x.EndMs
+	}
+	return 0
+}
+
 var File_video_proto protoreflect.FileDescriptor
 
 const file_video_proto_rawDesc = "" +
@@ -316,7 +567,30 @@ const file_video_proto_rawDesc = "" +
 	"\x11GetVideosResponse\x12(\n" +
 	"\x06videos\x18\x01 \x03(\v2\x10.dropz.VideoFileR\x06videos\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
-	"totalCountB*Z(github.com/dropz/dropz/internal/protocolb\x06proto3"
+	"totalCount\"9\n" +
+	"\x18GetVideoKeyframesRequest\x12\x1d\n" +
+	"\n" +
+	"video_path\x18\x01 \x01(\tR\tvideoPath\"]\n" +
+	"\x19GetVideoKeyframesResponse\x12\x1f\n" +
+	"\vkeyframe_ms\x18\x01 \x03(\x03R\n" +
+	"keyframeMs\x12\x1f\n" +
+	"\vduration_ms\x18\x02 \x01(\x03R\n" +
+	"durationMs\"c\n" +
+	"\x10TrimVideoRequest\x12\x1d\n" +
+	"\n" +
+	"video_path\x18\x01 \x01(\tR\tvideoPath\x12\x19\n" +
+	"\bstart_ms\x18\x02 \x01(\x03R\astartMs\x12\x15\n" +
+	"\x06end_ms\x18\x03 \x01(\x03R\x05endMs\"\xe3\x01\n" +
+	"\x11TrimVideoResponse\x12\x1f\n" +
+	"\voutput_path\x18\x01 \x01(\tR\n" +
+	"outputPath\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12%\n" +
+	"\x0ethumbnail_path\x18\x03 \x01(\tR\rthumbnailPath\x12!\n" +
+	"\fpreview_path\x18\x04 \x01(\tR\vpreviewPath\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\x05 \x01(\x03R\tsizeBytes\x12\x19\n" +
+	"\bstart_ms\x18\x06 \x01(\x03R\astartMs\x12\x15\n" +
+	"\x06end_ms\x18\a \x01(\x03R\x05endMsB*Z(github.com/dropz/dropz/internal/protocolb\x06proto3"
 
 var (
 	file_video_proto_rawDescOnce sync.Once
@@ -330,18 +604,22 @@ func file_video_proto_rawDescGZIP() []byte {
 	return file_video_proto_rawDescData
 }
 
-var file_video_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_video_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_video_proto_goTypes = []any{
-	(*VideoFile)(nil),             // 0: dropz.VideoFile
-	(*GetVideosRequest)(nil),      // 1: dropz.GetVideosRequest
-	(*GetVideosResponse)(nil),     // 2: dropz.GetVideosResponse
-	(*timestamppb.Timestamp)(nil), // 3: google.protobuf.Timestamp
+	(*VideoFile)(nil),                 // 0: dropz.VideoFile
+	(*GetVideosRequest)(nil),          // 1: dropz.GetVideosRequest
+	(*GetVideosResponse)(nil),         // 2: dropz.GetVideosResponse
+	(*GetVideoKeyframesRequest)(nil),  // 3: dropz.GetVideoKeyframesRequest
+	(*GetVideoKeyframesResponse)(nil), // 4: dropz.GetVideoKeyframesResponse
+	(*TrimVideoRequest)(nil),          // 5: dropz.TrimVideoRequest
+	(*TrimVideoResponse)(nil),         // 6: dropz.TrimVideoResponse
+	(*timestamppb.Timestamp)(nil),     // 7: google.protobuf.Timestamp
 }
 var file_video_proto_depIdxs = []int32{
-	3, // 0: dropz.VideoFile.created_at:type_name -> google.protobuf.Timestamp
-	3, // 1: dropz.VideoFile.synced_at:type_name -> google.protobuf.Timestamp
-	3, // 2: dropz.GetVideosRequest.start_date:type_name -> google.protobuf.Timestamp
-	3, // 3: dropz.GetVideosRequest.end_date:type_name -> google.protobuf.Timestamp
+	7, // 0: dropz.VideoFile.created_at:type_name -> google.protobuf.Timestamp
+	7, // 1: dropz.VideoFile.synced_at:type_name -> google.protobuf.Timestamp
+	7, // 2: dropz.GetVideosRequest.start_date:type_name -> google.protobuf.Timestamp
+	7, // 3: dropz.GetVideosRequest.end_date:type_name -> google.protobuf.Timestamp
 	0, // 4: dropz.GetVideosResponse.videos:type_name -> dropz.VideoFile
 	5, // [5:5] is the sub-list for method output_type
 	5, // [5:5] is the sub-list for method input_type
@@ -361,7 +639,7 @@ func file_video_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_video_proto_rawDesc), len(file_video_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

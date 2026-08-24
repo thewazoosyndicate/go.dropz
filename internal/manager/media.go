@@ -51,14 +51,13 @@ func (m *GoProManager) SetPreviewSession(cameraID string, enabled bool) error {
 	return m.syncCoordinator.SetPreviewSession(cameraID, enabled)
 }
 
-// PreviewVideo generates (or reuses) the in-app playable preview of a
-// library file. Synchronous; long clips take a while.
-func (m *GoProManager) PreviewVideo(videoPath string) (string, error) {
+// libraryFile validates a path the RPC handed us: only files inside the
+// library may be read or written next to.
+func (m *GoProManager) libraryFile(videoPath string) (string, error) {
 	dest := m.db.GetConfig().DestinationFolder
 	if dest == "" {
 		return "", fmt.Errorf("no destination folder configured")
 	}
-	// The RPC hands us a path; only files inside the library may be read
 	clean := filepath.Clean(videoPath)
 	if !strings.HasPrefix(clean, filepath.Clean(dest)+string(filepath.Separator)) {
 		return "", fmt.Errorf("path outside the library: %s", videoPath)
@@ -66,5 +65,33 @@ func (m *GoProManager) PreviewVideo(videoPath string) (string, error) {
 	if fi, err := os.Stat(clean); err != nil || fi.IsDir() {
 		return "", fmt.Errorf("no such library file: %s", videoPath)
 	}
+	return clean, nil
+}
+
+// PreviewVideo generates (or reuses) the in-app playable preview of a
+// library file. Synchronous; long clips take a while.
+func (m *GoProManager) PreviewVideo(videoPath string) (string, error) {
+	clean, err := m.libraryFile(videoPath)
+	if err != nil {
+		return "", err
+	}
 	return m.syncCoordinator.GeneratePreviewFile(clean)
+}
+
+// VideoKeyframes lists where a lossless trim of a library clip can start.
+func (m *GoProManager) VideoKeyframes(videoPath string) ([]int64, int64, error) {
+	clean, err := m.libraryFile(videoPath)
+	if err != nil {
+		return nil, 0, err
+	}
+	return m.syncCoordinator.VideoKeyframes(clean)
+}
+
+// TrimVideo writes a lossless cut of a library clip next to it.
+func (m *GoProManager) TrimVideo(videoPath string, startMs, endMs int64) (*model.TrimResult, error) {
+	clean, err := m.libraryFile(videoPath)
+	if err != nil {
+		return nil, err
+	}
+	return m.syncCoordinator.TrimVideo(clean, startMs, endMs)
 }

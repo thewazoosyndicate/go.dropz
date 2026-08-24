@@ -28,11 +28,13 @@ type Store struct {
 }
 
 // storeJSON is the JSON-serializable representation of Store.
+// Config is a pointer so a file missing the key keeps the defaults
+// instead of zeroing every interval.
 type storeJSON struct {
 	CameraStates map[string]*model.CameraWithState `json:"camera_states"`
 	SyncQueue    []*model.SyncQueueEntry           `json:"sync_queue"`
 	Groups       []*model.Group                    `json:"groups"`
-	Config       model.Config                      `json:"config"`
+	Config       *model.Config                     `json:"config"`
 }
 
 func (db *Store) MarshalJSON() ([]byte, error) {
@@ -40,7 +42,7 @@ func (db *Store) MarshalJSON() ([]byte, error) {
 		CameraStates: db.cameraStates,
 		SyncQueue:    db.syncQueue,
 		Groups:       db.groups,
-		Config:       db.config,
+		Config:       &db.config,
 	})
 }
 
@@ -49,10 +51,23 @@ func (db *Store) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
+	// A truncated or hand-edited file can omit any key; nil collections
+	// must not survive loading, or the first write panics on a nil map.
 	db.cameraStates = aux.CameraStates
+	if db.cameraStates == nil {
+		db.cameraStates = make(map[string]*model.CameraWithState)
+	}
 	db.syncQueue = aux.SyncQueue
+	if db.syncQueue == nil {
+		db.syncQueue = make([]*model.SyncQueueEntry, 0)
+	}
 	db.groups = aux.Groups
-	db.config = aux.Config
+	if db.groups == nil {
+		db.groups = make([]*model.Group, 0)
+	}
+	if aux.Config != nil {
+		db.config = *aux.Config
+	}
 	return nil
 }
 
@@ -247,6 +262,15 @@ func (db *Store) RekeyCamera(oldKey, newKey string) error {
 	if oldKey == newKey {
 		return nil
 	}
+	if existing, taken := db.cameraStates[newKey]; taken {
+		// The serial-keyed entry is the camera's durable identity (ID,
+		// managed/paired flags, group membership). The oldKey entry is a
+		// duplicate born from a rotated BLE address: take its fresh
+		// address and drop it, instead of clobbering the identity.
+		existing.Camera.BLEAddress = cs.Camera.BLEAddress
+		delete(db.cameraStates, oldKey)
+		return db.saveToFile()
+	}
 	db.cameraStates[newKey] = cs
 	delete(db.cameraStates, oldKey)
 	return db.saveToFile()
@@ -265,33 +289,6 @@ func (db *Store) AddOrUpdateDiscoveredCamera(camera *model.DiscoveredCamera) err
 	db.cameraStates[key] = camera.CameraState
 
 	return db.saveToFile()
-}
-
-// GetDiscoveredCamera retrieves a discovered camera by key (serial or BLE address)
-func (db *Store) GetDiscoveredCamera(key string) (*model.DiscoveredCamera, bool) {
-	db.mutex.RLock()
-	defer db.mutex.RUnlock()
-
-	cameraState, exists := db.cameraStates[key]
-	if !exists {
-		return nil, false
-	}
-	return &model.DiscoveredCamera{CameraState: db.copyCamera(cameraState)}, true
-}
-
-// GetManagedCamera retrieves a managed camera by key (serial or BLE address)
-func (db *Store) GetManagedCamera(key string) (*model.ManagedCamera, bool) {
-	db.mutex.RLock()
-	defer db.mutex.RUnlock()
-
-	cameraState, exists := db.cameraStates[key]
-	if !exists {
-		return nil, false
-	}
-	if cameraState.InManagedPool() {
-		return &model.ManagedCamera{CameraState: db.copyCamera(cameraState)}, true
-	}
-	return nil, false
 }
 
 // GetCameraByID retrieves a camera by its ID (returns a copy)
@@ -371,20 +368,6 @@ func (db *Store) GetSyncQueue() []*model.SyncQueueEntry {
 	})
 
 	return queue
-}
-
-// UpdateSyncQueueEntry updates an existing sync queue entry
-func (db *Store) UpdateSyncQueueEntry(entry *model.SyncQueueEntry) error {
-	db.mutex.Lock()
-	defer db.mutex.Unlock()
-
-	for i, existing := range db.syncQueue {
-		if existing.CameraID == entry.CameraID {
-			db.syncQueue[i] = entry
-			return db.saveToFile()
-		}
-	}
-	return fmt.Errorf("%w: no sync queue entry for camera %s", model.ErrCameraNotFound, entry.CameraID)
 }
 
 // RemoveSyncQueueEntry removes an entry from the sync queue
@@ -652,20 +635,6 @@ func (db *Store) GetCamerasForManagedPool() []*model.ManagedCamera {
 	cameras := make([]*model.ManagedCamera, 0)
 	for _, cameraState := range db.cameraStates {
 		if cameraState.InManagedPool() {
-			cameras = append(cameras, &model.ManagedCamera{CameraState: db.copyCamera(cameraState)})
-		}
-	}
-	return cameras
-}
-
-// GetCamerasForSyncQueue returns cameras that should appear in the Sync Queue
-func (db *Store) GetCamerasForSyncQueue() []*model.ManagedCamera {
-	db.mutex.RLock()
-	defer db.mutex.RUnlock()
-
-	cameras := make([]*model.ManagedCamera, 0)
-	for _, cameraState := range db.cameraStates {
-		if cameraState.EligibleForSyncQueue() {
 			cameras = append(cameras, &model.ManagedCamera{CameraState: db.copyCamera(cameraState)})
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/internal/ble/tlv"
+	"github.com/dropz/dropz/internal/model"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -16,7 +17,8 @@ var errAlreadyConnected = errors.New("device already connected")
 
 // ErrBluetoothUnavailable is returned by scan and connect operations when no
 // working adapter exists; the app runs degraded instead of refusing to start.
-var ErrBluetoothUnavailable = errors.New("bluetooth unavailable")
+// Aliased from model so the gRPC layer can map it without importing ble.
+var ErrBluetoothUnavailable = model.ErrBluetoothUnavailable
 
 const (
 	responseTimeout     = 5 * time.Second  // per-command TLV response wait

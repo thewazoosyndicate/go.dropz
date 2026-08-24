@@ -1,6 +1,5 @@
 <script>
-  import { addToSyncQueue, cancelSync, toggleDeviceManaged, setPreviewSession } from '../lib/grpc/actions.js';
-  import { addToast } from '../lib/stores/ui.svelte.js';
+  import { addToSyncQueue, cancelSync, toggleDeviceManaged } from '../lib/grpc/actions.js';
   import { getSyncQueue } from '../lib/stores/sync.svelte.js';
   import { getAllDevices } from '../lib/stores/devices.svelte.js';
   import { openCameraSettings, openLibrary } from '../lib/stores/ui.svelte.js';
@@ -101,24 +100,6 @@
     else addToSyncQueue(device.macAddress);
   }
 
-  // Armed session state: live link, connecting, or waiting for range
-  let previewState = $derived.by(() => {
-    if (!device.previewEnabled) return null;
-    const op = syncEntry?.currentOperation || '';
-    if (op === 'Preview session active' || op === 'Preview ready' || op === 'Fetching preview' || op === 'Converting preview') return 'live';
-    if (device.isSyncing || isInSyncQueue) return 'connecting';
-    if (!device.isReachable) return 'waiting';
-    return 'connecting';
-  });
-
-  async function togglePreview() {
-    try {
-      await setPreviewSession(device.id, !device.previewEnabled);
-    } catch (e) {
-      addToast(e.message || 'Preview toggle failed', 'error');
-    }
-  }
-
   function handleUnmanage() {
     toggleDeviceManaged(device.macAddress, false);
   }
@@ -182,15 +163,6 @@
       {/if}
     </div>
 
-    {#if previewState}
-      <div class="preview-state preview-{previewState}">
-        <i class="fas {previewState === 'live' ? 'fa-satellite-dish' : previewState === 'waiting' ? 'fa-clock' : 'fa-spinner fa-spin'}"></i>
-        {previewState === 'live' ? 'Preview session live' :
-         previewState === 'waiting' ? 'Preview armed · waiting for camera' :
-         'Preview connecting...'}
-      </div>
-    {/if}
-
     {#if device.lastSyncError && !device.isSyncing}
       <div class="sync-error">
         <i class="fas fa-exclamation-triangle"></i> {device.lastSyncError}
@@ -222,11 +194,6 @@
     <button class="btn btn-outline" onclick={handleBrowse} disabled={!device.id}
             title="Browse media" aria-label="Browse media">
       <i class="fas fa-photo-film"></i>
-    </button>
-    <button class="btn btn-outline" class:preview-on={device.previewEnabled} onclick={togglePreview}
-            title={device.previewEnabled ? 'Disarm preview session' : 'Keep a preview session up while in range'}
-            aria-label="Toggle preview session">
-      <i class="fas fa-satellite-dish"></i>
     </button>
     <button class="btn btn-outline" onclick={handleSettings} disabled={device.isSyncing}
             title="Camera settings" aria-label="Camera settings">
@@ -442,19 +409,6 @@
     gap: 4px;
   }
 
-  .preview-state {
-    font-size: 0.72rem;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-  }
-  .preview-live { color: var(--secondary-color); }
-  .preview-connecting, .preview-waiting { color: var(--text-muted); }
-
-  .btn-outline.preview-on {
-    border-color: var(--secondary-color);
-    color: var(--secondary-color);
-  }
 
   .card-actions {
     display: flex;

@@ -1,7 +1,8 @@
 <script>
-  import { fetchCameraMedia, requestMediaDownload, previewMedia } from '../lib/grpc/actions.js';
+  import { fetchCameraMedia, requestMediaDownload, previewMedia, setPreviewSession } from '../lib/grpc/actions.js';
   import { addToast, addLog, openPlayer } from '../lib/stores/ui.svelte.js';
   import { getSyncQueue } from '../lib/stores/sync.svelte.js';
+  import { getAllDevices } from '../lib/stores/devices.svelte.js';
 
   let { cameraId, cameraName } = $props();
 
@@ -15,6 +16,35 @@
   let loadedFor = $state(null);
 
   let syncEntry = $derived(getSyncQueue().find(e => e.cameraId === cameraId));
+  let device = $derived(Object.values(getAllDevices()).find(d => d.id === cameraId));
+
+  // Session state while armed: live link, connecting, or out of range
+  let sessionState = $derived.by(() => {
+    if (!device?.previewEnabled) return null;
+    const op = syncEntry?.currentOperation || '';
+    if (op.startsWith('Preview session') || op.startsWith('Fetching') || op.startsWith('Converting') || op === 'Preview ready') return 'live';
+    if (device.isSyncing || syncEntry) return 'connecting';
+    if (!device.isReachable) return 'waiting';
+    return 'connecting';
+  });
+
+  async function toggleSession() {
+    try {
+      await setPreviewSession(cameraId, !device?.previewEnabled);
+    } catch (e) {
+      addToast(e.message || 'Preview session toggle failed', 'error');
+    }
+  }
+
+  // The session only matters while this camera's library is on screen:
+  // navigating away (other camera, local tab, tab switch, close) disarms.
+  $effect(() => {
+    const id = cameraId;
+    return () => {
+      const dev = Object.values(getAllDevices()).find(d => d.id === id);
+      if (dev?.previewEnabled) setPreviewSession(id, false).catch(() => {});
+    };
+  });
   // Selection and keys use cameraPath: cards can repeat a name across
   // GOPRO directories, and a name-keyed each crashes the whole UI.
   let selectedPaths = $derived(Object.keys(selected).filter(p => selected[p]));
@@ -159,6 +189,15 @@
       {/if}
     </div>
     <div class="toolbar-right">
+      <button class="btn btn-outline session-toggle" class:session-on={device?.previewEnabled}
+              onclick={toggleSession}
+              title={device?.previewEnabled ? 'Close the camera link' : 'Keep a camera link up for instant previews'}>
+        <i class="fas fa-satellite-dish"></i>
+        {#if sessionState === 'live'}Live
+        {:else if sessionState === 'connecting'}Connecting...
+        {:else if sessionState === 'waiting'}Waiting for camera
+        {:else}Camera link{/if}
+      </button>
       {#if syncEntry}
         <span class="syncing-badge">
           <i class="fas fa-spinner fa-spin"></i> {syncEntry.currentOperation || 'Syncing...'}
@@ -284,6 +323,11 @@
     background: none;
     border: 1px solid var(--border-color);
     color: var(--text-primary);
+  }
+
+  .session-toggle.session-on {
+    border-color: var(--secondary-color);
+    color: var(--secondary-color);
   }
 
   .media-grid {

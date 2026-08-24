@@ -20,6 +20,16 @@ var errAlreadyConnected = errors.New("device already connected")
 // Aliased from model so the gRPC layer can map it without importing ble.
 var ErrBluetoothUnavailable = model.ErrBluetoothUnavailable
 
+// ErrBondLost marks repeated link aborts against a camera that is still
+// advertising: the camera dropped its side of the bond (observed on HERO13
+// when pairing finish never landed) and only re-pairing recovers.
+var ErrBondLost = errors.New("BLE bond lost, camera must be paired again")
+
+const (
+	bondLossAbortThreshold = 3               // whole connect calls, not attempts
+	bondLossSeenWindow     = 2 * time.Minute // camera must still be advertising
+)
+
 const (
 	responseTimeout     = 5 * time.Second  // per-command TLV response wait
 	fragmentTimeout     = 10 * time.Second // stale multi-packet message cleanup
@@ -63,6 +73,7 @@ type Manager struct {
 	metadataCallback  MetadataUpdateFunc                                   // callback for metadata updates during connection
 	statusCallback    func(macAddress string, statusID byte, value []byte) // push notification callback
 	sessions          map[string]bool                                      // addresses with an active logical session
+	connectAborts     map[string]int                                       // consecutive fully-aborted connect calls per address
 }
 
 // TryAcquireSession claims exclusive use of one camera for a logical BLE
@@ -108,6 +119,7 @@ func NewManager(adapter *bluetooth.Adapter, log *slog.Logger) *Manager {
 		discoveredDevices: make(map[string]*Device),
 		conns:             make(map[string]*conn),
 		sessions:          make(map[string]bool),
+		connectAborts:     make(map[string]int),
 		log:               log.With("component", "ble"),
 	}
 	if adapter != nil {

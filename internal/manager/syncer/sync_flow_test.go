@@ -2,7 +2,9 @@ package syncer
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,14 +18,20 @@ import (
 type fakeBLE struct {
 	connects    atomic.Int32
 	disconnects atomic.Int32
+	forgets     atomic.Int32
+	// set to fail Connect with this error
+	connectErr error
 	// merged into QueryStatuses responses (busy/encoding stay idle)
 	statuses map[byte][]byte
 }
 
 func (f *fakeBLE) AcquireSession(string, time.Duration) (func(), error) { return func() {}, nil }
-func (f *fakeBLE) Connect(string) error                                 { f.connects.Add(1); return nil }
-func (f *fakeBLE) Disconnect(string) error                              { f.disconnects.Add(1); return nil }
-func (f *fakeBLE) KeepAlive(string) error                               { return nil }
+func (f *fakeBLE) Connect(string) error {
+	f.connects.Add(1)
+	return f.connectErr
+}
+func (f *fakeBLE) Disconnect(string) error { f.disconnects.Add(1); return nil }
+func (f *fakeBLE) KeepAlive(string) error  { return nil }
 func (f *fakeBLE) QueryStatuses(string, []byte) (map[byte][]byte, error) {
 	// idle: busy=0, encoding=0
 	out := map[byte][]byte{ble.StatusSystemBusy: {0}, ble.StatusEncoding: {0}}
@@ -33,6 +41,7 @@ func (f *fakeBLE) QueryStatuses(string, []byte) (map[byte][]byte, error) {
 	return out, nil
 }
 func (f *fakeBLE) WaitForWiFiAPReady(string, time.Duration) error { return nil }
+func (f *fakeBLE) ForgetDevice(string) error                      { f.forgets.Add(1); return nil }
 func (f *fakeBLE) SetAPControl(string, ble.WiFiAPMode) error      { return nil }
 
 // fakeWiFi serves one media file and records download selections.
@@ -225,5 +234,27 @@ func TestPerformCameraSyncSelectionNeverSkips(t *testing.T) {
 
 	if fw.factoryCalls.Load() != 1 {
 		t.Error("explicit selection must always get the WiFi cycle")
+	}
+}
+
+func TestPerformCameraSyncBondLossClearsPairing(t *testing.T) {
+	c, fb, fw, task := newFlowCoordinator(t)
+	fb.connectErr = fmt.Errorf("3 consecutive aborted connects while advertising: %w", ble.ErrBondLost)
+
+	c.syncSem <- struct{}{}
+	c.PerformCameraSync(task)
+
+	if fb.forgets.Load() != 1 {
+		t.Error("stale bond not forgotten")
+	}
+	cs, _ := c.db.GetCameraByID("cam1")
+	if cs.Status.IsPaired {
+		t.Error("bond loss must clear the paired flag")
+	}
+	if !strings.Contains(cs.Status.LastSyncError, "Pairing lost") {
+		t.Errorf("lastSyncError = %q, want pairing-lost message", cs.Status.LastSyncError)
+	}
+	if fw.factoryCalls.Load() != 0 {
+		t.Error("no WiFi cycle on a failed connect")
 	}
 }

@@ -1,12 +1,25 @@
 package manager
 
 import (
+	"errors"
 	"time"
 
 	"github.com/dropz/dropz/internal/ble"
 	"github.com/dropz/dropz/internal/manager/syncer"
 	"github.com/dropz/dropz/internal/model"
 )
+
+// recoverLostBond clears both sides of a stale bond so the existing
+// pairing-mode auto-pair flow can re-establish it.
+func (m *GoProManager) recoverLostBond(cs *model.CameraWithState, bleAddress string) {
+	m.log.Warn("BLE bond lost, clearing pairing", cs.LogAttrs()...)
+	if err := m.ble.ForgetDevice(bleAddress); err != nil {
+		m.log.Warn("Failed to remove stale bond", append(cs.LogAttrs(), "err", err)...)
+	}
+	_ = m.db.SetCameraPairedByID(cs.Camera.ID, false)
+	_ = m.db.SetLastSyncErrorByID(cs.Camera.ID, "Pairing lost, put the camera in pairing mode to pair again")
+	m.notify()
+}
 
 // enqueueStatusChecks queues BLE status checks for all eligible managed cameras.
 // The statusCheckWorker drains the queue; a full channel drops the request,
@@ -60,6 +73,10 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 	defer release()
 
 	if err := m.ble.ConnectForStatusCheck(bleAddress); err != nil {
+		if errors.Is(err, ble.ErrBondLost) {
+			m.recoverLostBond(cs, bleAddress)
+			return
+		}
 		m.log.Debug("Status check connect failed", append(cs.LogAttrs(), "err", err)...)
 		return
 	}

@@ -105,3 +105,19 @@ func (m *Manager) handleNotification(macAddress string, collector *tlv.FragmentC
 func buildProtobufPacket(featureID byte, data []byte) []byte {
 	return tlv.BuildTLVPackets(append([]byte{featureID}, data...))
 }
+
+// sendProtobufCommand sends [ActionID][protobuf] under featureID and returns
+// the response protobuf. Protobuf responses are [featureID][actionID][proto],
+// not TLV's [id][status][payload]: what sendMessage calls Status is really
+// the response action ID (request action | 0x80), verified here.
+func (m *Manager) sendProtobufCommand(macAddress string, charUUID string, featureID, actionID byte, payload []byte) ([]byte, error) {
+	data := append([]byte{actionID}, payload...)
+	resp, err := m.sendMessage(macAddress, charUUID, featureID, data, buildProtobufPacket)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Status != actionID|0x80 {
+		return nil, fmt.Errorf("unexpected response action 0x%02X to feature 0x%02X action 0x%02X", resp.Status, featureID, actionID)
+	}
+	return resp.Data, nil
+}

@@ -46,6 +46,7 @@ type bleClient interface {
 	QueryStatuses(macAddress string, statusIDs []byte) (map[byte][]byte, error)
 	WaitForWiFiAPReady(macAddress string, timeout time.Duration) error
 	SetAPControl(macAddress string, mode ble.WiFiAPMode) error
+	ForgetDevice(macAddress string) error
 }
 
 // wifiClient is the slice of wifi.WiFiManager the sync flow uses.
@@ -442,9 +443,21 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 			c.log.Info("Camera already up to date, WiFi skipped", camera.LogAttrs()...)
 			return
 		}
-		c.updateProgress(task, step.failMsg, step.percent)
+		failMsg := step.failMsg
+		if errors.Is(err, ble.ErrBondLost) {
+			// The camera dropped its side of the bond (HERO13 without a
+			// completed pairing finish); connects abort until both sides
+			// forget it and the camera is paired again.
+			failMsg = "Pairing lost, put the camera in pairing mode to pair again"
+			c.log.Warn("BLE bond lost, clearing pairing", camera.LogAttrs()...)
+			if forgetErr := c.ble.ForgetDevice(bleAddress); forgetErr != nil {
+				c.log.Warn("Failed to remove stale bond", append(camera.LogAttrs(), "err", forgetErr)...)
+			}
+			_ = c.db.SetCameraPairedByID(task.CameraID, false)
+		}
+		c.updateProgress(task, failMsg, step.percent)
 		c.log.Error("Sync failed", append(camera.LogAttrs(), "step", step.label, "err", err)...)
-		_ = c.db.SetLastSyncErrorByID(task.CameraID, step.failMsg)
+		_ = c.db.SetLastSyncErrorByID(task.CameraID, failMsg)
 		return
 	}
 

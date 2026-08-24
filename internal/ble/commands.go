@@ -90,16 +90,30 @@ func (m *Manager) Sleep(macAddress string) error {
 	return nil
 }
 
-// SendPairingFinish sends the RequestPairingFinish protobuf command (Feature 0x03, Action 0x01)
-// to transition the camera to paired state.
+// Wireless-management protobuf IDs (OpenGoPro network_management).
+const (
+	FeatureWirelessManagement = 0x03
+	ActionSetPairingState     = 0x01
+	protoResultSuccess        = 1 // EnumResultGeneric.RESULT_SUCCESS
+)
+
+// SendPairingFinish sends RequestPairingFinish to transition the camera to
+// paired state. HERO13+ commit the bond only after answering this; a lost
+// or rejected exchange means the camera drops the bond at power-off.
 func (m *Manager) SendPairingFinish(macAddress string) error {
-	// Hand-encoded protobuf: field 1 (varint, tag=0x08, value=0=SUCCESS), field 2 (string, tag=0x12, "dropz")
+	// Hand-encoded RequestPairingFinish: field 1 (varint, tag=0x08,
+	// value=0=SUCCESS), field 2 (string, tag=0x12, name; required, unused)
 	phoneName := []byte("dropz")
 	payload := append([]byte{0x08, 0x00, 0x12, byte(len(phoneName))}, phoneName...)
-	// ActionID 0x01 prepended to payload
-	data := append([]byte{0x01}, payload...)
-	_, err := m.sendMessage(macAddress, CharNetworkMgmtCommand, 0x03, data, buildProtobufPacket)
-	return err
+	respProto, err := m.sendProtobufCommand(macAddress, CharNetworkMgmtCommand, FeatureWirelessManagement, ActionSetPairingState, payload)
+	if err != nil {
+		return err
+	}
+	// ResponseGeneric: field 1 (varint, tag=0x08) result
+	if len(respProto) < 2 || respProto[0] != 0x08 || respProto[1] != protoResultSuccess {
+		return fmt.Errorf("pairing finish rejected: response %x", respProto)
+	}
+	return nil
 }
 
 // RegisterStatusUpdates subscribes to push notifications for the given status IDs.

@@ -84,7 +84,8 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 	// recover a stale GATT handle, so re-calling DiscoverServices is useless).
 	var device bluetooth.Device
 	var services []bluetooth.DeviceService
-	var connected bool
+	var connected, everConnected bool
+	var lastConnErr error
 
 	for retry := 0; retry < ServiceDiscoveryRetries; retry++ {
 		if retry > 0 {
@@ -103,9 +104,11 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 			// Retries at Debug; the terminal failure is returned and the
 			// caller owns the failure log
 			m.log.Debug("Connection attempt failed", "ble_addr", macAddress, "attempt", retry+1, "err", connErr)
+			lastConnErr = connErr
 			continue
 		}
 		connected = true
+		everConnected = true
 		m.log.Debug("BLE connected", "ble_addr", macAddress, "attempt", retry+1, "elapsed", time.Since(connectStart))
 
 		c := m.newConn(macAddress, &device)
@@ -136,10 +139,44 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 		if connected {
 			_ = device.Disconnect()
 		}
+		if !everConnected {
+			return nil, time.Time{}, m.connectFailure(macAddress, lastConnErr)
+		}
 		return nil, time.Time{}, fmt.Errorf("service discovery failed after %d retries", ServiceDiscoveryRetries)
 	}
 
+	m.resetConnectAborts(macAddress)
 	return services, connectStart, nil
+}
+
+// connectFailure classifies a connect that never reached service discovery.
+// Repeated link aborts against a camera that is still advertising mean the
+// camera dropped its side of the bond; anything else stays generic.
+func (m *Manager) connectFailure(macAddress string, lastErr error) error {
+	if lastErr == nil {
+		return fmt.Errorf("connect failed after %d retries", ServiceDiscoveryRetries)
+	}
+	if isConnectAbort(lastErr) {
+		m.mutex.Lock()
+		m.connectAborts[macAddress]++
+		aborts := m.connectAborts[macAddress]
+		var lastSeen time.Time
+		if dev, ok := m.discoveredDevices[macAddress]; ok {
+			lastSeen = dev.LastSeen
+		}
+		m.mutex.Unlock()
+		if aborts >= bondLossAbortThreshold && time.Since(lastSeen) < bondLossSeenWindow {
+			return fmt.Errorf("%d consecutive aborted connects while advertising: %w", aborts, ErrBondLost)
+		}
+	}
+	return fmt.Errorf("connect failed after %d retries: %w", ServiceDiscoveryRetries, lastErr)
+}
+
+// resetConnectAborts clears the bond-loss counter after a working connect.
+func (m *Manager) resetConnectAborts(macAddress string) {
+	m.mutex.Lock()
+	delete(m.connectAborts, macAddress)
+	m.mutex.Unlock()
 }
 
 // discoverCharacteristics enumerates characteristics on the given services,
@@ -465,12 +502,12 @@ func (m *Manager) ConnectForPairing(macAddress string) (err error) {
 		CharNetworkMgmtResponse: true,
 	}, connectStart)
 
-	// Synchronous: HERO11 never answers 0x03 (times out, harmless), but
-	// HERO13 completes the exchange; firing it in a goroutine raced the
+	// Synchronous: HERO11 never answers (times out, harmless), but HERO13
+	// completes the exchange; firing it in a goroutine raced the
 	// post-pairing disconnect, the camera never saw pairing finish, and
 	// it dropped the bond at power-off (connects then abort forever).
 	if err := m.SendPairingFinish(macAddress); err != nil {
-		m.log.Debug("Pairing finish unanswered", "ble_addr", macAddress, "err", err)
+		m.log.Debug("Pairing finish not accepted", "ble_addr", macAddress, "err", err)
 	} else {
 		m.log.Debug("Pairing finish acknowledged", "ble_addr", macAddress)
 	}

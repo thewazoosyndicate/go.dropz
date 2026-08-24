@@ -465,13 +465,15 @@ func (m *Manager) ConnectForPairing(macAddress string) (err error) {
 		CharNetworkMgmtResponse: true,
 	}, connectStart)
 
-	// Fire-and-forget - camera never responds to 0x03
-	go func() {
-		if err := m.SendPairingFinish(macAddress); err != nil {
-			// Best-effort: cameras never answer 0x03
-			m.log.Debug("Pairing finish command failed", "ble_addr", macAddress, "err", err)
-		}
-	}()
+	// Synchronous: HERO11 never answers 0x03 (times out, harmless), but
+	// HERO13 completes the exchange; firing it in a goroutine raced the
+	// post-pairing disconnect, the camera never saw pairing finish, and
+	// it dropped the bond at power-off (connects then abort forever).
+	if err := m.SendPairingFinish(macAddress); err != nil {
+		m.log.Debug("Pairing finish unanswered", "ble_addr", macAddress, "err", err)
+	} else {
+		m.log.Debug("Pairing finish acknowledged", "ble_addr", macAddress)
+	}
 
 	// Read WiFi credentials (now accessible after D-Bus bonding)
 	ssid, password, credErr := m.GetWifiCredentials(macAddress)

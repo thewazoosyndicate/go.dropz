@@ -13,19 +13,16 @@ import (
 
 const pairingTimeout = 30 * time.Second
 
-// BLEOperation runs a BLE operation with the manager's retry policy.
-type BLEOperation func(ctx context.Context, critical bool, op func() error) error
-
 type Manager struct {
 	db           *store.Store
 	ble          *ble.Manager
 	log          *slog.Logger
 	ctx          context.Context
-	bleOperation BLEOperation
+	bleOperation ble.Operation
 	notifier     func()
 }
 
-func NewManager(ctx context.Context, db *store.Store, ble *ble.Manager, log *slog.Logger, bleOperation BLEOperation, notifier func()) *Manager {
+func NewManager(ctx context.Context, db *store.Store, ble *ble.Manager, log *slog.Logger, bleOperation ble.Operation, notifier func()) *Manager {
 	return &Manager{
 		db:           db,
 		ble:          ble,
@@ -63,7 +60,7 @@ func (pm *Manager) PairCamera(cameraID string) (*model.ManagedCamera, error) {
 
 	var verifiedPairingState bool
 
-	bleErr := pm.bleOperation(ctx, true, func() error {
+	bleErr := pm.bleOperation(ctx, func() error {
 		if err := pm.ble.ConnectForPairing(bleAddress); err != nil {
 			return fmt.Errorf("failed to connect: %w", err)
 		}

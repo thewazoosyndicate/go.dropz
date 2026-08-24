@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	syncpkg "github.com/dropz/dropz/internal/manager/sync"
+	"github.com/dropz/dropz/internal/manager/syncer"
 	"github.com/dropz/dropz/internal/model"
 )
 
@@ -36,7 +36,7 @@ func (m *GoProManager) GetCameraMedia(cameraID string) ([]model.CameraMediaItem,
 	if folder == "" {
 		return nil, time.Time{}, nil
 	}
-	return syncpkg.ReadCatalog(folder)
+	return syncer.ReadCatalog(folder)
 }
 
 // RequestMediaDownload queues a selection download (or catalog-only

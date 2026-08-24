@@ -1,4 +1,4 @@
-package sync
+package syncer
 
 import (
 	"context"
@@ -102,7 +102,7 @@ func fileExists(path string) bool {
 
 // refreshThumbnails fetches previews the local cache is missing.
 // Best effort per file; a camera mid-capture can refuse some.
-func refreshThumbnails(ctx context.Context, wm *wifi.WiFiManager, cameraFolder string, files []wifi.MediaFile, log *slog.Logger) {
+func refreshThumbnails(ctx context.Context, wm wifiClient, cameraFolder string, files []wifi.MediaFile, log *slog.Logger) {
 	thumbDir := filepath.Join(cameraFolder, thumbnailDirName)
 	if err := os.MkdirAll(thumbDir, 0755); err != nil {
 		log.Warn("Cannot create thumbnail dir", "dir", thumbDir, "err", err)

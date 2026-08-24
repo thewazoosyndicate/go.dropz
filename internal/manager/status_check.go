@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/dropz/dropz/internal/ble"
-	syncpkg "github.com/dropz/dropz/internal/manager/sync"
+	"github.com/dropz/dropz/internal/manager/syncer"
 	"github.com/dropz/dropz/internal/model"
 )
 
@@ -83,7 +83,7 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 	syncQueued = m.processStatusResults(cs, statuses)
 
 	// A busy or recording camera must not be put to sleep.
-	if cameraInUse(statuses) {
+	if ble.InUse(statuses) {
 		// Fires on every poll while recording, hence Debug
 		m.log.Debug("Camera busy or recording, leaving it awake", cs.LogAttrs()...)
 		_ = m.ble.DisconnectQuietly(bleAddress)
@@ -127,9 +127,13 @@ func (m *GoProManager) processStatusResults(cs *model.CameraWithState, statuses 
 	oldVideos := cs.Metadata.NumVideos
 	oldRemainingKB := cs.Metadata.RemainingSpaceKB
 
+	// A response can omit any status ID; a missing one must not overwrite
+	// the stored value with zero, or new-media detection (which requires a
+	// nonzero old count) is silently disabled from then on.
 	var newBattery int32
-	var newPhotos, newVideos, newSDStatus int32
-	var newRemainingKB int64
+	newPhotos, newVideos := int32(-1), int32(-1)
+	var newSDStatus int32 = 255
+	var newRemainingKB int64 = -1
 
 	if v, ok := statuses[ble.StatusBatteryPercentage]; ok && len(v) >= 1 {
 		newBattery = int32(v[0])
@@ -163,7 +167,7 @@ func (m *GoProManager) processStatusResults(cs *model.CameraWithState, statuses 
 		if newSDStatus != 255 {
 			cs.Metadata.SDCardStatusCode = newSDStatus
 		}
-		if newRemainingKB > 0 || newSDStatus == 0 {
+		if newRemainingKB > 0 || (newRemainingKB == 0 && newSDStatus == 0) {
 			cs.Metadata.RemainingSpaceKB = newRemainingKB
 		}
 	})
@@ -187,7 +191,7 @@ func (m *GoProManager) processStatusResults(cs *model.CameraWithState, statuses 
 	_ = m.db.AddSyncQueueEntry(&model.SyncQueueEntry{
 		CameraID:         cs.Camera.ID,
 		QueuedAt:         time.Now(),
-		Priority:         syncpkg.SyncPriorityAuto,
+		Priority:         syncer.SyncPriorityAuto,
 		CurrentOperation: "Waiting to start",
 	})
 	m.notify()
@@ -195,17 +199,8 @@ func (m *GoProManager) processStatusResults(cs *model.CameraWithState, statuses 
 	return true
 }
 
-// cameraInUse reports whether the camera is busy or actively encoding
-// (OpenGoPro statuses 8 and 10).
-func cameraInUse(statuses map[byte][]byte) bool {
-	for _, id := range []byte{ble.StatusSystemBusy, ble.StatusEncoding} {
-		if v, ok := statuses[id]; ok && len(v) >= 1 && v[0] != 0 {
-			return true
-		}
-	}
-	return false
-}
-
+// Unexpected lengths return -1 (invalid) so callers skip the write instead
+// of storing a fake zero.
 func parseIntStatus(v []byte) int32 {
 	switch len(v) {
 	case 1:
@@ -215,7 +210,7 @@ func parseIntStatus(v []byte) int32 {
 	case 4:
 		return int32(binary.BigEndian.Uint32(v))
 	default:
-		return 0
+		return -1
 	}
 }
 
@@ -230,6 +225,6 @@ func parseInt64Status(v []byte) int64 {
 	case 8:
 		return int64(binary.BigEndian.Uint64(v))
 	default:
-		return 0
+		return -1
 	}
 }

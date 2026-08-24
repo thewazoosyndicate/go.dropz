@@ -30,10 +30,14 @@ func (m *GoProManager) Start() error {
 func (m *GoProManager) Stop() {
 	m.log.Debug("GoPro manager stopping")
 
-	// Stop BLE first so active operations finish cleanly before context cancel
-	_ = m.ble.Stop()
+	// Cancel first so in-flight syncs stop and run their teardown (BLE
+	// sleep+disconnect, WiFi disconnect); stopping BLE before that yanked
+	// the link out from under live downloads and skipped the .partial
+	// cleanup. ble.Stop last closes whatever connections remain.
 	m.cancel()
+	m.syncCoordinator.Wait()
 	m.wg.Wait()
+	_ = m.ble.Stop()
 
 	m.log.Info("GoPro manager stopped")
 }

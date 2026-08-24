@@ -2,22 +2,16 @@ package manager
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
-	"mime"
-	"os"
-	"path/filepath"
-	"sort"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/dropz/dropz/internal/ble"
 	"github.com/dropz/dropz/internal/manager/discovery"
 	"github.com/dropz/dropz/internal/manager/pairing"
-	syncpkg "github.com/dropz/dropz/internal/manager/sync"
+	"github.com/dropz/dropz/internal/manager/syncer"
 	"github.com/dropz/dropz/internal/model"
 	"github.com/dropz/dropz/internal/store"
 	"tinygo.org/x/bluetooth"
@@ -46,7 +40,7 @@ type GoProManager struct {
 	statusCheckRequest   chan string
 
 	// Component managers
-	syncCoordinator    *syncpkg.Coordinator
+	syncCoordinator    *syncer.Coordinator
 	discoveryProcessor *discovery.Processor
 	pairingManager     *pairing.Manager
 }
@@ -128,7 +122,7 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 	}
 
 	// Initialize component managers (notify/BLEOperation passed as method values)
-	manager.syncCoordinator = syncpkg.NewCoordinator(ctx, db, bleManager, log, manager.notify, manager.BLEOperation)
+	manager.syncCoordinator = syncer.NewCoordinator(ctx, db, bleManager, log, manager.notify, manager.BLEOperation, nil)
 	manager.discoveryProcessor = discovery.NewProcessor(db, log)
 	manager.pairingManager = pairing.NewManager(ctx, db, bleManager, log, manager.BLEOperation, manager.notify)
 
@@ -306,26 +300,31 @@ func (m *GoProManager) UnmanageCamera(cameraID string) error {
 }
 
 // BLEOperation executes a BLE operation with retry logic.
-// Set critical=true for operations that should retry on context.Canceled (sync, connect).
-func (m *GoProManager) BLEOperation(ctx context.Context, critical bool, operation func() error) error {
+// Honors ctx between attempts: CancelSync and the sync timeout must be able
+// to stop the retry loop, even though the BLE calls themselves cannot be
+// interrupted mid-flight.
+func (m *GoProManager) BLEOperation(ctx context.Context, operation func() error) error {
 	var opErr error
 	for opTry := 0; opTry < 3; opTry++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		opErr = operation()
 		if opErr == nil {
 			return nil
 		}
 
-		if errors.Is(opErr, context.Canceled) && critical {
-			m.log.Debug("Retrying critical BLE operation", "attempt", opTry+1, "max", 3)
-			time.Sleep(3 * time.Second)
-			continue
-		} else if errors.Is(opErr, context.Canceled) || errors.Is(opErr, context.DeadlineExceeded) {
+		if errors.Is(opErr, context.Canceled) || errors.Is(opErr, context.DeadlineExceeded) {
 			return opErr
 		}
 
-		if isTransientBLEError(opErr) {
+		if ble.IsTransient(opErr) {
 			m.log.Warn("Transient BLE error, retrying", "err", opErr, "backoff_s", (opTry+1)*3)
-			time.Sleep(time.Duration(opTry+1) * 3 * time.Second)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(opTry+1) * 3 * time.Second):
+			}
 			continue
 		}
 
@@ -393,100 +392,8 @@ func (m *GoProManager) CancelSync(cameraID string) error {
 	return m.syncCoordinator.CancelSync(cameraID)
 }
 
-// GetVideosByCamera scans the destination folder for media files and maps them to cameras via WiFi SSID.
+// GetVideosByCamera scans the download library; the syncer package owns the
+// on-disk layout, so the scan lives there.
 func (m *GoProManager) GetVideosByCamera(cameraID string, startDate, endDate time.Time, limit, offset int) ([]*model.VideoFile, int) {
-	config := m.db.GetConfig()
-	if config.DestinationFolder == "" {
-		return []*model.VideoFile{}, 0
-	}
-
-	// Build WiFi SSID → camera ID map
-	ssidToCamera := make(map[string]string)
-	for _, cam := range m.db.GetAllCameras() {
-		if cam.Camera.WiFiSSID != "" {
-			ssidToCamera[cam.Camera.WiFiSSID] = cam.Camera.ID
-		}
-	}
-
-	entries, err := os.ReadDir(config.DestinationFolder)
-	if err != nil {
-		m.log.Warn("Cannot read destination folder", "folder", config.DestinationFolder, "err", err)
-		return []*model.VideoFile{}, 0
-	}
-
-	var allVideos []*model.VideoFile
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		ssid := entry.Name()
-		camID, known := ssidToCamera[ssid]
-		if !known {
-			continue
-		}
-		if cameraID != "" && camID != cameraID {
-			continue
-		}
-
-		subdir := filepath.Join(config.DestinationFolder, ssid)
-		files, err := os.ReadDir(subdir)
-		if err != nil {
-			continue
-		}
-		for _, f := range files {
-			if f.IsDir() {
-				continue
-			}
-			ext := strings.ToLower(filepath.Ext(f.Name()))
-			mimeType := mime.TypeByExtension(ext)
-			if !strings.HasPrefix(mimeType, "video/") && !strings.HasPrefix(mimeType, "image/") {
-				continue
-			}
-
-			fullPath := filepath.Join(subdir, f.Name())
-			info, err := f.Info()
-			if err != nil {
-				continue
-			}
-
-			mtime := info.ModTime()
-			if !startDate.IsZero() && mtime.Before(startDate) {
-				continue
-			}
-			if !endDate.IsZero() && mtime.After(endDate) {
-				continue
-			}
-
-			hash := sha256.Sum256([]byte(fullPath))
-			video := &model.VideoFile{
-				ID:        fmt.Sprintf("%x", hash[:8]),
-				Name:      f.Name(),
-				Path:      fullPath,
-				SizeBytes: info.Size(),
-				CreatedAt: mtime,
-				CameraID:  camID,
-				MimeType:  mimeType,
-			}
-			// Camera-generated preview cached by the media catalog sync
-			if thumb := syncpkg.ThumbnailPath(subdir, f.Name()); fileExistsNonEmpty(thumb) {
-				video.ThumbnailPath = thumb
-			}
-			allVideos = append(allVideos, video)
-		}
-	}
-
-	// Sort newest first
-	sort.Slice(allVideos, func(i, j int) bool {
-		return allVideos[i].CreatedAt.After(allVideos[j].CreatedAt)
-	})
-
-	totalCount := len(allVideos)
-	if offset >= totalCount {
-		return []*model.VideoFile{}, totalCount
-	}
-	end := offset + limit
-	if limit == 0 || end > totalCount {
-		end = totalCount
-	}
-	return allVideos[offset:end], totalCount
+	return m.syncCoordinator.GetVideosByCamera(cameraID, startDate, endDate, limit, offset)
 }

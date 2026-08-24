@@ -9,25 +9,6 @@ import (
 	"github.com/dropz/dropz/internal/model"
 )
 
-// settingLabel resolves display names from the generated spec table.
-// Unknown settings stay configurable with numeric labels: newer cameras
-// may expose settings the table predates.
-func settingLabel(id byte) string {
-	if def, ok := ble.SettingDefs[id]; ok {
-		return def.Name
-	}
-	return fmt.Sprintf("Setting %d", id)
-}
-
-func optionLabel(id byte, value int64) string {
-	if def, ok := ble.SettingDefs[id]; ok {
-		if name, ok := def.Options[value]; ok {
-			return name
-		}
-	}
-	return fmt.Sprintf("%d", value)
-}
-
 // buildSettingsSnapshot merges current values with the camera-reported
 // capabilities into the stored representation.
 func buildSettingsSnapshot(values map[byte]int64, caps map[byte][]int64) []model.CameraSetting {
@@ -35,12 +16,12 @@ func buildSettingsSnapshot(values map[byte]int64, caps map[byte][]int64) []model
 	for id, value := range values {
 		s := model.CameraSetting{
 			ID:        int32(id),
-			Name:      settingLabel(id),
+			Name:      ble.SettingLabel(id),
 			Value:     value,
-			ValueName: optionLabel(id, value),
+			ValueName: ble.OptionLabel(id, value),
 		}
 		for _, opt := range caps[id] {
-			s.Options = append(s.Options, model.SettingOption{Value: opt, Name: optionLabel(id, opt)})
+			s.Options = append(s.Options, model.SettingOption{Value: opt, Name: ble.OptionLabel(id, opt)})
 		}
 		sort.Slice(s.Options, func(i, j int) bool { return s.Options[i].Value < s.Options[j].Value })
 		settings = append(settings, s)
@@ -71,7 +52,7 @@ func (m *GoProManager) settingsSession(cameraID string, op func(bleAddress strin
 	}
 	defer release()
 
-	return m.BLEOperation(m.ctx, true, func() error {
+	return m.BLEOperation(m.ctx, func() error {
 		if err := m.ble.ConnectForStatusCheck(bleAddress); err != nil {
 			return fmt.Errorf("connect: %w", err)
 		}
@@ -172,7 +153,7 @@ func (m *GoProManager) ApplyCameraSettings(cameraID string, changes map[int32]in
 		if err != nil {
 			return fmt.Errorf("status query: %w", err)
 		}
-		if cameraInUse(statuses) {
+		if ble.InUse(statuses) {
 			return fmt.Errorf("camera is busy or recording")
 		}
 
@@ -199,7 +180,7 @@ func (m *GoProManager) ApplyCameraSettings(cameraID string, changes map[int32]in
 		}
 		for id, msg := range failed {
 			m.log.Warn("Setting rejected by camera", "camera_id", cameraID,
-				"setting", id, "name", settingLabel(byte(id)), "err", msg)
+				"setting", id, "name", ble.SettingLabel(byte(id)), "err", msg)
 		}
 		m.log.Info("Camera settings applied", "camera_id", cameraID,
 			"applied", len(ids)-len(failed), "failed", len(failed), "retried", firstPassFailed-len(failed))

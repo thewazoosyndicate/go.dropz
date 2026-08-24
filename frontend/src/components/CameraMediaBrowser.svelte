@@ -1,7 +1,9 @@
 <script>
-  import { fetchCameraMedia, requestMediaDownload } from '../lib/grpc/actions.js';
-  import { addToast, addLog } from '../lib/stores/ui.svelte.js';
+  import { onDestroy } from 'svelte';
+  import { fetchCameraMedia, requestMediaDownload, previewMedia, setPreviewSession } from '../lib/grpc/actions.js';
+  import { addToast, addLog, openPlayer } from '../lib/stores/ui.svelte.js';
   import { getSyncQueue } from '../lib/stores/sync.svelte.js';
+  import { getAllDevices } from '../lib/stores/devices.svelte.js';
 
   let { cameraId, cameraName } = $props();
 
@@ -15,7 +17,40 @@
   let loadedFor = $state(null);
 
   let syncEntry = $derived(getSyncQueue().find(e => e.cameraId === cameraId));
-  let selectedNames = $derived(Object.keys(selected).filter(n => selected[n]));
+  let device = $derived(Object.values(getAllDevices()).find(d => d.id === cameraId));
+
+  // Session state while armed: live link, connecting, or out of range
+  let sessionState = $derived.by(() => {
+    if (!device?.previewEnabled) return null;
+    const op = syncEntry?.currentOperation || '';
+    if (op.startsWith('Preview session') || op.startsWith('Fetching') || op.startsWith('Converting') || op === 'Preview ready') return 'live';
+    if (device.isSyncing || syncEntry) return 'connecting';
+    if (!device.isReachable) return 'waiting';
+    return 'connecting';
+  });
+
+  async function toggleSession() {
+    try {
+      await setPreviewSession(cameraId, !device?.previewEnabled);
+    } catch (e) {
+      addToast(e.message || 'Preview session toggle failed', 'error');
+    }
+  }
+
+  // The session only matters while this camera's library is on screen:
+  // navigating away disarms. Deliberately NOT an $effect: the cameraId
+  // prop chains to a derived that changes identity on every device
+  // stream update, so an effect's teardown fired (and disarmed) every
+  // few hundred ms. The component is keyed by camera in VideoLibrary,
+  // so one instance = one camera; the initial value IS the value.
+  // svelte-ignore state_referenced_locally
+  const sessionCameraId = cameraId;
+  onDestroy(() => {
+    setPreviewSession(sessionCameraId, false).catch(() => {});
+  });
+  // Selection and keys use cameraPath: cards can repeat a name across
+  // GOPRO directories, and a name-keyed each crashes the whole UI.
+  let selectedPaths = $derived(Object.keys(selected).filter(p => selected[p]));
 
   let sorted = $derived.by(() => {
     const list = [...items];
@@ -44,6 +79,30 @@
     hadSync = syncing;
   });
 
+  // Preview flow: the session streams "Preview ready" when an LRV lands;
+  // reload so the item gains its previewPath, then auto-open the one the
+  // user asked for.
+  let pendingPreview = $state(null);
+  let lastOp = $state('');
+  $effect(() => {
+    const op = syncEntry?.currentOperation || '';
+    if (op === lastOp) return;
+    lastOp = op;
+    if (op === 'Preview ready') load();
+    if (op === 'Preview failed' && pendingPreview) {
+      pendingPreview = null;
+      addToast('Preview failed, see logs', 'error');
+    }
+  });
+  $effect(() => {
+    if (!pendingPreview) return;
+    const item = items.find(i => i.cameraPath === pendingPreview);
+    if (item?.previewPath) {
+      pendingPreview = null;
+      openPlayer(item.previewPath, item.name);
+    }
+  });
+
   async function load() {
     loading = true;
     loadError = '';
@@ -59,20 +118,39 @@
     }
   }
 
-  function toggle(name) {
-    selected[name] = !selected[name];
+  function toggle(cameraPath) {
+    selected[cameraPath] = !selected[cameraPath];
     selected = { ...selected };
   }
 
   async function downloadSelected() {
     try {
-      await requestMediaDownload(cameraId, selectedNames);
-      addToast(`${selectedNames.length} files queued from ${cameraName}`, 'success');
-      addLog(`Queued ${selectedNames.length} files from ${cameraName}`, 'info');
+      await requestMediaDownload(cameraId, selectedPaths);
+      addToast(`${selectedPaths.length} files queued from ${cameraName}`, 'success');
+      addLog(`Queued ${selectedPaths.length} files from ${cameraName}`, 'info');
       selected = {};
     } catch (e) {
       addToast('Failed to queue download', 'error');
       addLog(`Queue download failed: ${e.message}`, 'error');
+    }
+  }
+
+  // Only GX/GH videos carry an LRV proxy on the card
+  function canPreview(item) {
+    return /^G[XH].*\.MP4$/.test(item.name);
+  }
+
+  async function preview(item, ev) {
+    ev.stopPropagation();
+    // Camera files are HEVC, which the renderer cannot decode; playback
+    // always goes through the transcoded WebM proxy.
+    if (item.previewPath) return openPlayer(item.previewPath, item.name);
+    try {
+      await previewMedia(cameraId, item.cameraPath);
+      pendingPreview = item.cameraPath;
+      addToast(item.downloaded ? 'Generating preview...' : 'Fetching preview from camera...', 'info');
+    } catch (e) {
+      addToast(e.message || 'Preview failed', 'error');
     }
   }
 
@@ -114,6 +192,15 @@
       {/if}
     </div>
     <div class="toolbar-right">
+      <button class="btn btn-outline session-toggle" class:session-on={device?.previewEnabled}
+              onclick={toggleSession}
+              title={device?.previewEnabled ? 'Close the camera link' : 'Keep a camera link up for instant previews'}>
+        <i class="fas fa-satellite-dish"></i>
+        {#if sessionState === 'live'}Live
+        {:else if sessionState === 'connecting'}Connecting...
+        {:else if sessionState === 'waiting'}Waiting for camera
+        {:else}Camera link{/if}
+      </button>
       {#if syncEntry}
         <span class="syncing-badge">
           <i class="fas fa-spinner fa-spin"></i> {syncEntry.currentOperation || 'Syncing...'}
@@ -123,8 +210,8 @@
           <i class="fas fa-rotate"></i> Refresh from camera
         </button>
       {/if}
-      <button class="btn btn-primary" onclick={downloadSelected} disabled={selectedNames.length === 0 || !!syncEntry}>
-        <i class="fas fa-download"></i> Download {selectedNames.length > 0 ? `(${selectedNames.length})` : ''}
+      <button class="btn btn-primary" onclick={downloadSelected} disabled={selectedPaths.length === 0 || !!syncEntry}>
+        <i class="fas fa-download"></i> Download {selectedPaths.length > 0 ? `(${selectedPaths.length})` : ''}
       </button>
     </div>
   </div>
@@ -141,9 +228,9 @@
     </div>
   {:else}
     <div class="media-grid">
-      {#each sorted as item (item.name)}
-        <button class="media-card" class:selected={selected[item.name]} class:downloaded={item.downloaded}
-             onclick={() => !item.downloaded && toggle(item.name)}
+      {#each sorted as item (item.cameraPath)}
+        <button class="media-card" class:selected={selected[item.cameraPath]} class:downloaded={item.downloaded}
+             onclick={() => !item.downloaded && toggle(item.cameraPath)}
              title={item.downloaded ? 'Already downloaded' : 'Select for download'}>
           <div class="thumb">
             {#if item.thumbnailPath}
@@ -153,8 +240,17 @@
             {/if}
             {#if item.downloaded}
               <span class="state-badge downloaded-badge"><i class="fas fa-check"></i></span>
-            {:else if selected[item.name]}
+            {:else if selected[item.cameraPath]}
               <span class="state-badge selected-badge"><i class="fas fa-check"></i></span>
+            {/if}
+            {#if canPreview(item)}
+              <span class="preview-btn" role="button" tabindex="0"
+                    class:fetching={pendingPreview === item.cameraPath}
+                    title={item.previewPath ? 'Play preview' : item.downloaded ? 'Generate preview' : 'Preview from camera'}
+                    onclick={(e) => preview(item, e)}
+                    onkeydown={(e) => e.key === 'Enter' && preview(item, e)}>
+                <i class="fas {pendingPreview === item.cameraPath ? 'fa-spinner fa-spin' : 'fa-play'}"></i>
+              </span>
             {/if}
           </div>
           <div class="media-info">
@@ -232,11 +328,22 @@
     color: var(--text-primary);
   }
 
+  .session-toggle.session-on {
+    border-color: var(--secondary-color);
+    color: var(--secondary-color);
+  }
+
   .media-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 10px;
+    /* The browser is pinned to the panel height; without these the grid
+       shrinks to fit and squashes every row instead of scrolling. */
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    align-content: start;
+    grid-auto-rows: max-content;
   }
 
   .media-card {
@@ -288,6 +395,25 @@
 
   .downloaded-badge { background-color: var(--secondary-color); }
   .selected-badge { background-color: var(--primary-color); }
+
+  .preview-btn {
+    position: absolute;
+    bottom: 6px;
+    left: 6px;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    color: white;
+    background-color: rgba(0, 0, 0, 0.55);
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .media-card:hover .preview-btn, .preview-btn.fetching { opacity: 1; }
+  .preview-btn:hover { background-color: var(--primary-color); }
 
   .media-info {
     display: flex;

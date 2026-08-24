@@ -21,16 +21,17 @@ func toProtoCameraWithState(c *model.CameraWithState) *protocol.CameraWithState 
 			Rssi:         c.Camera.RSSI,
 		},
 		Status: &protocol.CameraStatus{
-			LastSeen:      timestamppb.New(c.Status.LastSeen),
-			LastSynced:    timestamppb.New(c.Status.LastSynced),
-			IsPairing:     c.Status.IsPairing,
-			IsPaired:      c.Status.IsPaired,
-			IsManaged:     c.Status.IsManaged,
-			IsReachable:   c.Status.IsReachable,
-			IsSynced:      c.Status.IsSynced,
-			IsSyncing:     c.Status.IsSyncing,
-			LastSyncError: c.Status.LastSyncError,
-			InPairingMode: c.Status.InPairingMode,
+			LastSeen:       timestamppb.New(c.Status.LastSeen),
+			LastSynced:     timestamppb.New(c.Status.LastSynced),
+			IsPairing:      c.Status.IsPairing,
+			IsPaired:       c.Status.IsPaired,
+			IsManaged:      c.Status.IsManaged,
+			IsReachable:    c.Status.IsReachable,
+			IsSynced:       c.Status.IsSynced,
+			IsSyncing:      c.Status.IsSyncing,
+			LastSyncError:  c.Status.LastSyncError,
+			InPairingMode:  c.Status.InPairingMode,
+			PreviewEnabled: c.Status.PreviewEnabled,
 		},
 		GroupId: c.GroupID,
 		Metadata: &protocol.CameraMetadata{
@@ -67,6 +68,14 @@ func toProtoSyncQueueEntry(e *model.SyncQueueEntry) *protocol.SyncQueueEntry {
 		Priority:         e.Priority,
 		ProgressPercent:  e.ProgressPercent,
 		CurrentOperation: e.CurrentOperation,
+		FileIndex:        e.FileIndex,
+		FileCount:        e.FileCount,
+		FileName:         e.FileName,
+		FileBytes:        e.FileBytes,
+		FileTotal:        e.FileTotal,
+		BytesDone:        e.BytesDone,
+		BytesTotal:       e.BytesTotal,
+		RateBps:          e.RateBps,
 	}
 }
 
@@ -95,6 +104,7 @@ func toProtoVideoFile(v *model.VideoFile) *protocol.VideoFile {
 		DurationSeconds: v.DurationSeconds,
 		ThumbnailPath:   v.ThumbnailPath,
 		HasProcessed:    v.HasProcessed,
+		PreviewPath:     v.PreviewPath,
 	}
 }
 
@@ -123,6 +133,8 @@ func toProtoCameraMediaItem(item model.CameraMediaItem) *protocol.CameraMediaIte
 		CreatedAt:     timestamppb.New(item.CreatedAt),
 		ThumbnailPath: item.ThumbnailPath,
 		Downloaded:    item.Downloaded,
+		LocalPath:     item.LocalPath,
+		PreviewPath:   item.PreviewPath,
 	}
 }
 

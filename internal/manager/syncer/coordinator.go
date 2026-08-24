@@ -56,8 +56,9 @@ type wifiClient interface {
 	GetCameraStatus(ctx context.Context) (map[string]interface{}, error)
 	ListMedia(ctx context.Context) ([]wifi.MediaFile, error)
 	SetTurboTransfer(ctx context.Context, enable bool) error
-	DownloadVideos(ctx context.Context, destDir string, daysInPast int, fileNames []string) ([]string, error)
+	DownloadVideos(ctx context.Context, destDir string, daysInPast int, fileNames []string, progress wifi.ProgressFunc) ([]string, error)
 	DownloadThumbnail(ctx context.Context, cameraPath, outPath string) error
+	DownloadLRV(ctx context.Context, cameraPath, outPath string) error
 }
 
 // SyncTask represents a camera sync task
@@ -79,7 +80,17 @@ type Coordinator struct {
 	ble          bleClient
 	log          *slog.Logger
 	activeTasks  map[string]*SyncTask
-	mutex        sync.RWMutex
+	// Open interactive preview sessions, keyed like activeTasks; a camera
+	// appears in both while its preview link is up.
+	previewSessions map[string]*previewSession
+	previewIdle     time.Duration // tests shrink the linger window
+	// Last establish attempt per camera, for the armed-session backoff
+	previewAttempt map[string]time.Time
+	// Preview transcoder, swappable so tests run without ffmpeg
+	transcode func(ctx context.Context, src, dst string) error
+	// In-flight library preview transcodes, keyed by source path
+	previewGen map[string]*previewGen
+	mutex           sync.RWMutex
 	notifier     func()
 	bleOperation ble.Operation
 	ctx          context.Context
@@ -98,15 +109,19 @@ func NewCoordinator(ctx context.Context, db *store.Store, bleManager bleClient, 
 		wifiFactory = func() wifiClient { return wifi.NewWiFiManager(log) }
 	}
 	return &Coordinator{
-		db:           db,
-		ble:          bleManager,
-		log:          log.With("component", "sync"),
-		activeTasks:  make(map[string]*SyncTask),
-		notifier:     notifier,
-		bleOperation: bleOperation,
-		ctx:          ctx,
-		syncSem:      make(chan struct{}, 1),
-		wifiFactory:  wifiFactory,
+		db:              db,
+		ble:             bleManager,
+		log:             log.With("component", "sync"),
+		activeTasks:     make(map[string]*SyncTask),
+		previewSessions: make(map[string]*previewSession),
+		previewIdle:     previewLinger,
+		previewAttempt:  make(map[string]time.Time),
+		transcode:       transcodePreview,
+		notifier:        notifier,
+		bleOperation:    bleOperation,
+		ctx:             ctx,
+		syncSem:         make(chan struct{}, 1),
+		wifiFactory:     wifiFactory,
 	}
 }
 
@@ -117,6 +132,10 @@ func (c *Coordinator) Wait() {
 
 // ProcessSyncQueue checks the sync queue and processes cameras that need syncing.
 func (c *Coordinator) ProcessSyncQueue() {
+	// Piggybacks on the sync cadence: an armed camera's preview session
+	// (re)establishes here once it is in range and the radio is idle.
+	defer c.ensureArmedSessions()
+
 	if !c.db.GetConfig().SyncEnabled {
 		logging.Trace(c.log, "Sync disabled, skipping queue processing")
 		return
@@ -469,6 +488,9 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		c.storeSyncedBaseline(run)
 	}
 	_ = c.db.SetLastSyncErrorByID(task.CameraID, "")
+	// Streamed before the defer removes the entry; the frontend turns the
+	// label into a success toast, like the up-to-date skip above.
+	c.updateProgress(task, "Sync complete", 100)
 	c.log.Info("Camera synced", append(camera.LogAttrs(), "files", run.downloaded)...)
 }
 
@@ -750,12 +772,45 @@ func (c *Coordinator) stepDownload(r *syncRun) error {
 		}
 	}
 
-	downloadedFiles, err := r.wifi.DownloadVideos(r.downloadCtx, r.folder, int(r.config.DaysThreshold), r.task.FileNames)
+	downloadedFiles, err := r.wifi.DownloadVideos(r.downloadCtx, r.folder, int(r.config.DaysThreshold), r.task.FileNames,
+		func(p wifi.DownloadProgress) { c.updateDownloadProgress(r.task, p) })
 	if err != nil {
 		return err
 	}
 	r.downloaded = len(downloadedFiles)
 	return nil
+}
+
+// updateDownloadProgress streams byte-level download state into the queue
+// entry. Bytes map onto the 60..99 tail of the step scale; file counts
+// carry it when the camera reported no sizes.
+func (c *Coordinator) updateDownloadProgress(task *SyncTask, p wifi.DownloadProgress) {
+	if task.Ctx != nil && task.Ctx.Err() != nil {
+		return
+	}
+	percent := int32(60)
+	switch {
+	case p.BytesTotal > 0:
+		percent += int32(float64(p.BytesDone) / float64(p.BytesTotal) * 39)
+	case p.FileCount > 0:
+		percent += int32((p.FileIndex - 1) * 39 / p.FileCount)
+	}
+	if percent > 99 {
+		percent = 99
+	}
+	_, _ = c.db.MutateSyncQueueEntry(task.CameraID, func(entry *model.SyncQueueEntry) {
+		entry.CurrentOperation = "Downloading " + p.FileName
+		entry.ProgressPercent = percent
+		entry.FileIndex = int32(p.FileIndex)
+		entry.FileCount = int32(p.FileCount)
+		entry.FileName = p.FileName
+		entry.FileBytes = p.FileBytes
+		entry.FileTotal = p.FileTotal
+		entry.BytesDone = p.BytesDone
+		entry.BytesTotal = p.BytesTotal
+		entry.RateBps = p.RateBps
+	})
+	c.notifier()
 }
 
 // updateProgress mutates only the progress fields of the queue entry.
@@ -770,6 +825,16 @@ func (c *Coordinator) updateProgress(task *SyncTask, operation string, percent i
 	_, _ = c.db.MutateSyncQueueEntry(task.CameraID, func(entry *model.SyncQueueEntry) {
 		entry.CurrentOperation = operation
 		entry.ProgressPercent = percent
+		// Download detail belongs to the download step only; a step-level
+		// update means that step is over, so stale bytes must not linger.
+		entry.FileIndex = 0
+		entry.FileCount = 0
+		entry.FileName = ""
+		entry.FileBytes = 0
+		entry.FileTotal = 0
+		entry.BytesDone = 0
+		entry.BytesTotal = 0
+		entry.RateBps = 0
 	})
 	c.notifier()
 	c.log.Debug("Sync progress", "camera", task.CameraName, "operation", operation, "percent", percent)

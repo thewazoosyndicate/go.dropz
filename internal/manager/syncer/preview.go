@@ -1,0 +1,516 @@
+package syncer
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"time"
+
+	"github.com/dropz/dropz/internal/model"
+	"github.com/dropz/dropz/internal/wifi"
+)
+
+const (
+	// How long an idle on-demand preview session keeps the camera link up
+	// so the next preview click skips the ~25s connection dance.
+	previewLinger = 45 * time.Second
+	previewPoll   = 2 * time.Second
+	// An armed (toggled-on) session ignores the linger but still disarms
+	// itself eventually: the keep-alive holds the camera awake, and a
+	// forgotten toggle would drain its battery.
+	previewMaxIdle = 15 * time.Minute
+	// Between failed establish attempts for an armed camera
+	previewRetryBackoff = time.Minute
+)
+
+// previewSession accepts follow-up preview requests while its camera
+// link is up.
+type previewSession struct {
+	requests chan string // camera paths
+}
+
+// ffmpegPath finds the bundled ffmpeg (shipped next to the dropz binary
+// in the packaged app) or falls back to PATH.
+func ffmpegPath() string {
+	if exe, err := os.Executable(); err == nil {
+		p := filepath.Join(filepath.Dir(exe), "ffmpeg")
+		if _, statErr := os.Stat(p); statErr == nil {
+			return p
+		}
+	}
+	if p, err := exec.LookPath("ffmpeg"); err == nil {
+		return p
+	}
+	return ""
+}
+
+// transcodePreview turns a camera clip into a 480p VP9/Opus WebM.
+// Chromium decodes VP9 in software everywhere; the camera's HEVC does
+// not render at all on hosts whose Mesa lacks HEVC VAAPI.
+func transcodePreview(ctx context.Context, src, dst string) error {
+	ff := ffmpegPath()
+	if ff == "" {
+		return errors.New("ffmpeg not found next to the binary or in PATH")
+	}
+	tmp := dst + ".partial"
+	cmd := exec.CommandContext(ctx, ff, "-y", "-v", "error", "-i", src,
+		"-vf", "scale=-2:480", "-c:v", "libvpx-vp9", "-row-mt", "1",
+		"-deadline", "realtime", "-cpu-used", "7", "-crf", "34", "-b:v", "0",
+		"-c:a", "libopus", "-b:a", "64k", "-f", "webm", tmp)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("ffmpeg: %w: %s", err, out)
+	}
+	return os.Rename(tmp, dst)
+}
+
+// RequestPreview fetches a clip's LRV proxy into the preview cache.
+// An open session takes the request immediately; otherwise a new session
+// claims the radio like a sync does.
+func (c *Coordinator) RequestPreview(cameraID, cameraPath string) error {
+	camera, found := c.db.GetCameraByID(cameraID)
+	if !found {
+		return fmt.Errorf("%w: %s", model.ErrCameraNotFound, cameraID)
+	}
+	if !camera.Status.IsManaged || !camera.Status.IsPaired {
+		return fmt.Errorf("%w: %s", model.ErrNotManagedPaired, camera.Camera.Name)
+	}
+	if _, ok := wifi.LRVCameraPath(cameraPath); !ok {
+		return fmt.Errorf("no preview available for %s", cameraPath)
+	}
+
+	c.mutex.Lock()
+	if s, ok := c.previewSessions[cameraID]; ok {
+		select {
+		case s.requests <- cameraPath:
+		default:
+			c.mutex.Unlock()
+			return fmt.Errorf("preview queue full for %s", camera.Camera.Name)
+		}
+		c.mutex.Unlock()
+		return nil
+	}
+	if _, busy := c.activeTasks[cameraID]; busy {
+		c.mutex.Unlock()
+		return fmt.Errorf("%s is busy syncing", camera.Camera.Name)
+	}
+
+	// A local source needs no radio: transcode straight from disk.
+	config := c.db.GetConfig()
+	folder := filepath.Join(config.DestinationFolder, camera.Camera.WiFiSSID)
+	local := c.localNameFor(folder, cameraPath)
+	if src := filepath.Join(folder, local); fileExists(src) {
+		taskCtx, taskCancel := context.WithCancel(c.ctx)
+		task := &SyncTask{CameraID: cameraID, CameraName: camera.Camera.Name, Cancel: taskCancel, Ctx: taskCtx}
+		c.activeTasks[cameraID] = task
+		c.mutex.Unlock()
+		_ = c.db.AddSyncQueueEntry(&model.SyncQueueEntry{
+			CameraID:         cameraID,
+			QueuedAt:         time.Now(),
+			Priority:         SyncPriorityManual,
+			CurrentOperation: "Generating preview",
+		})
+		c.notifier()
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			c.performLocalPreview(task, src)
+		}()
+		return nil
+	}
+	c.mutex.Unlock()
+
+	s, err := c.ensurePreviewSession(camera)
+	if err != nil {
+		return err
+	}
+	select {
+	case s.requests <- cameraPath:
+	default:
+		return fmt.Errorf("preview queue full for %s", camera.Camera.Name)
+	}
+	return nil
+}
+
+// ensurePreviewSession returns the camera's open preview session, or
+// claims the radio and starts one.
+func (c *Coordinator) ensurePreviewSession(camera *model.CameraWithState) (*previewSession, error) {
+	cameraID := camera.Camera.ID
+	c.mutex.Lock()
+	if s, ok := c.previewSessions[cameraID]; ok {
+		c.mutex.Unlock()
+		return s, nil
+	}
+	if _, busy := c.activeTasks[cameraID]; busy {
+		c.mutex.Unlock()
+		return nil, fmt.Errorf("%s is busy syncing", camera.Camera.Name)
+	}
+	taskCtx, taskCancel := context.WithCancel(c.ctx)
+	task := &SyncTask{
+		CameraID:   cameraID,
+		BLEAddress: camera.Camera.BLEAddress,
+		CameraName: camera.Camera.Name,
+		Cancel:     taskCancel,
+		Ctx:        taskCtx,
+	}
+	s := &previewSession{requests: make(chan string, 16)}
+	c.activeTasks[cameraID] = task
+	c.previewSessions[cameraID] = s
+	c.previewAttempt[cameraID] = time.Now()
+	c.mutex.Unlock()
+
+	// Previews are interactive; never queue behind a long sync.
+	select {
+	case c.syncSem <- struct{}{}:
+	default:
+		c.mutex.Lock()
+		delete(c.activeTasks, cameraID)
+		delete(c.previewSessions, cameraID)
+		c.mutex.Unlock()
+		task.Cancel()
+		return nil, fmt.Errorf("another sync is using the radio")
+	}
+
+	_ = c.db.UpdateCameraSyncingStatusByID(cameraID, true)
+	_ = c.db.AddSyncQueueEntry(&model.SyncQueueEntry{
+		CameraID:         cameraID,
+		QueuedAt:         time.Now(),
+		Priority:         SyncPriorityManual,
+		CurrentOperation: "Connecting for preview",
+	})
+	c.notifier()
+
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		c.performPreviewSession(task, s)
+	}()
+	return s, nil
+}
+
+// SetPreviewSession arms or disarms the standing preview session.
+// Arming records intent: the session comes up now if the camera is in
+// range, or as soon as it appears. One camera holds the slot at a time;
+// arming another moves it.
+func (c *Coordinator) SetPreviewSession(cameraID string, enabled bool) error {
+	camera, found := c.db.GetCameraByID(cameraID)
+	if !found {
+		return fmt.Errorf("%w: %s", model.ErrCameraNotFound, cameraID)
+	}
+	if enabled && (!camera.Status.IsManaged || !camera.Status.IsPaired) {
+		return fmt.Errorf("%w: %s", model.ErrNotManagedPaired, camera.Camera.Name)
+	}
+
+	// No state change: stay silent. A notify here turns the UI's cheap
+	// disarm-on-unmount into an infinite RPC loop (notify -> stream ->
+	// re-render -> disarm). Still end a lingering on-demand session so
+	// navigating away always releases the camera.
+	if camera.Status.PreviewEnabled == enabled {
+		if !enabled {
+			c.cancelPreviewSession(cameraID)
+		}
+		return nil
+	}
+
+	if enabled {
+		for _, other := range c.db.GetAllCameras() {
+			if other.Camera.ID != cameraID && other.Status.PreviewEnabled {
+				c.log.Info("Preview slot moves", "from", other.Camera.Name, "to", camera.Camera.Name)
+				c.disarmPreview(other.Camera.ID)
+			}
+		}
+	}
+	_ = c.db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
+		cs.Status.PreviewEnabled = enabled
+	})
+	if !enabled {
+		c.cancelPreviewSession(cameraID)
+	} else if camera.Status.IsReachable {
+		// Best effort; the maintainer retries when the radio frees up
+		// or the camera comes into range.
+		if _, err := c.ensurePreviewSession(camera); err != nil {
+			c.log.Debug("Armed preview not started yet", "camera", camera.Camera.Name, "err", err)
+		}
+	}
+	c.notifier()
+	return nil
+}
+
+func (c *Coordinator) disarmPreview(cameraID string) {
+	_ = c.db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
+		cs.Status.PreviewEnabled = false
+	})
+	c.cancelPreviewSession(cameraID)
+}
+
+// cancelPreviewSession ends the camera's session if one is open; syncs
+// are never touched.
+func (c *Coordinator) cancelPreviewSession(cameraID string) {
+	c.mutex.RLock()
+	task := c.activeTasks[cameraID]
+	_, isPreview := c.previewSessions[cameraID]
+	c.mutex.RUnlock()
+	if isPreview && task != nil && task.Cancel != nil {
+		task.Cancel()
+	}
+}
+
+// ensureArmedSessions establishes the armed camera's session when it is
+// reachable and the radio is idle. Called from ProcessSyncQueue, so it
+// runs on the sync ticker and after every queue change.
+func (c *Coordinator) ensureArmedSessions() {
+	if len(c.db.GetSyncQueue()) > 0 {
+		return // radio busy or wanted; sessions yield, not compete
+	}
+	for _, cam := range c.db.GetAllCameras() {
+		if !cam.Status.PreviewEnabled || !cam.Status.IsReachable || cam.Status.IsSyncing {
+			continue
+		}
+		c.mutex.RLock()
+		_, active := c.activeTasks[cam.Camera.ID]
+		last := c.previewAttempt[cam.Camera.ID]
+		c.mutex.RUnlock()
+		if active || time.Since(last) < previewRetryBackoff {
+			continue
+		}
+		if _, err := c.ensurePreviewSession(cam); err != nil {
+			c.log.Debug("Armed preview establish failed", "camera", cam.Camera.Name, "err", err)
+		}
+	}
+}
+
+func (c *Coordinator) previewArmed(cameraID string) bool {
+	camera, found := c.db.GetCameraByID(cameraID)
+	return found && camera.Status.PreviewEnabled
+}
+
+func (c *Coordinator) performPreviewSession(task *SyncTask, s *previewSession) {
+	defer func() {
+		<-c.syncSem
+		c.mutex.Lock()
+		delete(c.activeTasks, task.CameraID)
+		delete(c.previewSessions, task.CameraID)
+		c.mutex.Unlock()
+		_ = c.db.UpdateCameraSyncingStatusByID(task.CameraID, false)
+		_ = c.db.RemoveSyncQueueEntry(task.CameraID)
+		c.notifier()
+	}()
+
+	camera, found := c.db.GetCameraByID(task.CameraID)
+	if !found {
+		return
+	}
+	c.log.Info("Preview session started", camera.LogAttrs()...)
+
+	syncCtx, cancel := context.WithTimeout(task.Ctx, syncOverallTimeout)
+	defer cancel()
+	run := &syncRun{
+		task:       task,
+		camera:     camera,
+		bleAddress: camera.Camera.BLEAddress,
+		config:     c.db.GetConfig(),
+		ctx:        syncCtx,
+	}
+	defer func() {
+		for i := len(run.cleanups) - 1; i >= 0; i-- {
+			run.cleanups[i]()
+		}
+	}()
+
+	release, err := c.ble.AcquireSession(run.bleAddress, 30*time.Second)
+	if err != nil {
+		c.log.Warn("Preview could not acquire BLE session", "camera", task.CameraName, "err", err)
+		return
+	}
+	defer release()
+
+	steps := []syncStep{
+		{"Connecting via BLE", 20, "", c.stepConnectBLE},
+		{"Waiting for camera WiFi AP", 30, "", c.stepWaitAP},
+		{"Connecting to WiFi", 40, "", c.stepConnectWiFi},
+		{"Waiting for GoPro API", 50, "", c.stepAwaitAPI},
+		{"Preparing download", 60, "", c.stepPrepareFolders},
+	}
+	for _, step := range steps {
+		c.updateProgress(task, step.label, step.percent)
+		if err := step.run(run); err != nil {
+			c.log.Warn("Preview session failed", "camera", task.CameraName, "step", step.label, "err", err)
+			c.updateProgress(task, "Preview connection failed", step.percent)
+			time.Sleep(2 * time.Second) // let the stream deliver the label
+			return
+		}
+	}
+
+	previewDir := filepath.Join(run.folder, previewDirName)
+	poll := previewPoll
+	if c.previewIdle < poll {
+		poll = c.previewIdle
+	}
+	idle := time.Now()
+	for {
+		select {
+		case <-run.ctx.Done():
+			return
+		case cameraPath := <-s.requests:
+			c.fetchPreview(run, previewDir, cameraPath)
+			idle = time.Now()
+		case <-time.After(poll):
+			armed := c.previewArmed(task.CameraID)
+			if !armed && time.Since(idle) > c.previewIdle {
+				c.log.Info("Preview session idle, closing", "camera", task.CameraName)
+				return
+			}
+			// A forgotten toggle must not drain the camera overnight:
+			// the keep-alive holds it awake as long as the session runs.
+			if armed && time.Since(idle) > previewMaxIdle {
+				c.log.Info("Armed preview idle too long, disarming", "camera", task.CameraName)
+				c.disarmPreview(task.CameraID)
+				return
+			}
+			// Hand the radio over as soon as real work is queued
+			if len(c.db.GetSyncQueue()) > 1 {
+				c.log.Info("Preview session yields to queued sync", "camera", task.CameraName)
+				return
+			}
+			c.updateProgress(task, "Preview session active", 100)
+		}
+	}
+}
+
+// fetchPreview downloads one LRV, transcodes it into the always-playable
+// WebM cache, and streams "Preview ready", which the browser uses as its
+// reload-and-open signal.
+func (c *Coordinator) fetchPreview(run *syncRun, previewDir, cameraPath string) {
+	c.updateProgress(run.task, "Fetching preview", 80)
+	if err := os.MkdirAll(previewDir, 0755); err != nil {
+		c.log.Warn("Cannot create preview dir", "dir", previewDir, "err", err)
+		c.updateProgress(run.task, "Preview failed", 100)
+		return
+	}
+	local := c.localNameFor(run.folder, cameraPath)
+	raw := rawLRVPath(run.folder, local)
+	if err := run.wifi.DownloadLRV(run.ctx, cameraPath, raw); err != nil {
+		c.log.Warn("Preview fetch failed", "camera", run.task.CameraName, "path", cameraPath, "err", err)
+		c.updateProgress(run.task, "Preview failed", 100)
+		return
+	}
+	c.updateProgress(run.task, "Converting preview", 90)
+	out := PreviewPath(run.folder, local)
+	err := c.transcode(run.ctx, raw, out)
+	_ = os.Remove(raw)
+	if err != nil {
+		c.log.Warn("Preview transcode failed", "camera", run.task.CameraName, "path", cameraPath, "err", err)
+		c.updateProgress(run.task, "Preview failed", 100)
+		return
+	}
+	c.log.Info("Preview cached", "camera", run.task.CameraName, "path", cameraPath)
+	c.updateProgress(run.task, "Preview ready", 100)
+}
+
+// performLocalPreview transcodes an already-downloaded clip; no radio.
+func (c *Coordinator) performLocalPreview(task *SyncTask, src string) {
+	defer func() {
+		c.mutex.Lock()
+		delete(c.activeTasks, task.CameraID)
+		c.mutex.Unlock()
+		_ = c.db.RemoveSyncQueueEntry(task.CameraID)
+		c.notifier()
+	}()
+
+	if _, err := c.GeneratePreviewFile(src); err != nil {
+		c.updateProgress(task, "Preview failed", 100)
+		return
+	}
+	// The label streams before the defer removes the entry; either signal
+	// (label or entry removal) makes the browser reload and open it.
+	c.updateProgress(task, "Preview ready", 100)
+}
+
+// GeneratePreviewFile transcodes a local clip into its cached preview
+// and returns the preview path. Synchronous; concurrent requests for the
+// same file share one transcode.
+func (c *Coordinator) GeneratePreviewFile(src string) (string, error) {
+	out := PreviewPath(filepath.Dir(src), filepath.Base(src))
+	if fileExists(out) {
+		return out, nil
+	}
+	// Prefer the LRV sidecar fetched at sync time: transcoding 480p HEVC
+	// beats decoding the full-res original by ~20x. Consumed on success.
+	sidecar := rawLRVPath(filepath.Dir(src), filepath.Base(src))
+	if fileExists(sidecar) {
+		src = sidecar
+	} else {
+		sidecar = ""
+	}
+
+	c.mutex.Lock()
+	if c.previewGen == nil {
+		c.previewGen = make(map[string]*previewGen)
+	}
+	g, running := c.previewGen[src]
+	if !running {
+		g = &previewGen{done: make(chan struct{})}
+		c.previewGen[src] = g
+	}
+	c.mutex.Unlock()
+
+	if running {
+		<-g.done
+		if g.err != nil {
+			return "", g.err
+		}
+		return out, nil
+	}
+
+	defer func() {
+		c.mutex.Lock()
+		delete(c.previewGen, src)
+		c.mutex.Unlock()
+		close(g.done)
+	}()
+
+	ctx, cancel := context.WithTimeout(c.ctx, 15*time.Minute)
+	defer cancel()
+	if err := os.MkdirAll(filepath.Dir(out), 0755); err != nil {
+		g.err = err
+		return "", err
+	}
+	c.log.Info("Generating library preview", "src", src)
+	if err := c.transcode(ctx, src, out); err != nil {
+		c.log.Warn("Library preview transcode failed", "src", src, "err", err)
+		g.err = err
+		return "", err
+	}
+	if sidecar != "" {
+		_ = os.Remove(sidecar)
+	}
+	return out, nil
+}
+
+type previewGen struct {
+	done chan struct{}
+	err  error
+}
+
+// localNameFor resolves a camera path to its local media name via the
+// cached catalog, falling back to the bare file name.
+func (c *Coordinator) localNameFor(folder, cameraPath string) string {
+	name := filepath.Base(cameraPath)
+	items, _, err := ReadCatalog(folder)
+	if err != nil {
+		return name
+	}
+	counts := make(map[string]int, len(items))
+	for _, it := range items {
+		counts[it.Name]++
+	}
+	for _, it := range items {
+		if it.CameraPath == cameraPath {
+			return wifi.LocalMediaName(it.CameraPath, it.Name, counts[it.Name] > 1)
+		}
+	}
+	return name
+}

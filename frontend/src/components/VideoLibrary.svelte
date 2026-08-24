@@ -104,7 +104,11 @@
   </div>
   <div class="panel-content">
     {#if source !== 'local' && sourceCamera}
-      <CameraMediaBrowser cameraId={sourceCamera.id} cameraName={sourceCamera.name} />
+      <!-- Keyed so a camera switch destroys the old browser, firing its
+           disarm-on-destroy for the previous camera's session -->
+      {#key sourceCamera.id}
+        <CameraMediaBrowser cameraId={sourceCamera.id} cameraName={sourceCamera.name} />
+      {/key}
     {:else if loading && videos.length === 0}
       <div class="empty-state">
         <i class="fas fa-spinner fa-spin"></i>

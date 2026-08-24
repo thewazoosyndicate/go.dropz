@@ -30,6 +30,9 @@ type CameraStatus struct {
 	IsSynced      bool      `json:"is_synced"`
 	IsSyncing     bool      `json:"is_syncing"`
 	LastSyncError string    `json:"last_sync_error,omitempty"`
+	// User intent: keep a preview session up whenever the camera is in
+	// range, so in-app previews skip the connection dance.
+	PreviewEnabled bool `json:"preview_enabled,omitempty"`
 	// InPairingMode mirrors the camera-side pairing UI flag from BLE
 	// advertising data; ephemeral, valid only while the camera is seen.
 	InPairingMode bool `json:"in_pairing_mode,omitempty"`
@@ -134,6 +137,16 @@ type SyncQueueEntry struct {
 	Priority         int32     `json:"priority"` // Higher numbers = higher priority (manual sync = 10, auto sync = 5)
 	ProgressPercent  int32     `json:"progress_percent"`
 	CurrentOperation string    `json:"current_operation"`
+	// Download detail, populated only while the download step runs.
+	// Byte fields are 0 when the camera did not report sizes.
+	FileIndex  int32  `json:"file_index,omitempty"` // 1-based
+	FileCount  int32  `json:"file_count,omitempty"`
+	FileName   string `json:"file_name,omitempty"`
+	FileBytes  int64  `json:"file_bytes,omitempty"`
+	FileTotal  int64  `json:"file_total,omitempty"`
+	BytesDone  int64  `json:"bytes_done,omitempty"`  // whole sync
+	BytesTotal int64  `json:"bytes_total,omitempty"`
+	RateBps    int64  `json:"rate_bps,omitempty"`
 	// FileNames limits the download to exactly these files (media browser
 	// selection); empty means the normal date-threshold sync.
 	FileNames []string `json:"file_names,omitempty"`
@@ -151,6 +164,8 @@ type CameraMediaItem struct {
 	CreatedAt     time.Time `json:"created_at"`
 	ThumbnailPath string    `json:"thumbnail_path,omitempty"` // absolute local path
 	Downloaded    bool      `json:"downloaded"`
+	LocalPath     string    `json:"local_path,omitempty"`   // set when Downloaded
+	PreviewPath   string    `json:"preview_path,omitempty"` // cached LRV proxy
 }
 
 // Group represents a collection of cameras that can be managed together
@@ -175,6 +190,7 @@ type VideoFile struct {
 	DurationSeconds int32     `json:"duration_seconds"`
 	ThumbnailPath   string    `json:"thumbnail_path"`
 	HasProcessed    bool      `json:"has_processed"`
+	PreviewPath     string    `json:"preview_path,omitempty"` // in-app playable WebM
 }
 
 // Config represents the system-wide configuration settings

@@ -39,3 +39,37 @@ func (s *DropzServer) RequestMediaDownload(ctx context.Context, req *protocol.Re
 	}
 	return &protocol.RequestMediaDownloadResponse{Entry: toProtoSyncQueueEntry(entry)}, nil
 }
+
+// PreviewMedia fetches one clip's LRV proxy into the preview cache.
+func (s *DropzServer) PreviewMedia(ctx context.Context, req *protocol.PreviewMediaRequest) (*protocol.PreviewMediaResponse, error) {
+	if req.GetCameraId() == "" || req.GetCameraPath() == "" {
+		return nil, status.Error(codes.InvalidArgument, "camera_id and camera_path required")
+	}
+	if err := s.manager.PreviewMedia(req.GetCameraId(), req.GetCameraPath()); err != nil {
+		return nil, rpcError(err)
+	}
+	return &protocol.PreviewMediaResponse{}, nil
+}
+
+// SetPreviewSession arms or disarms a camera's standing preview session.
+func (s *DropzServer) SetPreviewSession(ctx context.Context, req *protocol.SetPreviewSessionRequest) (*protocol.SetPreviewSessionResponse, error) {
+	if req.GetCameraId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "camera_id required")
+	}
+	if err := s.manager.SetPreviewSession(req.GetCameraId(), req.GetEnabled()); err != nil {
+		return nil, rpcError(err)
+	}
+	return &protocol.SetPreviewSessionResponse{}, nil
+}
+
+// PreviewVideo generates the in-app playable preview of a library file.
+func (s *DropzServer) PreviewVideo(ctx context.Context, req *protocol.PreviewVideoRequest) (*protocol.PreviewVideoResponse, error) {
+	if req.GetVideoPath() == "" {
+		return nil, status.Error(codes.InvalidArgument, "video_path required")
+	}
+	preview, err := s.manager.PreviewVideo(req.GetVideoPath())
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	return &protocol.PreviewVideoResponse{PreviewPath: preview}, nil
+}

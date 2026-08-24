@@ -16,6 +16,15 @@ build:
 	@mkdir -p bin
 	go build $(LDFLAGS) -o bin/dropz cmd/dropz/main.go
 
+# Preview transcoding needs ffmpeg bundled beside the backend (bin/ is
+# packed into the app's resources). Pinned to a static GPL build; the
+# app only spawns it, so the Apache license of dropz is unaffected.
+FFMPEG_URL := https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz
+bin/ffmpeg:
+	@echo "Fetching static ffmpeg..."
+	@mkdir -p bin
+	curl -sL $(FFMPEG_URL) | tar xJ -C bin --strip-components=2 --wildcards "*/bin/ffmpeg"
+
 # Hardware validation harness; see docs/conformance.md "Hardware validation"
 probe:
 	@mkdir -p bin
@@ -70,7 +79,7 @@ wifi-helper:
 	@mkdir -p bin
 	swiftc scripts/wifi_join.swift -o bin/wifi_join
 
-appimage: build frontend-build
+appimage: build frontend-build bin/ffmpeg
 	@echo "Building AppImage..."
 	cd frontend && npx electron-builder --linux AppImage
 	@echo "AppImage built: frontend/dist/Dropz.AppImage"

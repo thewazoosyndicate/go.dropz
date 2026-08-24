@@ -1,6 +1,6 @@
 <script>
   import { getServiceRunning, isAnyReconnecting } from '../lib/stores/connection.svelte.js';
-  import { getDiscoveredDevices, getManagedDevices } from '../lib/stores/devices.svelte.js';
+  import { getDiscoveredDevices, getManagedDevices, getAllDevices } from '../lib/stores/devices.svelte.js';
   import { getSyncQueue } from '../lib/stores/sync.svelte.js';
   import { toggleTheme, getTheme, setSettingsOpen } from '../lib/stores/ui.svelte.js';
 
@@ -11,12 +11,28 @@
   let reconnecting = $derived(isAnyReconnecting());
   let isDark = $derived(getTheme() === 'dark');
 
-  let statusClass = $derived(
-    running ? (reconnecting ? 'reconnecting' : 'running') : ''
+  // Healthy is the permanent state and says nothing; only the
+  // exceptions (backend gone, streams reconnecting) earn chrome.
+  let problem = $derived(
+    !running ? { cls: 'stopped', label: 'Backend stopped' } :
+    reconnecting ? { cls: 'reconnecting', label: 'Reconnecting...' } : null
   );
-  let statusLabel = $derived(
-    running ? (reconnecting ? 'Reconnecting...' : 'Running') : 'Stopped'
-  );
+
+  // The radio is a single slot; show which camera holds it and why.
+  let activeLink = $derived.by(() => {
+    const devices = Object.values(getAllDevices());
+    for (const e of getSyncQueue()) {
+      const d = devices.find(x => x.id === e.cameraId);
+      if (!d?.isSyncing) continue;
+      const name = d.wifiSsid?.trim()?.substring(0, 12) || d.name || 'camera';
+      const op = e.currentOperation || '';
+      const isPreview = op.includes('preview') || op.startsWith('Preview');
+      return isPreview
+        ? { icon: 'fa-satellite-dish', label: `Connected to ${name}` }
+        : { icon: 'fa-sync fa-spin', label: `Syncing ${name}` };
+    }
+    return null;
+  });
 </script>
 
 <header class="status-bar">
@@ -27,10 +43,11 @@
     </span>
   </div>
   <div class="status-right">
-    <div class="connection-status">
-      <div class="status-dot {statusClass}"></div>
-      <span class="status-label">{statusLabel}</span>
-    </div>
+    {#if problem}
+      <span class="status-pill {problem.cls}">{problem.label}</span>
+    {:else if activeLink}
+      <span class="active-link"><i class="fas {activeLink.icon}"></i> {activeLink.label}</span>
+    {/if}
     <button class="icon-btn" onclick={() => setSettingsOpen(true)} title="Settings">
       <i class="fas fa-cog"></i>
     </button>
@@ -76,31 +93,29 @@
     gap: 10px;
   }
 
-  .connection-status {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+  .status-pill {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: white;
+    padding: 3px 10px;
+    border-radius: 10px;
   }
 
-  .status-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
+  .status-pill.stopped {
     background-color: var(--danger-color);
   }
 
-  .status-dot.running {
-    background-color: var(--secondary-color);
-  }
-
-  .status-dot.reconnecting {
+  .status-pill.reconnecting {
     background-color: var(--warning-color);
     animation: blink 1.5s infinite;
   }
 
-  .status-label {
+  .active-link {
     font-size: 0.8rem;
-    color: var(--text-secondary);
+    color: var(--secondary-color);
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
 
   .icon-btn {

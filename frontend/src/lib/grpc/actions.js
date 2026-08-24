@@ -297,6 +297,7 @@ export function loadVideos(cameraId = '', limit = 200, offset = 0) {
       cameraId: v.getCameraId(),
       mimeType: v.getMimeType(),
       thumbnailPath: v.getThumbnailPath(),
+      previewPath: v.getPreviewPath(),
     }));
 
     setVideos(videos, response.getTotalCount());
@@ -453,9 +454,47 @@ export function fetchCameraMedia(cameraId) {
           createdAt: i.getCreatedAt()?.toDate(),
           thumbnailPath: i.getThumbnailPath(),
           downloaded: i.getDownloaded(),
+          localPath: i.getLocalPath(),
+          previewPath: i.getPreviewPath(),
         })),
       });
     });
+  });
+}
+
+// Fetch a clip's LRV proxy into the preview cache (opens a short camera
+// session on demand); resolves when the request is accepted, not done.
+export function previewMedia(cameraId, cameraPath) {
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.PreviewMediaRequest();
+    request.setCameraId(cameraId);
+    request.setCameraPath(cameraPath);
+    client.previewMedia(request, (error) => (error ? reject(error) : resolve()));
+  });
+}
+
+// Arm or disarm a camera's standing preview session. Arming is intent:
+// the link comes up when the camera is in range and the radio is free.
+export function setPreviewSession(cameraId, enabled) {
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.SetPreviewSessionRequest();
+    request.setCameraId(cameraId);
+    request.setEnabled(enabled);
+    client.setPreviewSession(request, (error) => (error ? reject(error) : resolve()));
+  });
+}
+
+// Generate (or reuse) a library file's in-app preview. Synchronous on
+// the backend; long clips take a while, keep the UI in a pending state.
+export function previewVideo(videoPath) {
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.PreviewVideoRequest();
+    request.setVideoPath(videoPath);
+    client.previewVideo(request, (error, response) =>
+      error ? reject(error) : resolve(response.getPreviewPath()));
   });
 }
 

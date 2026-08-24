@@ -36,6 +36,7 @@ type VideoFile struct {
 	DurationSeconds int32                  `protobuf:"varint,9,opt,name=duration_seconds,json=durationSeconds,proto3" json:"duration_seconds,omitempty"`
 	ThumbnailPath   string                 `protobuf:"bytes,10,opt,name=thumbnail_path,json=thumbnailPath,proto3" json:"thumbnail_path,omitempty"`
 	HasProcessed    bool                   `protobuf:"varint,11,opt,name=has_processed,json=hasProcessed,proto3" json:"has_processed,omitempty"`
+	PreviewPath     string                 `protobuf:"bytes,12,opt,name=preview_path,json=previewPath,proto3" json:"preview_path,omitempty"` // cached in-app playable WebM, empty until generated
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -145,6 +146,13 @@ func (x *VideoFile) GetHasProcessed() bool {
 		return x.HasProcessed
 	}
 	return false
+}
+
+func (x *VideoFile) GetPreviewPath() string {
+	if x != nil {
+		return x.PreviewPath
+	}
+	return ""
 }
 
 // Request to get all downloaded videos
@@ -281,7 +289,7 @@ var File_video_proto protoreflect.FileDescriptor
 
 const file_video_proto_rawDesc = "" +
 	"\n" +
-	"\vvideo.proto\x12\x05dropz\x1a\x1fgoogle/protobuf/timestamp.proto\"\x87\x03\n" +
+	"\vvideo.proto\x12\x05dropz\x1a\x1fgoogle/protobuf/timestamp.proto\"\xaa\x03\n" +
 	"\tVideoFile\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
@@ -296,7 +304,8 @@ const file_video_proto_rawDesc = "" +
 	"\x10duration_seconds\x18\t \x01(\x05R\x0fdurationSeconds\x12%\n" +
 	"\x0ethumbnail_path\x18\n" +
 	" \x01(\tR\rthumbnailPath\x12#\n" +
-	"\rhas_processed\x18\v \x01(\bR\fhasProcessed\"\xcf\x01\n" +
+	"\rhas_processed\x18\v \x01(\bR\fhasProcessed\x12!\n" +
+	"\fpreview_path\x18\f \x01(\tR\vpreviewPath\"\xcf\x01\n" +
 	"\x10GetVideosRequest\x12\x1b\n" +
 	"\tcamera_id\x18\x01 \x01(\tR\bcameraId\x129\n" +
 	"\n" +

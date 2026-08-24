@@ -7,14 +7,17 @@ let syncQueue = $state([]);
 export function getSyncQueue() { return syncQueue; }
 
 export function setSyncQueue(entries) {
-  // A BLE-verified no-op sync streams "Already up to date" as its final
-  // state, then leaves the queue; without a toast the skip would look
+  // Finished syncs stream a final label ("Already up to date", "Sync
+  // complete"), then leave the queue; without a toast the exit would look
   // like a silent failure.
   for (const old of syncQueue) {
-    if (old.currentOperation === 'Already up to date' &&
-        !entries.some(e => e.cameraId === old.cameraId)) {
-      const device = Object.values(getAllDevices()).find(d => d.id === old.cameraId);
-      addToast(`${device?.name || 'Camera'} already up to date`, 'info');
+    if (entries.some(e => e.cameraId === old.cameraId)) continue;
+    const device = Object.values(getAllDevices()).find(d => d.id === old.cameraId);
+    const name = device?.name || 'Camera';
+    if (old.currentOperation === 'Already up to date') {
+      addToast(`${name} already up to date`, 'info');
+    } else if (old.currentOperation === 'Sync complete') {
+      addToast(`${name} synced`, 'success');
     }
   }
   syncQueue.length = 0;

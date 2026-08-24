@@ -121,6 +121,16 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 		statusCheckRequest:   make(chan string, 8),
 	}
 
+	// Armed preview sessions are view-scoped intent (the camera's library
+	// panel); a flag persisted across a restart must not resurrect one.
+	for _, cam := range db.GetAllCameras() {
+		if cam.Status.PreviewEnabled {
+			_ = db.UpdateCameraByID(cam.Camera.ID, func(cs *model.CameraWithState) {
+				cs.Status.PreviewEnabled = false
+			})
+		}
+	}
+
 	// Initialize component managers (notify/BLEOperation passed as method values)
 	manager.syncCoordinator = syncer.NewCoordinator(ctx, db, bleManager, log, manager.notify, manager.BLEOperation, nil)
 	manager.discoveryProcessor = discovery.NewProcessor(db, log)

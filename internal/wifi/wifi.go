@@ -54,10 +54,89 @@ func NewWiFiManager(log *slog.Logger) *WiFiManager {
 	}
 }
 
+// DuplicateNames returns the names appearing more than once.
+// Cards can reuse a file name across GOPRO directories (seen on a HERO13
+// after folder rollover), so a bare name does not identify a file.
+func DuplicateNames(files []MediaFile) map[string]bool {
+	seen := make(map[string]int, len(files))
+	for _, f := range files {
+		seen[f.Name]++
+	}
+	dupes := make(map[string]bool)
+	for name, n := range seen {
+		if n > 1 {
+			dupes[name] = true
+		}
+	}
+	return dupes
+}
+
+// LocalMediaName returns the on-disk file name for a camera file: the
+// camera name, prefixed by its directory only when the name is duplicated
+// on the card. dupe must come from the camera's FULL media list, so the
+// local name stays stable across selection downloads and full syncs.
+func LocalMediaName(cameraPath, name string, dupe bool) string {
+	if !dupe {
+		return name
+	}
+	if dir := filepath.Dir(cameraPath); dir != "." && dir != "/" {
+		return strings.ReplaceAll(dir, string(filepath.Separator), "_") + "_" + name
+	}
+	return name
+}
+
+// DownloadProgress is a byte-level snapshot streamed while DownloadVideos
+// runs. Byte totals are 0 when the camera did not report sizes (grouped
+// media members).
+type DownloadProgress struct {
+	FileIndex  int   // 1-based, among the files actually downloading
+	FileCount  int
+	FileName   string
+	FileBytes  int64 // current file bytes on disk, resume offset included
+	FileTotal  int64
+	BytesDone  int64 // whole sync
+	BytesTotal int64
+	RateBps    int64 // smoothed recent throughput
+}
+
+// ProgressFunc receives download progress; called at most about once a
+// second, never after DownloadVideos returns.
+type ProgressFunc func(DownloadProgress)
+
+// rateMeter smooths throughput over successive byte counts; raw per-second
+// deltas swing too much on camera WiFi to be a readable ETA source.
+type rateMeter struct {
+	lastTime  time.Time
+	lastBytes int64
+	rate      float64
+}
+
+func (r *rateMeter) update(bytes int64) int64 {
+	now := time.Now()
+	// bytes < lastBytes: a retry rewound the count, restart the window
+	if r.lastTime.IsZero() || bytes < r.lastBytes {
+		r.lastTime, r.lastBytes = now, bytes
+		return int64(r.rate)
+	}
+	dt := now.Sub(r.lastTime).Seconds()
+	if dt <= 0 {
+		return int64(r.rate)
+	}
+	inst := float64(bytes-r.lastBytes) / dt
+	if r.rate == 0 {
+		r.rate = inst
+	} else {
+		r.rate = 0.7*r.rate + 0.3*inst
+	}
+	r.lastTime, r.lastBytes = now, bytes
+	return int64(r.rate)
+}
+
 // DownloadVideos downloads videos from a GoPro device.
 // A non-empty fileNames selection downloads exactly those files (media
 // browser); empty falls back to the date-threshold window.
-func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysInPast int, fileNames []string) ([]string, error) {
+// progress may be nil.
+func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysInPast int, fileNames []string, progress ProgressFunc) ([]string, error) {
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create destination directory: %w", err)
 	}
@@ -79,7 +158,10 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 			selected[n] = true
 		}
 		for _, media := range mediaFiles {
-			if selected[media.Name] {
+			// The browser selects by camera path since names can repeat
+			// across GOPRO directories; bare names still match queued
+			// entries persisted before that change.
+			if selected[media.CameraPath] || selected[media.Name] {
 				filteredMedia = append(filteredMedia, media)
 			}
 		}
@@ -95,36 +177,99 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 
 	var downloadedFiles []string
 	skippedCount := 0
+
+	// Duplicate detection over the full card, not the filtered window:
+	// the local name must not depend on which files this sync covers.
+	dupes := DuplicateNames(mediaFiles)
+	localName := func(media MediaFile) string {
+		return LocalMediaName(media.CameraPath, media.Name, dupes[media.Name])
+	}
+
+	// Partition before downloading so progress can report the real file
+	// count and byte total for this sync, not the whole window.
+	var pending []MediaFile
+	for _, media := range filteredMedia {
+		outputPath := filepath.Join(destDir, localName(media))
+		if exists, _ := m.fileExistsWithSize(outputPath, media.Size); exists {
+			downloadedFiles = append(downloadedFiles, outputPath)
+			skippedCount++
+			continue
+		}
+		pending = append(pending, media)
+	}
+
+	var bytesTotal int64
+	for _, media := range pending {
+		if media.Size > 0 {
+			bytesTotal += media.Size
+		}
+	}
+
 	failedCount := 0
 	var totalBytes int64
 	var totalSeconds float64
+	var bytesDone int64 // completed files only; the current file adds its own bytes
+	meter := &rateMeter{}
 
-	for _, media := range filteredMedia {
+	for i, media := range pending {
 		select {
 		case <-ctx.Done():
 			return downloadedFiles, ctx.Err()
 		default:
 		}
 
-		outputPath := filepath.Join(destDir, media.Name)
+		outputPath := filepath.Join(destDir, localName(media))
 
-		if exists, _ := m.fileExistsWithSize(outputPath, media.Size); exists {
-			downloadedFiles = append(downloadedFiles, outputPath)
-			skippedCount++
-			continue
+		var fileProgress func(int64)
+		if progress != nil {
+			idx, name, size := i+1, media.Name, media.Size
+			fileProgress = func(fileBytes int64) {
+				progress(DownloadProgress{
+					FileIndex:  idx,
+					FileCount:  len(pending),
+					FileName:   name,
+					FileBytes:  fileBytes,
+					FileTotal:  size,
+					BytesDone:  bytesDone + fileBytes,
+					BytesTotal: bytesTotal,
+					RateBps:    meter.update(bytesDone + fileBytes),
+				})
+			}
 		}
 
 		dlStart := time.Now()
-		dlErr := m.downloadFileWithResume(ctx, media.URL, outputPath, media.CreatedAt, media.Size)
+		dlErr := m.downloadFileWithResume(ctx, media.URL, outputPath, media.CreatedAt, media.Size, fileProgress)
 		if dlErr != nil {
 			// Per-file, skipped and continued; the summary below counts them
 			m.log.Warn("Failed to download media file", "file", media.Name, "err", dlErr)
 			failedCount++
+			// Keep the remaining percent honest: this file will not arrive
+			if media.Size > 0 {
+				bytesTotal -= media.Size
+			}
 			continue
+		}
+		// The LRV sidecar (~5% of the clip) makes later in-app previews
+		// cheap: transcoding it beats decoding the 4K original by ~20x.
+		// Best effort; the preview flow falls back to the original.
+		if _, hasLRV := LRVCameraPath(media.CameraPath); hasLRV {
+			lrvOut := LRVSidecarPath(destDir, localName(media))
+			if exists, _ := m.fileExistsWithSize(lrvOut, 0); !exists {
+				if err := os.MkdirAll(filepath.Dir(lrvOut), 0755); err == nil {
+					if err := m.DownloadLRV(ctx, media.CameraPath, lrvOut); err != nil {
+						logging.Trace(m.log, "LRV sidecar fetch failed", "file", media.Name, "err", err)
+					}
+				}
+			}
 		}
 
 		// Throughput per file: the number that settles turbo-vs-not debates
+		bytesDone += media.Size // stat below corrects unknown (0) sizes
 		if fi, statErr := os.Stat(outputPath); statErr == nil {
+			if media.Size <= 0 {
+				bytesDone += fi.Size()
+				bytesTotal += fi.Size()
+			}
 			elapsed := time.Since(dlStart).Seconds()
 			totalBytes += fi.Size()
 			totalSeconds += elapsed
@@ -154,6 +299,65 @@ func (m *WiFiManager) DownloadVideos(ctx context.Context, destDir string, daysIn
 		m.log.Info("Download finished", "downloaded", actualDownloads, "skipped", skippedCount)
 	}
 	return downloadedFiles, nil
+}
+
+// PreviewsDirName is the per-camera cache of preview material: raw LRV
+// sidecars fetched at sync time and the transcoded WebMs played in-app.
+const PreviewsDirName = ".previews"
+
+// LRVSidecarPath is where a clip's raw LRV lands next to its download;
+// consumed (transcoded, then deleted) on first play.
+func LRVSidecarPath(destDir, localName string) string {
+	base := strings.TrimSuffix(localName, filepath.Ext(localName))
+	return filepath.Join(destDir, PreviewsDirName, base+".lrv")
+}
+
+// LRVCameraPath returns the camera path of a video's low-res proxy:
+// GoPro stores GL<id>.LRV beside GX/GH<id>.MP4. false when the file has
+// no proxy (photos, other formats).
+func LRVCameraPath(cameraPath string) (string, bool) {
+	dir, name := filepath.Split(cameraPath)
+	if !strings.HasSuffix(name, ".MP4") ||
+		(!strings.HasPrefix(name, "GX") && !strings.HasPrefix(name, "GH")) {
+		return "", false
+	}
+	return dir + "GL" + strings.TrimSuffix(name[2:], ".MP4") + ".LRV", true
+}
+
+// DownloadLRV fetches a video's LRV proxy to outPath (tmp + rename so
+// readers never see partials). LRVs are ~5% of the clip; no resume.
+func (m *WiFiManager) DownloadLRV(ctx context.Context, cameraPath, outPath string) error {
+	lrvPath, ok := LRVCameraPath(cameraPath)
+	if !ok {
+		return fmt.Errorf("no LRV proxy for %s", cameraPath)
+	}
+	url := fmt.Sprintf("%s/videos/DCIM/%s", GoProBaseURL, lrvPath)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := downloadClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("LRV request failed: %s", resp.Status)
+	}
+	tmp := outPath + ".partial"
+	f, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, outPath)
 }
 
 // DownloadThumbnail fetches the camera-generated preview JPEG for one file
@@ -410,7 +614,7 @@ func expandGroupMembers(name, firstID, lastID string, missingIDs []string) []str
 
 // downloadFileWithResume downloads a file with resume capability.
 // The caller is responsible for skipping files that already exist.
-func (m *WiFiManager) downloadFileWithResume(ctx context.Context, url, outputPath string, createdAt time.Time, totalSize int64) error {
+func (m *WiFiManager) downloadFileWithResume(ctx context.Context, url, outputPath string, createdAt time.Time, totalSize int64, onProgress func(int64)) error {
 	maxRetries := 3
 	var lastErr error
 
@@ -425,7 +629,7 @@ func (m *WiFiManager) downloadFileWithResume(ctx context.Context, url, outputPat
 			}
 		}
 
-		err := m.downloadFileWithResumeOnce(ctx, url, outputPath, createdAt, totalSize)
+		err := m.downloadFileWithResumeOnce(ctx, url, outputPath, createdAt, totalSize, onProgress)
 		if err == nil {
 			return nil // Success
 		}
@@ -439,7 +643,7 @@ func (m *WiFiManager) downloadFileWithResume(ctx context.Context, url, outputPat
 }
 
 // downloadFileWithResumeOnce performs a single attempt to download a file with resume capability
-func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outputPath string, createdAt time.Time, totalSize int64) error {
+func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outputPath string, createdAt time.Time, totalSize int64, onProgress func(int64)) error {
 	tempFilePath := outputPath + ".partial"
 
 	// Check if partial download exists
@@ -466,6 +670,9 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 	// If file is already complete, just rename it
 	if totalSize > 0 && startOffset == totalSize {
 		logging.Trace(m.log, "File already complete", "file", outputPath)
+		if onProgress != nil {
+			onProgress(totalSize)
+		}
 		return os.Rename(tempFilePath, outputPath)
 	}
 
@@ -490,7 +697,8 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 		return fmt.Errorf("received non-OK response: %d", resp.StatusCode)
 	}
 
-	// Report progress periodically
+	// Report progress periodically; zero cbTime so the first read reports
+	// immediately and the UI switches to the new file without a lag
 	progressReader := &progressReader{
 		reader:     resp.Body,
 		total:      totalSize,
@@ -498,6 +706,7 @@ func (m *WiFiManager) downloadFileWithResumeOnce(ctx context.Context, url, outpu
 		reportTime: time.Now(),
 		fileName:   filepath.Base(outputPath),
 		logger:     m.log,
+		onProgress: onProgress,
 	}
 
 	// Set up a pipe with buffer for faster downloads
@@ -543,8 +752,10 @@ type progressReader struct {
 	total      int64
 	current    int64
 	reportTime time.Time
+	cbTime     time.Time
 	fileName   string
 	logger     *slog.Logger
+	onProgress func(int64)
 }
 
 func (pr *progressReader) Read(p []byte) (int, error) {
@@ -560,6 +771,13 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 			"current_mb", pr.current/(1024*1024),
 			"total_mb", pr.total/(1024*1024))
 		pr.reportTime = time.Now()
+	}
+
+	// UI callback on its own, faster clock; every write is a store
+	// mutation plus a stream push, so keep it to about one per second
+	if pr.onProgress != nil && time.Since(pr.cbTime) > time.Second {
+		pr.onProgress(pr.current)
+		pr.cbTime = time.Now()
 	}
 
 	return n, err

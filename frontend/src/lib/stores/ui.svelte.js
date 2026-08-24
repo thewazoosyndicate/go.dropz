@@ -6,6 +6,8 @@ let settingsOpen = $state(false);
 let cameraSettingsTarget = $state(null);
 // {source: 'local'|cameraId} or null; consumed once by the library view
 let libraryTarget = $state(null);
+// {path, title} or null; the in-app video player overlay
+let playerTarget = $state(null);
 let searchQuery = $state('');
 let sortBy = $state('signal');
 let toasts = $state([]);
@@ -22,6 +24,9 @@ export function closeCameraSettings() { cameraSettingsTarget = null; }
 export function getLibraryTarget() { return libraryTarget; }
 export function openLibrary(source = 'local') { libraryTarget = { source }; }
 export function clearLibraryTarget() { libraryTarget = null; }
+export function getPlayerTarget() { return playerTarget; }
+export function openPlayer(path, title) { playerTarget = { path, title }; }
+export function closePlayer() { playerTarget = null; }
 export function getSearchQuery() { return searchQuery; }
 export function getSortBy() { return sortBy; }
 export function getToasts() { return toasts; }

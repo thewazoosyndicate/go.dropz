@@ -480,6 +480,28 @@ function deserialize_dropz_SaveManagedAsGroupRequest(buffer_arg) {
   return gopro_pb.SaveManagedAsGroupRequest.deserializeBinary(new Uint8Array(buffer_arg));
 }
 
+function serialize_dropz_SetPreviewSessionRequest(arg) {
+  if (!(arg instanceof gopro_pb.SetPreviewSessionRequest)) {
+    throw new Error('Expected argument of type dropz.SetPreviewSessionRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_SetPreviewSessionRequest(buffer_arg) {
+  return gopro_pb.SetPreviewSessionRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_SetPreviewSessionResponse(arg) {
+  if (!(arg instanceof gopro_pb.SetPreviewSessionResponse)) {
+    throw new Error('Expected argument of type dropz.SetPreviewSessionResponse');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_SetPreviewSessionResponse(buffer_arg) {
+  return gopro_pb.SetPreviewSessionResponse.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
 function serialize_dropz_UnmanageCameraRequest(arg) {
   if (!(arg instanceof gopro_pb.UnmanageCameraRequest)) {
     throw new Error('Expected argument of type dropz.UnmanageCameraRequest');
@@ -820,6 +842,17 @@ getCameraMedia: {
     requestDeserialize: deserialize_dropz_PreviewVideoRequest,
     responseSerialize: serialize_dropz_PreviewVideoResponse,
     responseDeserialize: deserialize_dropz_PreviewVideoResponse,
+  },
+  setPreviewSession: {
+    path: '/dropz.DropzService/SetPreviewSession',
+    requestStream: false,
+    responseStream: false,
+    requestType: gopro_pb.SetPreviewSessionRequest,
+    responseType: gopro_pb.SetPreviewSessionResponse,
+    requestSerialize: serialize_dropz_SetPreviewSessionRequest,
+    requestDeserialize: deserialize_dropz_SetPreviewSessionRequest,
+    responseSerialize: serialize_dropz_SetPreviewSessionResponse,
+    responseDeserialize: deserialize_dropz_SetPreviewSessionResponse,
   },
   // Configuration & Settings
 getConfig: {

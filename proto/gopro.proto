@@ -30,6 +30,8 @@ message CameraStatus {
   string last_sync_error = 9;
   // Camera-side pairing UI flag, read from BLE advertising data
   bool in_pairing_mode = 10;
+  // Keep a preview session up whenever the camera is in range
+  bool preview_enabled = 11;
 }
 
 // Additional technical metadata about a camera
@@ -303,6 +305,16 @@ message PreviewMediaRequest {
 }
 
 message PreviewMediaResponse {}
+
+// Arm or disarm the standing preview session for a camera. Arming is an
+// intent: the session comes up when the camera is in range and the radio
+// is free, and only one camera can be armed at a time.
+message SetPreviewSessionRequest {
+  string camera_id = 1;
+  bool enabled = 2;
+}
+
+message SetPreviewSessionResponse {}
 
 // Generate (or reuse) the in-app playable preview of a library file.
 // Synchronous: answers once the preview exists.

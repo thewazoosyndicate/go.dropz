@@ -474,6 +474,18 @@ export function previewMedia(cameraId, cameraPath) {
   });
 }
 
+// Arm or disarm a camera's standing preview session. Arming is intent:
+// the link comes up when the camera is in range and the radio is free.
+export function setPreviewSession(cameraId, enabled) {
+  return new Promise((resolve, reject) => {
+    const client = getClient();
+    const request = new proto.SetPreviewSessionRequest();
+    request.setCameraId(cameraId);
+    request.setEnabled(enabled);
+    client.setPreviewSession(request, (error) => (error ? reject(error) : resolve()));
+  });
+}
+
 // Generate (or reuse) a library file's in-app preview. Synchronous on
 // the backend; long clips take a while, keep the UI in a pending state.
 export function previewVideo(videoPath) {

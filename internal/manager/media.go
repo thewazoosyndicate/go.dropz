@@ -46,6 +46,11 @@ func (m *GoProManager) PreviewMedia(cameraID, cameraPath string) error {
 	return m.syncCoordinator.RequestPreview(cameraID, cameraPath)
 }
 
+// SetPreviewSession arms or disarms a camera's standing preview session.
+func (m *GoProManager) SetPreviewSession(cameraID string, enabled bool) error {
+	return m.syncCoordinator.SetPreviewSession(cameraID, enabled)
+}
+
 // PreviewVideo generates (or reuses) the in-app playable preview of a
 // library file. Synchronous; long clips take a while.
 func (m *GoProManager) PreviewVideo(videoPath string) (string, error) {

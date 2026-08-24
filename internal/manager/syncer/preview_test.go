@@ -139,6 +139,74 @@ func TestGeneratePreviewPrefersLRVSidecar(t *testing.T) {
 	}
 }
 
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// Arming while out of range records intent; the session comes up via the
+// sync-cadence maintainer once the camera appears, and disarming ends it.
+func TestArmedPreviewSessionLifecycle(t *testing.T) {
+	c, fw := newPreviewCoordinator(t)
+	_ = c.db.UpdateCameraByID("cam1", func(cs *model.CameraWithState) {
+		cs.Status.IsReachable = false
+	})
+
+	if err := c.SetPreviewSession("cam1", true); err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessSyncQueue()
+	if fw.factoryCalls.Load() != 0 {
+		t.Fatal("session must not start while the camera is out of range")
+	}
+
+	_ = c.db.UpdateCameraByID("cam1", func(cs *model.CameraWithState) {
+		cs.Status.IsReachable = true
+	})
+	c.ProcessSyncQueue()
+	waitFor(t, "armed session to establish", func() bool { return fw.factoryCalls.Load() == 1 })
+
+	if err := c.SetPreviewSession("cam1", false); err != nil {
+		t.Fatal(err)
+	}
+	c.Wait()
+	cs, _ := c.db.GetCameraByID("cam1")
+	if cs.Status.PreviewEnabled || cs.Status.IsSyncing {
+		t.Error("disarm must clear the flag and end the session")
+	}
+	if len(c.db.GetSyncQueue()) != 0 {
+		t.Error("session queue entry not removed")
+	}
+}
+
+// One camera holds the preview slot; arming another moves it.
+func TestArmedPreviewSingleSlot(t *testing.T) {
+	c, _ := newPreviewCoordinator(t)
+	_ = c.db.UpdateCameraByID("cam1", func(cs *model.CameraWithState) {
+		cs.Status.IsReachable = false
+	})
+	seedCamera(t, c.db, "cam2", model.CameraStatus{IsManaged: true, IsPaired: true, IsReachable: false})
+
+	if err := c.SetPreviewSession("cam1", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetPreviewSession("cam2", true); err != nil {
+		t.Fatal(err)
+	}
+	cs1, _ := c.db.GetCameraByID("cam1")
+	cs2, _ := c.db.GetCameraByID("cam2")
+	if cs1.Status.PreviewEnabled || !cs2.Status.PreviewEnabled {
+		t.Errorf("slot did not move: cam1=%v cam2=%v", cs1.Status.PreviewEnabled, cs2.Status.PreviewEnabled)
+	}
+}
+
 func TestPreviewRejectsNonVideo(t *testing.T) {
 	c, _ := newPreviewCoordinator(t)
 	if err := c.RequestPreview("cam1", "100GOPRO/G0010001.JPG"); err == nil {

@@ -44,6 +44,7 @@ function processCamera(camera) {
       numVideos: metadata ? metadata.getNumVideos() : null,
       remainingSpaceKb: metadata ? metadata.getRemainingSpaceKb() : null,
       lastSyncError: status ? status.getLastSyncError() : null,
+      previewEnabled: status ? status.getPreviewEnabled() : false,
     };
   } catch (error) {
     console.error('Error processing camera:', error);

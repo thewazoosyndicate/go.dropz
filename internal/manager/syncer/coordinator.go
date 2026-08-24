@@ -84,6 +84,8 @@ type Coordinator struct {
 	// appears in both while its preview link is up.
 	previewSessions map[string]*previewSession
 	previewIdle     time.Duration // tests shrink the linger window
+	// Last establish attempt per camera, for the armed-session backoff
+	previewAttempt map[string]time.Time
 	// Preview transcoder, swappable so tests run without ffmpeg
 	transcode func(ctx context.Context, src, dst string) error
 	// In-flight library preview transcodes, keyed by source path
@@ -113,6 +115,7 @@ func NewCoordinator(ctx context.Context, db *store.Store, bleManager bleClient, 
 		activeTasks:     make(map[string]*SyncTask),
 		previewSessions: make(map[string]*previewSession),
 		previewIdle:     previewLinger,
+		previewAttempt:  make(map[string]time.Time),
 		transcode:       transcodePreview,
 		notifier:        notifier,
 		bleOperation:    bleOperation,
@@ -129,6 +132,10 @@ func (c *Coordinator) Wait() {
 
 // ProcessSyncQueue checks the sync queue and processes cameras that need syncing.
 func (c *Coordinator) ProcessSyncQueue() {
+	// Piggybacks on the sync cadence: an armed camera's preview session
+	// (re)establishes here once it is in range and the radio is idle.
+	defer c.ensureArmedSessions()
+
 	if !c.db.GetConfig().SyncEnabled {
 		logging.Trace(c.log, "Sync disabled, skipping queue processing")
 		return

@@ -129,8 +129,10 @@ type CameraStatus struct {
 	LastSyncError string                 `protobuf:"bytes,9,opt,name=last_sync_error,json=lastSyncError,proto3" json:"last_sync_error,omitempty"`
 	// Camera-side pairing UI flag, read from BLE advertising data
 	InPairingMode bool `protobuf:"varint,10,opt,name=in_pairing_mode,json=inPairingMode,proto3" json:"in_pairing_mode,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Keep a preview session up whenever the camera is in range
+	PreviewEnabled bool `protobuf:"varint,11,opt,name=preview_enabled,json=previewEnabled,proto3" json:"preview_enabled,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *CameraStatus) Reset() {
@@ -229,6 +231,13 @@ func (x *CameraStatus) GetLastSyncError() string {
 func (x *CameraStatus) GetInPairingMode() bool {
 	if x != nil {
 		return x.InPairingMode
+	}
+	return false
+}
+
+func (x *CameraStatus) GetPreviewEnabled() bool {
+	if x != nil {
+		return x.PreviewEnabled
 	}
 	return false
 }
@@ -2751,6 +2760,97 @@ func (*PreviewMediaResponse) Descriptor() ([]byte, []int) {
 	return file_gopro_proto_rawDescGZIP(), []int{45}
 }
 
+// Arm or disarm the standing preview session for a camera. Arming is an
+// intent: the session comes up when the camera is in range and the radio
+// is free, and only one camera can be armed at a time.
+type SetPreviewSessionRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CameraId      string                 `protobuf:"bytes,1,opt,name=camera_id,json=cameraId,proto3" json:"camera_id,omitempty"`
+	Enabled       bool                   `protobuf:"varint,2,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetPreviewSessionRequest) Reset() {
+	*x = SetPreviewSessionRequest{}
+	mi := &file_gopro_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetPreviewSessionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetPreviewSessionRequest) ProtoMessage() {}
+
+func (x *SetPreviewSessionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gopro_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetPreviewSessionRequest.ProtoReflect.Descriptor instead.
+func (*SetPreviewSessionRequest) Descriptor() ([]byte, []int) {
+	return file_gopro_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *SetPreviewSessionRequest) GetCameraId() string {
+	if x != nil {
+		return x.CameraId
+	}
+	return ""
+}
+
+func (x *SetPreviewSessionRequest) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+type SetPreviewSessionResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetPreviewSessionResponse) Reset() {
+	*x = SetPreviewSessionResponse{}
+	mi := &file_gopro_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetPreviewSessionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetPreviewSessionResponse) ProtoMessage() {}
+
+func (x *SetPreviewSessionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gopro_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetPreviewSessionResponse.ProtoReflect.Descriptor instead.
+func (*SetPreviewSessionResponse) Descriptor() ([]byte, []int) {
+	return file_gopro_proto_rawDescGZIP(), []int{47}
+}
+
 // Generate (or reuse) the in-app playable preview of a library file.
 // Synchronous: answers once the preview exists.
 type PreviewVideoRequest struct {
@@ -2762,7 +2862,7 @@ type PreviewVideoRequest struct {
 
 func (x *PreviewVideoRequest) Reset() {
 	*x = PreviewVideoRequest{}
-	mi := &file_gopro_proto_msgTypes[46]
+	mi := &file_gopro_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2774,7 +2874,7 @@ func (x *PreviewVideoRequest) String() string {
 func (*PreviewVideoRequest) ProtoMessage() {}
 
 func (x *PreviewVideoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gopro_proto_msgTypes[46]
+	mi := &file_gopro_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2787,7 +2887,7 @@ func (x *PreviewVideoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreviewVideoRequest.ProtoReflect.Descriptor instead.
 func (*PreviewVideoRequest) Descriptor() ([]byte, []int) {
-	return file_gopro_proto_rawDescGZIP(), []int{46}
+	return file_gopro_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *PreviewVideoRequest) GetVideoPath() string {
@@ -2806,7 +2906,7 @@ type PreviewVideoResponse struct {
 
 func (x *PreviewVideoResponse) Reset() {
 	*x = PreviewVideoResponse{}
-	mi := &file_gopro_proto_msgTypes[47]
+	mi := &file_gopro_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2818,7 +2918,7 @@ func (x *PreviewVideoResponse) String() string {
 func (*PreviewVideoResponse) ProtoMessage() {}
 
 func (x *PreviewVideoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gopro_proto_msgTypes[47]
+	mi := &file_gopro_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2831,7 +2931,7 @@ func (x *PreviewVideoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreviewVideoResponse.ProtoReflect.Descriptor instead.
 func (*PreviewVideoResponse) Descriptor() ([]byte, []int) {
-	return file_gopro_proto_rawDescGZIP(), []int{47}
+	return file_gopro_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *PreviewVideoResponse) GetPreviewPath() string {
@@ -2852,7 +2952,7 @@ type RequestMediaDownloadRequest struct {
 
 func (x *RequestMediaDownloadRequest) Reset() {
 	*x = RequestMediaDownloadRequest{}
-	mi := &file_gopro_proto_msgTypes[48]
+	mi := &file_gopro_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2864,7 +2964,7 @@ func (x *RequestMediaDownloadRequest) String() string {
 func (*RequestMediaDownloadRequest) ProtoMessage() {}
 
 func (x *RequestMediaDownloadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gopro_proto_msgTypes[48]
+	mi := &file_gopro_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2877,7 +2977,7 @@ func (x *RequestMediaDownloadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestMediaDownloadRequest.ProtoReflect.Descriptor instead.
 func (*RequestMediaDownloadRequest) Descriptor() ([]byte, []int) {
-	return file_gopro_proto_rawDescGZIP(), []int{48}
+	return file_gopro_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *RequestMediaDownloadRequest) GetCameraId() string {
@@ -2903,7 +3003,7 @@ type RequestMediaDownloadResponse struct {
 
 func (x *RequestMediaDownloadResponse) Reset() {
 	*x = RequestMediaDownloadResponse{}
-	mi := &file_gopro_proto_msgTypes[49]
+	mi := &file_gopro_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2915,7 +3015,7 @@ func (x *RequestMediaDownloadResponse) String() string {
 func (*RequestMediaDownloadResponse) ProtoMessage() {}
 
 func (x *RequestMediaDownloadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gopro_proto_msgTypes[49]
+	mi := &file_gopro_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2928,7 +3028,7 @@ func (x *RequestMediaDownloadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestMediaDownloadResponse.ProtoReflect.Descriptor instead.
 func (*RequestMediaDownloadResponse) Descriptor() ([]byte, []int) {
-	return file_gopro_proto_rawDescGZIP(), []int{49}
+	return file_gopro_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *RequestMediaDownloadResponse) GetEntry() *SyncQueueEntry {
@@ -2951,7 +3051,7 @@ const file_gopro_proto_rawDesc = "" +
 	"bleAddress\x12\x1b\n" +
 	"\twifi_ssid\x18\x05 \x01(\tR\bwifiSsid\x12#\n" +
 	"\rwifi_password\x18\x06 \x01(\tR\fwifiPassword\x12\x12\n" +
-	"\x04rssi\x18\a \x01(\x05R\x04rssi\"\x8e\x03\n" +
+	"\x04rssi\x18\a \x01(\x05R\x04rssi\"\xb7\x03\n" +
 	"\fCameraStatus\x127\n" +
 	"\tlast_seen\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\x12;\n" +
 	"\vlast_synced\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
@@ -2967,7 +3067,8 @@ const file_gopro_proto_rawDesc = "" +
 	"is_syncing\x18\b \x01(\bR\tisSyncing\x12&\n" +
 	"\x0flast_sync_error\x18\t \x01(\tR\rlastSyncError\x12&\n" +
 	"\x0fin_pairing_mode\x18\n" +
-	" \x01(\bR\rinPairingMode\"\xe8\x02\n" +
+	" \x01(\bR\rinPairingMode\x12'\n" +
+	"\x0fpreview_enabled\x18\v \x01(\bR\x0epreviewEnabled\"\xe8\x02\n" +
 	"\x0eCameraMetadata\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12)\n" +
 	"\x10firmware_version\x18\x02 \x01(\tR\x0ffirmwareVersion\x12\x14\n" +
@@ -3153,7 +3254,11 @@ const file_gopro_proto_rawDesc = "" +
 	"\tcamera_id\x18\x01 \x01(\tR\bcameraId\x12\x1f\n" +
 	"\vcamera_path\x18\x02 \x01(\tR\n" +
 	"cameraPath\"\x16\n" +
-	"\x14PreviewMediaResponse\"4\n" +
+	"\x14PreviewMediaResponse\"Q\n" +
+	"\x18SetPreviewSessionRequest\x12\x1b\n" +
+	"\tcamera_id\x18\x01 \x01(\tR\bcameraId\x12\x18\n" +
+	"\aenabled\x18\x02 \x01(\bR\aenabled\"\x1b\n" +
+	"\x19SetPreviewSessionResponse\"4\n" +
 	"\x13PreviewVideoRequest\x12\x1d\n" +
 	"\n" +
 	"video_path\x18\x01 \x01(\tR\tvideoPath\"9\n" +
@@ -3178,7 +3283,7 @@ func file_gopro_proto_rawDescGZIP() []byte {
 	return file_gopro_proto_rawDescData
 }
 
-var file_gopro_proto_msgTypes = make([]protoimpl.MessageInfo, 50)
+var file_gopro_proto_msgTypes = make([]protoimpl.MessageInfo, 52)
 var file_gopro_proto_goTypes = []any{
 	(*Camera)(nil),                       // 0: dropz.Camera
 	(*CameraStatus)(nil),                 // 1: dropz.CameraStatus
@@ -3226,23 +3331,25 @@ var file_gopro_proto_goTypes = []any{
 	(*GetCameraMediaResponse)(nil),       // 43: dropz.GetCameraMediaResponse
 	(*PreviewMediaRequest)(nil),          // 44: dropz.PreviewMediaRequest
 	(*PreviewMediaResponse)(nil),         // 45: dropz.PreviewMediaResponse
-	(*PreviewVideoRequest)(nil),          // 46: dropz.PreviewVideoRequest
-	(*PreviewVideoResponse)(nil),         // 47: dropz.PreviewVideoResponse
-	(*RequestMediaDownloadRequest)(nil),  // 48: dropz.RequestMediaDownloadRequest
-	(*RequestMediaDownloadResponse)(nil), // 49: dropz.RequestMediaDownloadResponse
-	(*timestamppb.Timestamp)(nil),        // 50: google.protobuf.Timestamp
+	(*SetPreviewSessionRequest)(nil),     // 46: dropz.SetPreviewSessionRequest
+	(*SetPreviewSessionResponse)(nil),    // 47: dropz.SetPreviewSessionResponse
+	(*PreviewVideoRequest)(nil),          // 48: dropz.PreviewVideoRequest
+	(*PreviewVideoResponse)(nil),         // 49: dropz.PreviewVideoResponse
+	(*RequestMediaDownloadRequest)(nil),  // 50: dropz.RequestMediaDownloadRequest
+	(*RequestMediaDownloadResponse)(nil), // 51: dropz.RequestMediaDownloadResponse
+	(*timestamppb.Timestamp)(nil),        // 52: google.protobuf.Timestamp
 }
 var file_gopro_proto_depIdxs = []int32{
-	50, // 0: dropz.CameraStatus.last_seen:type_name -> google.protobuf.Timestamp
-	50, // 1: dropz.CameraStatus.last_synced:type_name -> google.protobuf.Timestamp
+	52, // 0: dropz.CameraStatus.last_seen:type_name -> google.protobuf.Timestamp
+	52, // 1: dropz.CameraStatus.last_synced:type_name -> google.protobuf.Timestamp
 	0,  // 2: dropz.CameraWithState.camera:type_name -> dropz.Camera
 	1,  // 3: dropz.CameraWithState.status:type_name -> dropz.CameraStatus
 	2,  // 4: dropz.CameraWithState.metadata:type_name -> dropz.CameraMetadata
 	3,  // 5: dropz.DiscoveredCamera.camera_state:type_name -> dropz.CameraWithState
 	3,  // 6: dropz.ManagedCamera.camera_state:type_name -> dropz.CameraWithState
-	50, // 7: dropz.SyncQueueEntry.queued_at:type_name -> google.protobuf.Timestamp
-	50, // 8: dropz.Group.created_at:type_name -> google.protobuf.Timestamp
-	50, // 9: dropz.Group.updated_at:type_name -> google.protobuf.Timestamp
+	52, // 7: dropz.SyncQueueEntry.queued_at:type_name -> google.protobuf.Timestamp
+	52, // 8: dropz.Group.created_at:type_name -> google.protobuf.Timestamp
+	52, // 9: dropz.Group.updated_at:type_name -> google.protobuf.Timestamp
 	4,  // 10: dropz.GetDiscoveredCamerasResponse.cameras:type_name -> dropz.DiscoveredCamera
 	5,  // 11: dropz.GetManagedCamerasResponse.cameras:type_name -> dropz.ManagedCamera
 	6,  // 12: dropz.GetSyncQueueResponse.queue:type_name -> dropz.SyncQueueEntry
@@ -3253,12 +3360,12 @@ var file_gopro_proto_depIdxs = []int32{
 	32, // 17: dropz.CameraSetting.options:type_name -> dropz.SettingOption
 	35, // 18: dropz.CameraSettingsResult.results:type_name -> dropz.SettingApplyResult
 	33, // 19: dropz.GetCameraSettingsResponse.settings:type_name -> dropz.CameraSetting
-	50, // 20: dropz.GetCameraSettingsResponse.updated_at:type_name -> google.protobuf.Timestamp
+	52, // 20: dropz.GetCameraSettingsResponse.updated_at:type_name -> google.protobuf.Timestamp
 	34, // 21: dropz.ApplyCameraSettingsRequest.changes:type_name -> dropz.SettingChange
 	36, // 22: dropz.ApplyCameraSettingsResponse.cameras:type_name -> dropz.CameraSettingsResult
-	50, // 23: dropz.CameraMediaItem.created_at:type_name -> google.protobuf.Timestamp
+	52, // 23: dropz.CameraMediaItem.created_at:type_name -> google.protobuf.Timestamp
 	41, // 24: dropz.GetCameraMediaResponse.items:type_name -> dropz.CameraMediaItem
-	50, // 25: dropz.GetCameraMediaResponse.updated_at:type_name -> google.protobuf.Timestamp
+	52, // 25: dropz.GetCameraMediaResponse.updated_at:type_name -> google.protobuf.Timestamp
 	6,  // 26: dropz.RequestMediaDownloadResponse.entry:type_name -> dropz.SyncQueueEntry
 	27, // [27:27] is the sub-list for method output_type
 	27, // [27:27] is the sub-list for method input_type
@@ -3279,7 +3386,7 @@ func file_gopro_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gopro_proto_rawDesc), len(file_gopro_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   50,
+			NumMessages:   52,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

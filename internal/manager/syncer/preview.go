@@ -14,10 +14,16 @@ import (
 )
 
 const (
-	// How long an idle preview session keeps the camera link up so the
-	// next preview click skips the ~25s connection dance.
+	// How long an idle on-demand preview session keeps the camera link up
+	// so the next preview click skips the ~25s connection dance.
 	previewLinger = 45 * time.Second
 	previewPoll   = 2 * time.Second
+	// An armed (toggled-on) session ignores the linger but still disarms
+	// itself eventually: the keep-alive holds the camera awake, and a
+	// forgotten toggle would drain its battery.
+	previewMaxIdle = 15 * time.Minute
+	// Between failed establish attempts for an armed camera
+	previewRetryBackoff = time.Minute
 )
 
 // previewSession accepts follow-up preview requests while its camera
@@ -115,7 +121,33 @@ func (c *Coordinator) RequestPreview(cameraID, cameraPath string) error {
 		}()
 		return nil
 	}
+	c.mutex.Unlock()
 
+	s, err := c.ensurePreviewSession(camera)
+	if err != nil {
+		return err
+	}
+	select {
+	case s.requests <- cameraPath:
+	default:
+		return fmt.Errorf("preview queue full for %s", camera.Camera.Name)
+	}
+	return nil
+}
+
+// ensurePreviewSession returns the camera's open preview session, or
+// claims the radio and starts one.
+func (c *Coordinator) ensurePreviewSession(camera *model.CameraWithState) (*previewSession, error) {
+	cameraID := camera.Camera.ID
+	c.mutex.Lock()
+	if s, ok := c.previewSessions[cameraID]; ok {
+		c.mutex.Unlock()
+		return s, nil
+	}
+	if _, busy := c.activeTasks[cameraID]; busy {
+		c.mutex.Unlock()
+		return nil, fmt.Errorf("%s is busy syncing", camera.Camera.Name)
+	}
 	taskCtx, taskCancel := context.WithCancel(c.ctx)
 	task := &SyncTask{
 		CameraID:   cameraID,
@@ -125,9 +157,9 @@ func (c *Coordinator) RequestPreview(cameraID, cameraPath string) error {
 		Ctx:        taskCtx,
 	}
 	s := &previewSession{requests: make(chan string, 16)}
-	s.requests <- cameraPath
 	c.activeTasks[cameraID] = task
 	c.previewSessions[cameraID] = s
+	c.previewAttempt[cameraID] = time.Now()
 	c.mutex.Unlock()
 
 	// Previews are interactive; never queue behind a long sync.
@@ -139,7 +171,7 @@ func (c *Coordinator) RequestPreview(cameraID, cameraPath string) error {
 		delete(c.previewSessions, cameraID)
 		c.mutex.Unlock()
 		task.Cancel()
-		return fmt.Errorf("another sync is using the radio")
+		return nil, fmt.Errorf("another sync is using the radio")
 	}
 
 	_ = c.db.UpdateCameraSyncingStatusByID(cameraID, true)
@@ -156,7 +188,92 @@ func (c *Coordinator) RequestPreview(cameraID, cameraPath string) error {
 		defer c.wg.Done()
 		c.performPreviewSession(task, s)
 	}()
+	return s, nil
+}
+
+// SetPreviewSession arms or disarms the standing preview session.
+// Arming records intent: the session comes up now if the camera is in
+// range, or as soon as it appears. One camera holds the slot at a time;
+// arming another moves it.
+func (c *Coordinator) SetPreviewSession(cameraID string, enabled bool) error {
+	camera, found := c.db.GetCameraByID(cameraID)
+	if !found {
+		return fmt.Errorf("%w: %s", model.ErrCameraNotFound, cameraID)
+	}
+	if enabled && (!camera.Status.IsManaged || !camera.Status.IsPaired) {
+		return fmt.Errorf("%w: %s", model.ErrNotManagedPaired, camera.Camera.Name)
+	}
+
+	if enabled {
+		for _, other := range c.db.GetAllCameras() {
+			if other.Camera.ID != cameraID && other.Status.PreviewEnabled {
+				c.log.Info("Preview slot moves", "from", other.Camera.Name, "to", camera.Camera.Name)
+				c.disarmPreview(other.Camera.ID)
+			}
+		}
+	}
+	_ = c.db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
+		cs.Status.PreviewEnabled = enabled
+	})
+	if !enabled {
+		c.cancelPreviewSession(cameraID)
+	} else if camera.Status.IsReachable {
+		// Best effort; the maintainer retries when the radio frees up
+		// or the camera comes into range.
+		if _, err := c.ensurePreviewSession(camera); err != nil {
+			c.log.Debug("Armed preview not started yet", "camera", camera.Camera.Name, "err", err)
+		}
+	}
+	c.notifier()
 	return nil
+}
+
+func (c *Coordinator) disarmPreview(cameraID string) {
+	_ = c.db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
+		cs.Status.PreviewEnabled = false
+	})
+	c.cancelPreviewSession(cameraID)
+}
+
+// cancelPreviewSession ends the camera's session if one is open; syncs
+// are never touched.
+func (c *Coordinator) cancelPreviewSession(cameraID string) {
+	c.mutex.RLock()
+	task := c.activeTasks[cameraID]
+	_, isPreview := c.previewSessions[cameraID]
+	c.mutex.RUnlock()
+	if isPreview && task != nil && task.Cancel != nil {
+		task.Cancel()
+	}
+}
+
+// ensureArmedSessions establishes the armed camera's session when it is
+// reachable and the radio is idle. Called from ProcessSyncQueue, so it
+// runs on the sync ticker and after every queue change.
+func (c *Coordinator) ensureArmedSessions() {
+	if len(c.db.GetSyncQueue()) > 0 {
+		return // radio busy or wanted; sessions yield, not compete
+	}
+	for _, cam := range c.db.GetAllCameras() {
+		if !cam.Status.PreviewEnabled || !cam.Status.IsReachable || cam.Status.IsSyncing {
+			continue
+		}
+		c.mutex.RLock()
+		_, active := c.activeTasks[cam.Camera.ID]
+		last := c.previewAttempt[cam.Camera.ID]
+		c.mutex.RUnlock()
+		if active || time.Since(last) < previewRetryBackoff {
+			continue
+		}
+		if _, err := c.ensurePreviewSession(cam); err != nil {
+			c.log.Debug("Armed preview establish failed", "camera", cam.Camera.Name, "err", err)
+		}
+	}
+}
+
+func (c *Coordinator) previewArmed(cameraID string) bool {
+	camera, found := c.db.GetCameraByID(cameraID)
+	return found && camera.Status.PreviewEnabled
 }
 
 func (c *Coordinator) performPreviewSession(task *SyncTask, s *previewSession) {
@@ -230,8 +347,16 @@ func (c *Coordinator) performPreviewSession(task *SyncTask, s *previewSession) {
 			c.fetchPreview(run, previewDir, cameraPath)
 			idle = time.Now()
 		case <-time.After(poll):
-			if time.Since(idle) > c.previewIdle {
+			armed := c.previewArmed(task.CameraID)
+			if !armed && time.Since(idle) > c.previewIdle {
 				c.log.Info("Preview session idle, closing", "camera", task.CameraName)
+				return
+			}
+			// A forgotten toggle must not drain the camera overnight:
+			// the keep-alive holds it awake as long as the session runs.
+			if armed && time.Since(idle) > previewMaxIdle {
+				c.log.Info("Armed preview idle too long, disarming", "camera", task.CameraName)
+				c.disarmPreview(task.CameraID)
 				return
 			}
 			// Hand the radio over as soon as real work is queued

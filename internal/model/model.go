@@ -30,6 +30,9 @@ type CameraStatus struct {
 	IsSynced      bool      `json:"is_synced"`
 	IsSyncing     bool      `json:"is_syncing"`
 	LastSyncError string    `json:"last_sync_error,omitempty"`
+	// User intent: keep a preview session up whenever the camera is in
+	// range, so in-app previews skip the connection dance.
+	PreviewEnabled bool `json:"preview_enabled,omitempty"`
 	// InPairingMode mirrors the camera-side pairing UI flag from BLE
 	// advertising data; ephemeral, valid only while the camera is seen.
 	InPairingMode bool `json:"in_pairing_mode,omitempty"`

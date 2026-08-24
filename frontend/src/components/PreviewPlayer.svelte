@@ -21,8 +21,9 @@
   let muted = $state(false);
   let volume = $state(1);
   let hoverTime = $state(null);
-  // Fullscreen: the whole player goes fullscreen so the trim controls
-  // stay usable; they overlay the picture and fade when the mouse rests
+  // Controls overlay the picture, windowed or fullscreen, and fade while
+  // the clip plays and the mouse rests; paused or trimming keeps them.
+  // Fullscreen takes the whole player so the trim handles stay usable.
   let fullscreen = $state(false);
   let idle = $state(false);
   let idleTimer = null;
@@ -35,14 +36,15 @@
 
   function onFullscreenChange() {
     fullscreen = !!document.fullscreenElement;
-    if (!fullscreen) { idle = false; clearTimeout(idleTimer); }
-    else wake();
+    wake();
   }
 
   function wake() {
     idle = false;
     clearTimeout(idleTimer);
-    if (fullscreen) idleTimer = setTimeout(() => { if (!dragging) idle = true; }, 2500);
+    idleTimer = setTimeout(() => {
+      if (playing && !trimming && !dragging && !saving) idle = true;
+    }, 2500);
   }
 
   $effect(() => {
@@ -120,9 +122,10 @@
 
   async function toggleTrim() {
     if (!canTrim) return;
-    if (trimming) { trimming = false; loopSelection = false; return; }
+    if (trimming) { trimming = false; loopSelection = false; wake(); return; }
     trimming = true;
     saved = null;
+    wake();
     if (outTime === 0) {
       inTime = 0;
       outTime = duration;
@@ -363,7 +366,7 @@
       <!-- svelte-ignore a11y_media_has_caption -->
       <video bind:this={video} src={'file://' + target.path} autoplay {muted}
              onloadedmetadata={onLoaded} ontimeupdate={onTimeUpdate}
-             onplay={() => playing = true} onpause={() => playing = false}
+             onplay={() => { playing = true; wake(); }} onpause={() => { playing = false; wake(); }}
              onclick={togglePlay} ondblclick={toggleFullscreen}></video>
 
       <div class="controls">
@@ -488,23 +491,51 @@
     z-index: 1000;
   }
 
+  /* The picture is the box; header and controls float over it */
   .player {
     position: relative;
-    background: var(--panel-bg);
+    background: black;
     border-radius: 10px;
     overflow: hidden;
-    width: min(960px, 94vw);
+    width: min(1100px, 94vw);
     display: flex;
     flex-direction: column;
     box-shadow: var(--shadow-md);
+    color: white;
+    outline: none;
+  }
+
+  .player.fullscreen {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+    justify-content: center;
+  }
+
+  video {
+    width: 100%;
+    max-height: 84vh;
+    background: black;
+    display: block;
+    cursor: pointer;
+  }
+  .player.fullscreen video { max-height: 100vh; height: 100vh; object-fit: contain; }
+
+  .player-header, .controls {
+    position: absolute;
+    left: 0;
+    right: 0;
+    transition: opacity 0.25s;
   }
 
   .player-header {
+    top: 0;
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 12px;
-    padding: 8px 12px;
+    padding: 10px 12px 28px;
+    background: linear-gradient(rgba(0, 0, 0, 0.65), transparent);
   }
 
   .header-actions { display: flex; align-items: center; gap: 8px; }
@@ -512,121 +543,71 @@
   .player-title {
     font-size: 0.85rem;
     font-weight: 600;
-    color: var(--text-primary);
+    color: white;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
   }
 
-  video {
-    width: 100%;
-    max-height: 62vh;
-    background: black;
-    display: block;
-    cursor: pointer;
+  .controls {
+    bottom: 0;
+    padding: 28px 8px 8px;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.8) 45%);
+  }
+
+  .player.idle .player-header, .player.idle .controls { opacity: 0; pointer-events: none; }
+  .player.idle { cursor: none; }
+
+  /* Buttons read on the dark stage */
+  .player :global(.icon-btn), .player :global(.btn-outline) {
+    color: white;
+    border-color: rgba(255, 255, 255, 0.35);
+  }
+  .player :global(.icon-btn:hover:not(:disabled)), .player :global(.btn-outline:hover:not(:disabled)) {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: white;
+    color: white;
   }
 
   .transport {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 14px 12px 10px;
+    padding: 6px 4px 2px;
   }
 
-  /* The slider pops up above the button, so nothing in the row moves;
-     while a trim handle is dragged past it, it stays inert */
-  .volume { position: relative; display: flex; align-items: center; }
+  .time {
+    font-variant-numeric: tabular-nums;
+    font-size: 0.8rem;
+    color: white;
+    white-space: nowrap;
+    min-width: 110px;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  }
+  .muted { color: rgba(255, 255, 255, 0.6); }
+
+  /* Volume: a short slider that is always there, so nothing pops up
+     under the pointer on its way to the end of the timeline */
+  .volume { display: flex; align-items: center; gap: 6px; }
   .volume input[type="range"] {
     -webkit-appearance: none;
     appearance: none;
-    position: absolute;
-    bottom: calc(100% + 6px);
-    right: 0;
-    width: 96px;
+    width: 72px;
     height: 4px;
     margin: 0;
-    padding: 12px 0;
     border-radius: 2px;
-    background: linear-gradient(var(--border-color), var(--border-color)) center / 100% 4px no-repeat, var(--panel-bg);
-    box-shadow: var(--shadow-md);
-    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.35);
     cursor: pointer;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.15s;
   }
-  .volume:hover input[type="range"], .volume:focus-within input[type="range"] { opacity: 1; pointer-events: auto; }
-  .transport.dragging .volume { pointer-events: none; }
-  .transport.dragging .volume input[type="range"] { opacity: 0; }
   .volume input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: var(--primary-color);
+    background: white;
   }
-
-  /* Fullscreen: black stage, controls float over the picture and fade
-     when the mouse rests; trim handles stay reachable */
-  .player.fullscreen {
-    width: 100vw;
-    height: 100vh;
-    border-radius: 0;
-    background: black;
-    justify-content: center;
-  }
-  .player.fullscreen video { max-height: 100vh; height: 100vh; object-fit: contain; }
-  .player.fullscreen .player-header,
-  .player.fullscreen .controls {
-    position: absolute;
-    left: 0;
-    right: 0;
-    transition: opacity 0.25s;
-  }
-  .player.fullscreen .player-header {
-    top: 0;
-    background: linear-gradient(rgba(0, 0, 0, 0.6), transparent);
-    padding: 12px 16px 24px;
-  }
-  .player.fullscreen .player-title { color: white; }
-  .player.fullscreen .controls {
-    bottom: 0;
-    background: linear-gradient(transparent, rgba(0, 0, 0, 0.75) 40%);
-    padding: 24px 8px 8px;
-    color: white;
-  }
-  .player.fullscreen .time, .player.fullscreen .k, .player.fullscreen .hint, .player.fullscreen .keys { color: rgba(255, 255, 255, 0.85); }
-  .player.fullscreen .trim-bar { border-top-color: rgba(255, 255, 255, 0.15); }
-  .player.fullscreen .point { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.25); color: white; }
-  .player.fullscreen kbd { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.25); color: white; }
-  .player.fullscreen .track { background: rgba(255, 255, 255, 0.3); }
-  .player.fullscreen .playhead, .player.fullscreen .playhead::after { background: white; box-shadow: none; }
-  .player.fullscreen :global(.icon-btn), .player.fullscreen :global(.btn-outline) {
-    color: white;
-    border-color: rgba(255, 255, 255, 0.35);
-  }
-  .player.fullscreen :global(.icon-btn:hover), .player.fullscreen :global(.btn-outline:hover:not(:disabled)) {
-    background: rgba(255, 255, 255, 0.15);
-    border-color: white;
-    color: white;
-  }
-  .player.fullscreen .hover-label, .player.fullscreen .handle .label {
-    background: rgba(0, 0, 0, 0.7);
-    border-color: rgba(255, 255, 255, 0.3);
-    color: white;
-  }
-  .player.fullscreen.idle .player-header,
-  .player.fullscreen.idle .controls { opacity: 0; pointer-events: none; }
-  .player.fullscreen.idle { cursor: none; }
-
-  .time {
-    font-variant-numeric: tabular-nums;
-    font-size: 0.8rem;
-    color: var(--text-primary);
-    white-space: nowrap;
-    min-width: 110px;
-  }
-  .muted { color: var(--text-muted); }
+  .transport.dragging .volume { pointer-events: none; }
 
   /* Timeline: a 44px tall hit area around a thin track. The side margins
      keep a handle at either end clear of the neighbouring buttons. */
@@ -647,18 +628,18 @@
     top: 19px;
     height: 6px;
     border-radius: 3px;
-    background: var(--border-color);
+    background: rgba(255, 255, 255, 0.3);
     overflow: hidden;
     transition: height 0.1s, top 0.1s;
   }
   .timeline:hover .track { top: 18px; height: 8px; }
 
   .played { height: 100%; background: var(--primary-color); }
-  .range { position: absolute; top: 0; height: 100%; background: var(--primary-color); opacity: 0.55; }
+  .range { position: absolute; top: 0; height: 100%; background: var(--primary-color); opacity: 0.7; }
   .dim { position: absolute; top: 0; height: 100%; background: transparent; }
 
   .ticks { position: absolute; left: 0; right: 0; top: 27px; height: 4px; pointer-events: none; }
-  .tick { position: absolute; width: 1px; height: 4px; background: var(--text-muted); opacity: 0.5; }
+  .tick { position: absolute; width: 1px; height: 4px; background: rgba(255, 255, 255, 0.55); }
 
   .playhead {
     position: absolute;
@@ -666,7 +647,7 @@
     width: 2px;
     height: 16px;
     margin-left: -1px;
-    background: var(--text-primary);
+    background: white;
     border-radius: 1px;
     pointer-events: none;
   }
@@ -678,8 +659,7 @@
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: var(--text-primary);
-    box-shadow: 0 0 0 2px var(--panel-bg);
+    background: white;
   }
   .trimming .playhead::after { display: none; }
 
@@ -689,15 +669,15 @@
     transform: translateX(-50%);
     font-size: 0.7rem;
     font-variant-numeric: tabular-nums;
-    color: var(--text-primary);
-    background: var(--panel-bg);
-    border: 1px solid var(--border-color);
+    color: white;
+    background: rgba(0, 0, 0, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.3);
     border-radius: 4px;
     padding: 1px 6px;
     white-space: nowrap;
     pointer-events: none;
   }
-  .hover-label { margin-bottom: -6px; color: var(--text-secondary); }
+  .hover-label { margin-bottom: -6px; color: rgba(255, 255, 255, 0.85); }
 
   /* Handles: 14px visible, 32px hit width, the whole 44px height */
   .handle {
@@ -717,7 +697,7 @@
     height: 28px;
     border-radius: 5px;
     background: var(--primary-color);
-    box-shadow: 0 0 0 2px var(--panel-bg);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.6);
     position: relative;
     transition: transform 0.1s;
   }
@@ -732,7 +712,7 @@
   .handle .grip::before { left: 5px; }
   .handle .grip::after { left: 8px; }
   .handle:hover .grip, .handle.active .grip, .handle:focus-visible .grip { transform: scaleY(1.12); }
-  .handle:focus-visible .grip { box-shadow: 0 0 0 2px var(--panel-bg), 0 0 0 4px var(--primary-color); }
+  .handle:focus-visible .grip { box-shadow: 0 0 0 2px black, 0 0 0 4px white; }
   .handle .label { left: 50%; margin-bottom: 2px; opacity: 0; transition: opacity 0.1s; }
   .handle:hover .label, .handle.active .label, .handle:focus-visible .label { opacity: 1; }
   .handle.in .label { transform: translateX(-100%); left: 16px; }
@@ -742,8 +722,8 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 6px 12px 10px;
-    border-top: 1px solid var(--border-color);
+    padding: 6px 4px 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.15);
     flex-wrap: wrap;
   }
 
@@ -752,21 +732,21 @@
     display: flex;
     align-items: baseline;
     gap: 6px;
-    background: var(--state-idle-tint);
-    border: 1px solid var(--border-color);
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.25);
     border-radius: 6px;
     padding: 4px 10px;
     min-height: 30px;
     cursor: pointer;
-    color: var(--text-primary);
+    color: white;
     font-size: 0.8rem;
   }
-  .point:hover { border-color: var(--text-secondary); }
+  .point:hover { border-color: white; }
   .length { display: flex; align-items: baseline; gap: 6px; font-size: 0.8rem; padding: 4px 4px; }
-  .k { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+  .k { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: rgba(255, 255, 255, 0.65); }
   .v { font-variant-numeric: tabular-nums; font-weight: 600; }
 
-  .hint { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-secondary); cursor: help; }
+  .hint { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: rgba(255, 255, 255, 0.85); cursor: help; }
   .hint i { color: var(--state-ok); }
   .spacer { flex: 1; }
 
@@ -778,22 +758,22 @@
     display: flex;
     gap: 14px;
     flex-wrap: wrap;
-    padding: 0 12px 10px;
+    padding: 0 4px 2px;
     font-size: 0.7rem;
-    color: var(--text-muted);
+    color: rgba(255, 255, 255, 0.7);
   }
   kbd {
     display: inline-block;
     min-width: 16px;
     padding: 0 4px;
-    border: 1px solid var(--border-color);
+    border: 1px solid rgba(255, 255, 255, 0.3);
     border-bottom-width: 2px;
     border-radius: 4px;
     font-family: inherit;
     font-size: 0.68rem;
     line-height: 16px;
     text-align: center;
-    color: var(--text-secondary);
-    background: var(--light-bg);
+    color: white;
+    background: rgba(255, 255, 255, 0.1);
   }
 </style>

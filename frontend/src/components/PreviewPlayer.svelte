@@ -521,10 +521,13 @@
   }
   .player.fullscreen video { max-height: 100vh; height: 100vh; object-fit: contain; }
 
+  /* z-index is load-bearing: the header precedes the video in the DOM
+     and a positioned element without one hit-tests below the video */
   .player-header, .controls {
     position: absolute;
     left: 0;
     right: 0;
+    z-index: 1;
     transition: opacity 0.25s;
   }
 

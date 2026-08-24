@@ -65,7 +65,7 @@
   {/if}
 
   {#if isPairing}
-    <button class="pair-btn pairing" disabled>
+    <button class="pair-btn pairing" disabled aria-label="Pairing">
       <i class="fas fa-spinner fa-spin"></i>
     </button>
   {:else if device.isPaired && !device.isManaged}
@@ -73,7 +73,7 @@
       Manage
     </button>
   {:else if device.isPaired && device.isManaged}
-    <button class="pair-btn paired" disabled>
+    <button class="pair-btn paired" disabled aria-label="Paired">
       <i class="fas fa-check"></i>
     </button>
   {:else}

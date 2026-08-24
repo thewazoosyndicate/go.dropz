@@ -73,7 +73,7 @@ wifi-helper:
 appimage: build frontend-build
 	@echo "Building AppImage..."
 	cd frontend && npx electron-builder --linux AppImage
-	@echo "AppImage built: frontend/dist/Dropz-1.0.0.AppImage"
+	@echo "AppImage built: frontend/dist/Dropz.AppImage"
 
 dmg: build-darwin-universal frontend-build
 	@echo "Building macOS DMG..."

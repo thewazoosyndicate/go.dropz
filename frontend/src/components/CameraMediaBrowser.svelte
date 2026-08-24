@@ -238,7 +238,13 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 10px;
+    /* The browser is pinned to the panel height; without these the grid
+       shrinks to fit and squashes every row instead of scrolling. */
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    align-content: start;
+    grid-auto-rows: max-content;
   }
 
   .media-card {

@@ -1,11 +1,13 @@
 <script>
   import ManagedCard from './ManagedCard.svelte';
-  import { getManagedDevices } from '../lib/stores/devices.svelte.js';
-  import { saveManagedAsGroup } from '../lib/grpc/actions.js';
+  import IconButton from './ui/IconButton.svelte';
+  import { getManagedDevices, displayName } from '../lib/stores/devices.svelte.js';
+  import { saveManagedAsGroup, syncAllManaged } from '../lib/grpc/actions.js';
 
   let devices = $derived(Object.values(getManagedDevices()).sort((a, b) =>
-    (a.name || '').localeCompare(b.name || '')
+    displayName(a).localeCompare(displayName(b))
   ));
+  let anyInRange = $derived(devices.some(d => d.isReachable && !d.isSyncing));
 
   let showNameInput = $state(false);
   let groupName = $state('');
@@ -36,26 +38,21 @@
 
 <section class="panel">
   <div class="panel-header">
-    <h2><i class="fas fa-video"></i> Managed</h2>
+    <h2><i class="fas fa-video" aria-hidden="true"></i> Managed</h2>
     <div class="header-actions">
-      <span class="badge">{devices.length} cameras</span>
+      <span class="badge">{devices.length} {devices.length === 1 ? 'camera' : 'cameras'}</span>
       {#if devices.length > 0}
+        <IconButton icon="fa-rotate" title="Sync every camera in range" disabled={!anyInRange} onclick={syncAllManaged} />
         {#if showNameInput}
           <div class="name-input-row">
             <!-- svelte-ignore a11y_autofocus -->
             <input class="name-input" type="text" placeholder="Group name"
                    bind:value={groupName} onkeydown={handleKeydown} autofocus />
-            <button class="save-group-btn" onclick={submitGroupName} title="Save">
-              <i class="fas fa-check"></i>
-            </button>
-            <button class="save-group-btn" onclick={cancelGroupName} title="Cancel">
-              <i class="fas fa-times"></i>
-            </button>
+            <IconButton icon="fa-check" title="Save group" onclick={submitGroupName} />
+            <IconButton icon="fa-times" title="Cancel" onclick={cancelGroupName} />
           </div>
         {:else}
-          <button class="save-group-btn" onclick={handleSaveClick} title="Save as Group">
-            <i class="fas fa-save"></i>
-          </button>
+          <IconButton icon="fa-save" title="Save these cameras as a group" onclick={handleSaveClick} />
         {/if}
       {/if}
     </div>
@@ -65,6 +62,7 @@
       <div class="empty-state">
         <img src="imgs/3_dropz.svg" alt="Dropz" class="empty-logo" />
         <p>No managed cameras</p>
+        <p class="hint">Turn on a GoPro nearby and press Pair in the Nearby list.</p>
       </div>
     {:else}
       <div class="cards-grid">
@@ -104,11 +102,7 @@
     font-size: 1rem;
   }
 
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
+  .header-actions { display: flex; align-items: center; gap: 8px; }
 
   .badge {
     font-size: 0.8rem;
@@ -118,48 +112,22 @@
     border-radius: 12px;
   }
 
-  .save-group-btn {
-    background: none;
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    padding: 4px 8px;
-    cursor: pointer;
-    color: var(--text-secondary);
-    font-size: 0.8rem;
-    transition: all 0.2s;
-  }
-
-  .save-group-btn:hover {
-    border-color: var(--text-secondary);
-    color: var(--text-primary);
-  }
-
-  .name-input-row {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
+  .name-input-row { display: flex; align-items: center; gap: 4px; }
 
   .name-input {
     background: var(--light-bg);
     border: 1px solid var(--border-color);
     border-radius: 6px;
-    padding: 4px 8px;
+    padding: 6px 8px;
     font-size: 0.8rem;
     color: var(--text-primary);
     width: 140px;
-    outline: none;
+    height: 32px;
   }
 
-  .name-input:focus {
-    border-color: var(--primary-color);
-  }
+  .name-input:focus { border-color: var(--primary-color); outline: none; }
 
-  .panel-content {
-    flex: 1;
-    padding: 12px;
-    overflow-y: auto;
-  }
+  .panel-content { flex: 1; padding: 12px; overflow-y: auto; }
 
   .cards-grid {
     display: grid;
@@ -177,9 +145,6 @@
     text-align: center;
   }
 
-  .empty-logo {
-    height: 80px;
-    opacity: 0.6;
-    margin-bottom: 12px;
-  }
+  .empty-logo { height: 80px; opacity: 0.6; margin-bottom: 12px; }
+  .hint { font-size: 0.8rem; margin-top: 4px; }
 </style>

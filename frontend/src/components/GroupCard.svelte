@@ -1,6 +1,6 @@
 <script>
   import { loadGroup, deleteGroup } from '../lib/grpc/actions.js';
-  import { getAllDevices } from '../lib/stores/devices.svelte.js';
+  import { getAllDevices, displayName } from '../lib/stores/devices.svelte.js';
   import { openCameraSettings, addToast } from '../lib/stores/ui.svelte.js';
 
   let { group } = $props();
@@ -10,8 +10,7 @@
     const devices = getAllDevices();
     return group.cameraIds.map(id => {
       const d = Object.values(devices).find(d => d.id === id);
-      if (!d) return 'Unknown';
-      return d.wifiSsid?.trim()?.substring(0, 12) || d.name || 'Unknown';
+      return d ? displayName(d) : 'Unknown';
     });
   });
 

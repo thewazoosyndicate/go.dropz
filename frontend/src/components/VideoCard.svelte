@@ -4,8 +4,9 @@
   const { ipcRenderer } = window.require('electron');
   import { previewVideo } from '../lib/grpc/actions.js';
   import { addToast, openPlayer } from '../lib/stores/ui.svelte.js';
+  import { formatBytes } from '../lib/format.js';
 
-  let { video, cameraName } = $props();
+  let { video, cameraName, isNew = false } = $props();
 
   let isImage = $derived(video.mimeType?.startsWith('image/'));
   let icon = $derived(isImage ? 'fa-image' : 'fa-film');
@@ -15,16 +16,8 @@
   let generating = $state(false);
   let playablePath = $derived(generatedPath || video.previewPath);
 
-  let sizeText = $derived(formatSize(video.sizeBytes));
-  let dateText = $derived(video.createdAt ? video.createdAt.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '');
-  let metaText = $derived([cameraName, sizeText, dateText].filter(Boolean).join(' · '));
-
-  function formatSize(bytes) {
-    if (!bytes) return '';
-    if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
-    if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
-    return `${Math.round(bytes / 1024)} KB`;
-  }
+  let timeText = $derived(video.createdAt ? video.createdAt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '');
+  let metaText = $derived([cameraName, formatBytes(video.sizeBytes), timeText].filter(Boolean).join(' · '));
 
   function openFile() {
     ipcRenderer.send('desktop-open', video.path);
@@ -51,32 +44,33 @@
 </script>
 
 <!-- Mirrors CameraMediaBrowser's media-card so both library tabs read the same -->
-<div class="media-card">
+<div class="media-card" class:is-new={isNew}>
   <div class="thumb">
     {#if video.thumbnailPath}
       <img src={'file://' + video.thumbnailPath} alt={video.name} loading="lazy" />
     {:else}
-      <i class="fas {icon}"></i>
+      <i class="fas {icon}" aria-hidden="true"></i>
     {/if}
+    {#if isNew}<span class="new-badge">New</span>{/if}
   </div>
   <div class="media-info">
     <span class="media-name" title={video.name}>{video.name}</span>
-    <span class="media-meta">{metaText}</span>
+    <span class="media-meta" title={metaText}>{metaText}</span>
   </div>
   <div class="card-actions">
     {#if isImage}
       <button class="mini-btn primary" onclick={openFile}>
-        <i class="fas fa-image"></i> Open
+        <i class="fas fa-image" aria-hidden="true"></i> Open
       </button>
     {:else}
       <button class="mini-btn primary" onclick={play} disabled={generating}
               title={playablePath ? 'Play preview' : 'Generate and play preview'}>
-        <i class="fas {generating ? 'fa-spinner fa-spin' : 'fa-play'}"></i>
+        <i class="fas {generating ? 'fa-spinner fa-spin' : 'fa-play'}" aria-hidden="true"></i>
         {generating ? 'Preparing...' : 'Play'}
       </button>
     {/if}
     <button class="mini-btn" onclick={showInFolder} title="Show in folder" aria-label="Show in folder">
-      <i class="fas fa-folder-open"></i>
+      <i class="fas fa-folder-open" aria-hidden="true"></i>
     </button>
   </div>
 </div>
@@ -92,9 +86,7 @@
     transition: border-color 0.15s;
   }
 
-  .media-card:hover {
-    border-color: var(--text-secondary);
-  }
+  .media-card:hover { border-color: var(--text-secondary); }
 
   .thumb {
     position: relative;
@@ -107,17 +99,23 @@
     font-size: 1.6rem;
   }
 
-  .thumb img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
+  .thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+  .new-badge {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: white;
+    background: var(--primary-color);
+    border-radius: 8px;
+    padding: 0 6px;
+    line-height: 16px;
   }
 
-  .media-info {
-    display: flex;
-    flex-direction: column;
-    padding: 6px 8px;
-  }
+  .media-info { display: flex; flex-direction: column; padding: 6px 8px; }
 
   .media-name {
     font-size: 0.82rem;
@@ -135,24 +133,23 @@
     text-overflow: ellipsis;
   }
 
-  .card-actions {
-    display: flex;
-    gap: 6px;
-    padding: 0 8px 8px;
-  }
+  .card-actions { display: flex; gap: 6px; padding: 0 8px 8px; }
 
   .mini-btn {
     border: 1px solid var(--border-color);
     background: none;
     color: var(--text-primary);
     border-radius: 6px;
-    padding: 3px 10px;
+    padding: 4px 10px;
+    min-height: 30px;
     font-size: 0.75rem;
     cursor: pointer;
     display: flex;
     align-items: center;
     gap: 5px;
   }
+
+  .mini-btn:disabled { opacity: 0.6; cursor: default; }
 
   .mini-btn.primary {
     background-color: var(--primary-color);

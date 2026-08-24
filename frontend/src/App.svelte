@@ -1,7 +1,6 @@
 <script>
   import StatusBar from './components/StatusBar.svelte';
   import MainLayout from './components/MainLayout.svelte';
-  import LogDrawer from './components/LogDrawer.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
   import CameraSettingsModal from './components/CameraSettingsModal.svelte';
   import PreviewPlayer from './components/PreviewPlayer.svelte';
@@ -66,7 +65,6 @@
 <div class="app-container">
   <StatusBar />
   <MainLayout />
-  <LogDrawer />
   <SettingsModal />
   <CameraSettingsModal />
   <PreviewPlayer />

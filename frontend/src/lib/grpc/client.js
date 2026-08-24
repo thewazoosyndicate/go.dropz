@@ -32,6 +32,8 @@ export const proto = {
   PairCameraRequest: goProProto.PairCameraRequest,
   ForceSyncRequest: goProProto.ForceSyncRequest,
   CancelSyncRequest: goProProto.CancelSyncRequest,
+  GetSyncHistoryRequest: goProProto.GetSyncHistoryRequest,
+  SetCameraAliasRequest: goProProto.SetCameraAliasRequest,
   ManageCameraRequest: goProProto.ManageCameraRequest,
   UnmanageCameraRequest: goProProto.UnmanageCameraRequest,
   GetConfigRequest: configProto.GetConfigRequest,

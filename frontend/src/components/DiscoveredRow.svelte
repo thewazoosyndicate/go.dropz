@@ -1,24 +1,22 @@
 <script>
   import { pairDevice, toggleDeviceManaged } from '../lib/grpc/actions.js';
-  import { getPairingInProgress } from '../lib/stores/devices.svelte.js';
+  import { getPairingInProgress, displayName } from '../lib/stores/devices.svelte.js';
+  import Button from './ui/Button.svelte';
 
   let { device } = $props();
 
-  let displayName = $derived(
-    device.wifiSsid?.trim() ? device.wifiSsid.substring(0, 12) : (device.name || 'Unknown GoPro')
-  );
-
+  let name = $derived(displayName(device));
   let isPairing = $derived(!!getPairingInProgress()[device.macAddress]);
   let signalStrength = $derived(getSignalLevel(device.rssi || -100));
   let signalColor = $derived(
-    signalStrength >= 3 ? 'var(--secondary-color)' :
-    signalStrength >= 2 ? 'var(--warning-color)' : 'var(--danger-color)'
+    signalStrength >= 3 ? 'var(--state-ok)' :
+    signalStrength >= 2 ? 'var(--state-busy)' : 'var(--state-error)'
   );
 
   let batteryLevel = $derived(Math.max(0, Math.min(100, device.batteryLevel ?? 0)));
   let batteryColor = $derived(
-    batteryLevel < 20 ? 'var(--danger-color)' :
-    batteryLevel < 50 ? 'var(--warning-color)' : 'var(--secondary-color)'
+    batteryLevel < 20 ? 'var(--state-error)' :
+    batteryLevel < 50 ? 'var(--state-busy)' : 'var(--state-ok)'
   );
 
   function getSignalLevel(rssi) {
@@ -38,48 +36,35 @@
 </script>
 
 <div class="row" class:unreachable={!device.isReachable}>
-  <div class="signal">
-    <div class="signal-bars">
-      {#each [1, 2, 3, 4] as level}
-        <div class="bar" class:filled={level <= signalStrength}
-             style:--bar-color={signalColor}></div>
-      {/each}
-    </div>
+  <div class="signal-bars" title="Signal">
+    {#each [1, 2, 3, 4] as level}
+      <div class="bar" class:filled={level <= signalStrength}
+           style:--bar-color={signalColor}></div>
+    {/each}
   </div>
 
-  <span class="name" title={displayName}>{displayName}</span>
+  <span class="name" title={name}>{name}</span>
 
   {#if device.inPairingMode && !device.isPaired}
     <span class="pairing-mode-badge" title="Camera is showing its pairing screen">
-      <i class="fas fa-link"></i> ready to pair
+      <i class="fas fa-link" aria-hidden="true"></i> ready to pair
     </span>
   {/if}
 
   {#if device.batteryLevel != null}
-    <div class="battery">
-      <div class="battery-icon">
-        <div class="battery-fill" style:width="{batteryLevel}%"
-             style:background-color={batteryColor}></div>
-      </div>
+    <div class="battery-icon" title="Battery {batteryLevel}%">
+      <div class="battery-fill" style:width="{batteryLevel}%" style:background-color={batteryColor}></div>
     </div>
   {/if}
 
   {#if isPairing}
-    <button class="pair-btn pairing" disabled aria-label="Pairing">
-      <i class="fas fa-spinner fa-spin"></i>
-    </button>
+    <Button size="sm" variant="primary" disabled icon="fa-spinner fa-spin" ariaLabel="Pairing" />
   {:else if device.isPaired && !device.isManaged}
-    <button class="pair-btn manage" onclick={handleManage}>
-      Manage
-    </button>
+    <Button size="sm" variant="success" onclick={handleManage}>Manage</Button>
   {:else if device.isPaired && device.isManaged}
-    <button class="pair-btn paired" disabled aria-label="Paired">
-      <i class="fas fa-check"></i>
-    </button>
+    <Button size="sm" variant="success" disabled icon="fa-check" ariaLabel="Paired" />
   {:else}
-    <button class="pair-btn" onclick={handlePair}>
-      Pair
-    </button>
+    <Button size="sm" variant="primary" onclick={handlePair}>Pair</Button>
   {/if}
 </div>
 
@@ -90,30 +75,15 @@
     gap: 10px;
     padding: 8px 14px;
     border-bottom: 1px solid var(--border-color);
-    min-height: 44px;
+    min-height: 46px;
     transition: background-color 0.15s;
   }
 
-  .row:hover {
-    background-color: var(--light-bg);
-  }
+  .row:hover { background-color: var(--light-bg); }
+  .row.unreachable { opacity: 0.45; }
 
-  .row.unreachable {
-    opacity: 0.45;
-  }
-
-  .signal-bars {
-    display: flex;
-    align-items: flex-end;
-    gap: 1px;
-    height: 12px;
-  }
-
-  .bar {
-    width: 3px;
-    background-color: var(--border-color);
-    border-radius: 1px;
-  }
+  .signal-bars { display: flex; align-items: flex-end; gap: 1px; height: 12px; }
+  .bar { width: 3px; background-color: var(--border-color); border-radius: 1px; }
   .bar:nth-child(1) { height: 3px; }
   .bar:nth-child(2) { height: 6px; }
   .bar:nth-child(3) { height: 9px; }
@@ -122,8 +92,8 @@
 
   .pairing-mode-badge {
     font-size: 0.7rem;
-    color: var(--secondary-color);
-    border: 1px solid var(--secondary-color);
+    color: var(--state-ok);
+    border: 1px solid var(--state-ok);
     border-radius: 8px;
     padding: 1px 6px;
     white-space: nowrap;
@@ -138,10 +108,6 @@
     white-space: nowrap;
   }
 
-  .battery {
-    flex-shrink: 0;
-  }
-
   .battery-icon {
     width: 18px;
     height: 9px;
@@ -149,6 +115,7 @@
     border-radius: 2px;
     overflow: hidden;
     position: relative;
+    flex-shrink: 0;
   }
 
   .battery-icon::after {
@@ -162,46 +129,5 @@
     border-radius: 0 1px 1px 0;
   }
 
-  .battery-fill {
-    height: 100%;
-    transition: width 0.3s;
-  }
-
-  .pair-btn {
-    flex-shrink: 0;
-    padding: 5px 14px;
-    border: none;
-    border-radius: 5px;
-    background-color: var(--primary-color);
-    color: white;
-    font-size: 0.75rem;
-    font-weight: 500;
-    cursor: pointer;
-    min-width: 50px;
-    min-height: 30px;
-    transition: all 0.2s;
-  }
-
-  .pair-btn:hover:not(:disabled) {
-    background-color: var(--primary-dark);
-    transform: translateY(-1px);
-  }
-
-  .pair-btn:disabled {
-    cursor: default;
-  }
-
-  .pair-btn.paired {
-    background-color: var(--secondary-color);
-    opacity: 0.7;
-  }
-
-  .pair-btn.manage {
-    background-color: var(--secondary-color);
-  }
-
-  .pair-btn.pairing {
-    background-color: var(--warning-color);
-    opacity: 0.8;
-  }
+  .battery-fill { height: 100%; transition: width 0.3s; }
 </style>

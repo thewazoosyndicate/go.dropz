@@ -3,6 +3,7 @@ import { getClient, proto } from './client.js';
 import { updateDevice } from '../stores/devices.svelte.js';
 import { setSyncQueue } from '../stores/sync.svelte.js';
 import { getConnectionState, setStreamStatus, getServiceRunning } from '../stores/connection.svelte.js';
+import { loadSyncHistory, phaseName, processSyncFile, processPhaseTiming } from './history.js';
 
 let activeStreams = {};
 
@@ -45,6 +46,7 @@ function processCamera(camera) {
       remainingSpaceKb: metadata ? metadata.getRemainingSpaceKb() : null,
       lastSyncError: status ? status.getLastSyncError() : null,
       previewEnabled: status ? status.getPreviewEnabled() : false,
+      newMediaCount: status ? status.getNewMediaCount() : 0,
     };
   } catch (error) {
     console.error('Error processing camera:', error);
@@ -67,7 +69,13 @@ export function processSyncQueueEntry(entry) {
       fileTotal: entry.getFileTotal(),
       bytesDone: entry.getBytesDone(),
       bytesTotal: entry.getBytesTotal(),
-      rateBps: entry.getRateBps()
+      rateBps: entry.getRateBps(),
+      startedAt: entry.getStartedAt()?.toDate() || null,
+      phase: phaseName(entry.getPhase()),
+      phases: entry.getPhasesList().map(processPhaseTiming),
+      files: entry.getFilesList().map(processSyncFile),
+      stepIndex: entry.getStepIndex(),
+      stepCount: entry.getStepCount(),
     };
   } catch (error) {
     console.error('Error processing sync queue entry:', error);
@@ -139,8 +147,10 @@ export function startDeviceStreaming() {
 
     startStream('syncQueue', proto.GetSyncQueueRequest, 'watchSyncQueue', (response) => {
       const entries = response.getQueueList().map(entry => processSyncQueueEntry(entry)).filter(Boolean);
-      setSyncQueue(entries);
+      // An entry leaving the queue means a session was just recorded
+      if (setSyncQueue(entries)) loadSyncHistory();
     });
+    loadSyncHistory();
 
     conn.retryCount = 0;
     conn.isConnecting = false;

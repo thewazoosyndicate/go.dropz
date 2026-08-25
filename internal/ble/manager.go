@@ -20,14 +20,16 @@ var errAlreadyConnected = errors.New("device already connected")
 // Aliased from model so the gRPC layer can map it without importing ble.
 var ErrBluetoothUnavailable = model.ErrBluetoothUnavailable
 
-// ErrBondLost marks repeated link aborts against a camera that is still
-// advertising: the camera dropped its side of the bond (observed on HERO13
-// when pairing finish never landed) and only re-pairing recovers.
-var ErrBondLost = errors.New("BLE bond lost, camera must be paired again")
+// ErrBondRejected marks repeated link aborts against a camera that is still
+// advertising: the camera is not serving our stored bond right now. On
+// HERO13 that is the post-boot window of a busy bond store, not a lost
+// bond, so callers must never forget the bond over it: forget + re-pair
+// grows the camera's bond store until that window swallows every connect.
+var ErrBondRejected = errors.New("camera refused the stored BLE bond")
 
 const (
-	bondLossAbortThreshold = 3               // whole connect calls, not attempts
-	bondLossSeenWindow     = 2 * time.Minute // camera must still be advertising
+	bondRejectAbortThreshold = 3               // whole connect calls, not attempts
+	bondRejectSeenWindow     = 2 * time.Minute // camera must still be advertising
 )
 
 const (

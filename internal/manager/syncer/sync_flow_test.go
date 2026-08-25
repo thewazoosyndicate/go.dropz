@@ -249,22 +249,24 @@ func TestPerformCameraSyncSelectionNeverSkips(t *testing.T) {
 	}
 }
 
-func TestPerformCameraSyncBondLossClearsPairing(t *testing.T) {
+func TestPerformCameraSyncBondRejectedKeepsPairing(t *testing.T) {
 	c, fb, fw, task := newFlowCoordinator(t)
-	fb.connectErr = fmt.Errorf("3 consecutive aborted connects while advertising: %w", ble.ErrBondLost)
+	fb.connectErr = fmt.Errorf("3 consecutive aborted connects while advertising: %w", ble.ErrBondRejected)
 
 	c.syncSem <- struct{}{}
 	c.PerformCameraSync(task)
 
-	if fb.forgets.Load() != 1 {
-		t.Error("stale bond not forgotten")
+	// Forgetting here manufactured the HERO13 bond-store bloat; the bond
+	// and the paired flag must both survive a rejected connect.
+	if fb.forgets.Load() != 0 {
+		t.Error("bond rejection must never forget the bond")
 	}
 	cs, _ := c.db.GetCameraByID("cam1")
-	if cs.Status.IsPaired {
-		t.Error("bond loss must clear the paired flag")
+	if !cs.Status.IsPaired {
+		t.Error("bond rejection must keep the paired flag")
 	}
-	if !strings.Contains(cs.Status.LastSyncError, "Pairing lost") {
-		t.Errorf("lastSyncError = %q, want pairing-lost message", cs.Status.LastSyncError)
+	if !strings.Contains(cs.Status.LastSyncError, "not ready") {
+		t.Errorf("lastSyncError = %q, want not-ready message", cs.Status.LastSyncError)
 	}
 	if fw.factoryCalls.Load() != 0 {
 		t.Error("no WiFi cycle on a failed connect")

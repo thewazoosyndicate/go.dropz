@@ -151,7 +151,8 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 
 // connectFailure classifies a connect that never reached service discovery.
 // Repeated link aborts against a camera that is still advertising mean the
-// camera dropped its side of the bond; anything else stays generic.
+// camera refused the stored bond (HERO13 post-boot window); anything else
+// stays generic.
 func (m *Manager) connectFailure(macAddress string, lastErr error) error {
 	if lastErr == nil {
 		return fmt.Errorf("connect failed after %d retries", ServiceDiscoveryRetries)
@@ -165,8 +166,8 @@ func (m *Manager) connectFailure(macAddress string, lastErr error) error {
 			lastSeen = dev.LastSeen
 		}
 		m.mutex.Unlock()
-		if aborts >= bondLossAbortThreshold && time.Since(lastSeen) < bondLossSeenWindow {
-			return fmt.Errorf("%d consecutive aborted connects while advertising: %w", aborts, ErrBondLost)
+		if aborts >= bondRejectAbortThreshold && time.Since(lastSeen) < bondRejectSeenWindow {
+			return fmt.Errorf("%d consecutive aborted connects while advertising: %w", aborts, ErrBondRejected)
 		}
 	}
 	return fmt.Errorf("connect failed after %d retries: %w", ServiceDiscoveryRetries, lastErr)

@@ -12,18 +12,6 @@ import (
 // statusReadyTimeout bounds the wait for real media counts after wake.
 const statusReadyTimeout = 8 * time.Second
 
-// recoverLostBond clears both sides of a stale bond so the existing
-// pairing-mode auto-pair flow can re-establish it.
-func (m *GoProManager) recoverLostBond(cs *model.CameraWithState, bleAddress string) {
-	m.log.Warn("BLE bond lost, clearing pairing", cs.LogAttrs()...)
-	if err := m.ble.ForgetDevice(bleAddress); err != nil {
-		m.log.Warn("Failed to remove stale bond", append(cs.LogAttrs(), "err", err)...)
-	}
-	_ = m.db.SetCameraPairedByID(cs.Camera.ID, false)
-	_ = m.db.SetLastSyncErrorByID(cs.Camera.ID, "Pairing lost, put the camera in pairing mode to pair again")
-	m.notify()
-}
-
 // enqueueStatusChecks queues BLE status checks for all eligible managed cameras.
 // The statusCheckWorker drains the queue; a full channel drops the request,
 // which is fine because the next tick re-enqueues.
@@ -84,8 +72,14 @@ func (m *GoProManager) checkSingleCameraStatusByID(cameraID string) {
 	defer release()
 
 	if err := m.ble.ConnectForStatusCheck(bleAddress); err != nil {
-		if errors.Is(err, ble.ErrBondLost) {
-			m.recoverLostBond(cs, bleAddress)
+		if errors.Is(err, ble.ErrBondRejected) {
+			// HERO13 post-boot window: the bond is healthy, the camera is
+			// not serving it yet. Forgetting it here forced a re-pair and
+			// grew the camera's bond store, which is what caused the
+			// rejections in the first place. Retry on the next tick.
+			m.log.Warn("Camera refused stored bond, will retry", cs.LogAttrs()...)
+			_ = m.db.SetLastSyncErrorByID(cs.Camera.ID, "Camera not ready, will retry")
+			m.notify()
 			return
 		}
 		m.log.Debug("Status check connect failed", append(cs.LogAttrs(), "err", err)...)

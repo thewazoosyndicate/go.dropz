@@ -255,7 +255,6 @@ proto.dropz.Config.prototype.toObject = function(opt_includeInstance) {
  */
 proto.dropz.Config.toObject = function(includeInstance, msg) {
   var f, obj = {
-    pairModeEnabled: jspb.Message.getBooleanFieldWithDefault(msg, 1, false),
     syncEnabled: jspb.Message.getBooleanFieldWithDefault(msg, 2, false),
     scanIntervalSeconds: jspb.Message.getFieldWithDefault(msg, 3, 0),
     connectTimeoutSeconds: jspb.Message.getFieldWithDefault(msg, 4, 0),
@@ -304,10 +303,6 @@ proto.dropz.Config.deserializeBinaryFromReader = function(msg, reader) {
     }
     var field = reader.getFieldNumber();
     switch (field) {
-    case 1:
-      var value = /** @type {boolean} */ (reader.readBool());
-      msg.setPairModeEnabled(value);
-      break;
     case 2:
       var value = /** @type {boolean} */ (reader.readBool());
       msg.setSyncEnabled(value);
@@ -386,13 +381,6 @@ proto.dropz.Config.prototype.serializeBinary = function() {
  */
 proto.dropz.Config.serializeBinaryToWriter = function(message, writer) {
   var f = undefined;
-  f = message.getPairModeEnabled();
-  if (f) {
-    writer.writeBool(
-      1,
-      f
-    );
-  }
   f = message.getSyncEnabled();
   if (f) {
     writer.writeBool(
@@ -478,24 +466,6 @@ proto.dropz.Config.serializeBinaryToWriter = function(message, writer) {
       google_protobuf_timestamp_pb.Timestamp.serializeBinaryToWriter
     );
   }
-};
-
-
-/**
- * optional bool pair_mode_enabled = 1;
- * @return {boolean}
- */
-proto.dropz.Config.prototype.getPairModeEnabled = function() {
-  return /** @type {boolean} */ (jspb.Message.getBooleanFieldWithDefault(this, 1, false));
-};
-
-
-/**
- * @param {boolean} value
- * @return {!proto.dropz.Config} returns this
- */
-proto.dropz.Config.prototype.setPairModeEnabled = function(value) {
-  return jspb.Message.setProto3BooleanField(this, 1, value);
 };
 
 

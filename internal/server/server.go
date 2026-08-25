@@ -729,7 +729,6 @@ func (s *DropzServer) UpdateConfig(ctx context.Context, req *protocol.UpdateConf
 	}
 
 	dbConfig := model.Config{
-		PairModeEnabled:            req.Config.PairModeEnabled,
 		SyncEnabled:                req.Config.SyncEnabled,
 		ScanIntervalSeconds:        req.Config.ScanIntervalSeconds,
 		ConnectTimeoutSeconds:      req.Config.ConnectTimeoutSeconds,

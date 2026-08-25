@@ -327,7 +327,6 @@ type TrimResult struct {
 
 // Config represents the system-wide configuration settings
 type Config struct {
-	PairModeEnabled            bool   `json:"pair_mode_enabled"`
 	SyncEnabled                bool   `json:"sync_enabled"`
 	ScanIntervalSeconds        int32  `json:"scan_interval_seconds"`
 	ConnectTimeoutSeconds      int32  `json:"connect_timeout_seconds"`
@@ -352,7 +351,6 @@ func DefaultConfig() Config {
 		homeDir = "."
 	}
 	return Config{
-		PairModeEnabled:            false,
 		SyncEnabled:                true,
 		ScanIntervalSeconds:        30,
 		ConnectTimeoutSeconds:      120,

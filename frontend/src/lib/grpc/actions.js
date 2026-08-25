@@ -241,7 +241,6 @@ export function loadConfig() {
       const config = response.getConfig();
       try {
         setAppConfig({
-          pairModeEnabled: config.getPairModeEnabled(),
           syncEnabled: config.getSyncEnabled(),
           scanIntervalSeconds: config.getScanIntervalSeconds(),
           connectTimeoutSeconds: config.getConnectTimeoutSeconds(),
@@ -256,7 +255,7 @@ export function loadConfig() {
         });
       } catch (e) {
         setAppConfig({
-          pairModeEnabled: false, syncEnabled: false,
+          syncEnabled: false,
           scanIntervalSeconds: 30, connectTimeoutSeconds: 30,
           daysThreshold: 7, destinationFolder: '',
           setTimeEnabled: true, inactivityTimeoutSeconds: 60,
@@ -299,7 +298,6 @@ export function resetAllSettings() {
     }
 
     setAppConfig({
-      pairModeEnabled: config.getPairModeEnabled(),
       syncEnabled: config.getSyncEnabled(),
       scanIntervalSeconds: config.getScanIntervalSeconds(),
       connectTimeoutSeconds: config.getConnectTimeoutSeconds(),

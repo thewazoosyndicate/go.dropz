@@ -74,6 +74,26 @@ type Manager struct {
 	statusCallback    func(macAddress string, statusID byte, value []byte) // push notification callback
 	sessions          map[string]bool                                      // addresses with an active logical session
 	connectAborts     map[string]int                                       // consecutive fully-aborted connect calls per address
+	skipPairingFinish bool                                                 // diagnostic: bond without RequestPairingFinish
+	skipBond          bool                                                 // diagnostic: no explicit D-Bus bond (the macOS path)
+}
+
+// SetSkipBond makes ConnectForPairing skip the explicit D-Bus bond, leaving
+// encryption to whatever the peer demands, which is how macOS always runs.
+// Diagnostic only (ble-probe).
+func (m *Manager) SetSkipBond(skip bool) {
+	m.mutex.Lock()
+	m.skipBond = skip
+	m.mutex.Unlock()
+}
+
+// SetSkipPairingFinish makes ConnectForPairing bond without sending
+// RequestPairingFinish. Diagnostic only (ble-probe): reproduces a bond
+// the camera never saw finished, to observe when it drops it.
+func (m *Manager) SetSkipPairingFinish(skip bool) {
+	m.mutex.Lock()
+	m.skipPairingFinish = skip
+	m.mutex.Unlock()
 }
 
 // TryAcquireSession claims exclusive use of one camera for a logical BLE

@@ -98,22 +98,34 @@ func main() {
 		doSleep := fs.Bool("sleep", false, "send Sleep on disconnect")
 		doWifi := fs.Bool("wifi", false, "also join the camera AP and run HTTP checks")
 		doSpeed := fs.Bool("speed", false, "with -wifi: measure throughput turbo off vs on")
+		doFinish := fs.Bool("finish", false, "send RequestPairingFinish after full setup (camera on its pairing screen)")
 		level := logLevelFlag(fs)
 		positional := parseAnyOrder(fs, args)
 		initLogger(*level)
 		if len(positional) != 1 {
 			usage()
 		}
-		os.Exit(runValidate(adapter, positional[0], *doSleep, *doWifi, *doSpeed))
+		os.Exit(runValidate(adapter, positional[0], *doSleep, *doWifi, *doSpeed, *doFinish))
 	case "pair":
 		fs := flag.NewFlagSet("pair", flag.ExitOnError)
+		noFinish := fs.Bool("no-finish", false, "bond without RequestPairingFinish (bond-lifecycle diagnostics)")
+		noBond := fs.Bool("no-bond", false, "skip the explicit D-Bus bond, the macOS path (diagnostics)")
 		level := logLevelFlag(fs)
 		positional := parseAnyOrder(fs, args)
 		initLogger(*level)
 		if len(positional) != 1 {
 			usage()
 		}
-		os.Exit(runPair(adapter, positional[0]))
+		os.Exit(runPair(adapter, positional[0], *noFinish, *noBond))
+	case "status":
+		fs := flag.NewFlagSet("status", flag.ExitOnError)
+		level := logLevelFlag(fs)
+		positional := parseAnyOrder(fs, args)
+		initLogger(*level)
+		if len(positional) < 2 {
+			usage()
+		}
+		os.Exit(runStatus(adapter, positional[0], positional[1:]))
 	case "settings":
 		fs := flag.NewFlagSet("settings", flag.ExitOnError)
 		level := logLevelFlag(fs)
@@ -149,6 +161,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "       ble-probe validate <name-fragment> [-sleep] [-wifi] [-speed]")
 	fmt.Fprintln(os.Stderr, "       ble-probe pair <name-fragment>")
 	fmt.Fprintln(os.Stderr, "       ble-probe settings <name-fragment>")
+	fmt.Fprintln(os.Stderr, "       ble-probe status <name-fragment> <id>...   raw status values, e.g. 19 20 21 28")
 	os.Exit(2)
 }
 
@@ -276,7 +289,7 @@ func findCamera(adapter *bluetooth.Adapter, fragment string, timeout time.Durati
 	return found, adv, nil
 }
 
-func runValidate(adapter *bluetooth.Adapter, fragment string, doSleep, doWifi, doSpeed bool) int {
+func runValidate(adapter *bluetooth.Adapter, fragment string, doSleep, doWifi, doSpeed, doFinish bool) int {
 	r := &report{}
 	fmt.Printf("=== dropz hardware validation ===\n\n")
 
@@ -306,6 +319,13 @@ func runValidate(adapter *bluetooth.Adapter, fragment string, doSleep, doWifi, d
 	r.check("connect + readiness", err, fmt.Sprintf("full setup in %v", time.Since(start).Round(time.Millisecond)))
 	if err != nil {
 		return r.summary()
+	}
+
+	// Reference SDKs send the finish only after the whole GATT setup;
+	// the pairing path sends it with two services subscribed.
+	if doFinish {
+		r.check("pairing finish after full setup", manager.SendPairingFinish(addr), "0x81 success")
+		r.human("pairing screen", "did the camera's pairing screen close now?")
 	}
 
 	hw, err := manager.GetHardwareInfo(addr)
@@ -531,7 +551,7 @@ func speedTest(r *report, wm *wifi.WiFiManager, files []wifi.MediaFile, dropBLE 
 	r.note("speed verdict", "if BLE down beats BLE held, drop BLE before downloading")
 }
 
-func runPair(adapter *bluetooth.Adapter, fragment string) int {
+func runPair(adapter *bluetooth.Adapter, fragment string, noFinish, noBond bool) int {
 	r := &report{}
 	fmt.Printf("=== dropz pairing validation ===\n")
 	fmt.Printf("Put the camera in pairing mode first: Connections > Connect Device > Quick App.\n\n")
@@ -554,6 +574,8 @@ func runPair(adapter *bluetooth.Adapter, fragment string) int {
 
 	manager := ble.NewManager(adapter, probeLog)
 	defer func() { _ = manager.Stop() }()
+	manager.SetSkipPairingFinish(noFinish)
+	manager.SetSkipBond(noBond)
 
 	start := time.Now()
 	err = manager.ConnectForPairing(addr)
@@ -574,6 +596,50 @@ func runPair(adapter *bluetooth.Adapter, fragment string) int {
 	time.Sleep(3 * time.Second)
 	r.human("pairing screen", "the camera's pairing screen must have closed by itself: that proves the RequestPairingFinish framing fix")
 
+	return r.summary()
+}
+
+// runStatus dumps raw status values; the pairing statuses (19, 20, 21)
+// tell whether the camera counted a RequestPairingFinish as complete.
+func runStatus(adapter *bluetooth.Adapter, fragment string, idArgs []string) int {
+	r := &report{}
+	var ids []byte
+	for _, a := range idArgs {
+		var id int
+		if _, err := fmt.Sscanf(a, "%d", &id); err != nil || id < 0 || id > 255 {
+			fatal("bad status id %q", a)
+		}
+		ids = append(ids, byte(id))
+	}
+
+	result, _, err := findCamera(adapter, fragment, 30*time.Second)
+	if err != nil {
+		r.bad("discovery", err.Error())
+		return r.summary()
+	}
+	addr := result.Address.String()
+
+	manager := ble.NewManager(adapter, probeLog)
+	defer func() { _ = manager.Stop() }()
+	if err := manager.ConnectForStatusCheck(addr); err != nil {
+		r.bad("connect", err.Error())
+		return r.summary()
+	}
+	defer func() { _ = manager.DisconnectQuietly(addr) }()
+
+	values, err := manager.QueryStatuses(addr, ids)
+	if err != nil {
+		r.bad("status query", err.Error())
+		return r.summary()
+	}
+	for _, id := range ids {
+		v, ok := values[id]
+		if !ok {
+			r.note(fmt.Sprintf("status %d", id), "absent")
+			continue
+		}
+		r.ok(fmt.Sprintf("status %d", id), fmt.Sprintf("% X (int %d)", v, ble.ParseInt64Status(v)))
+	}
 	return r.summary()
 }
 

@@ -475,6 +475,13 @@ func (m *Manager) ConnectForPairing(macAddress string) (err error) {
 
 	// D-Bus bonding runs between connect and service discovery on each attempt
 	services, connectStart, connErr := m.connectAndDiscover(macAddress, func(addr string) error {
+		m.mutex.RLock()
+		skipBond := m.skipBond
+		m.mutex.RUnlock()
+		if skipBond {
+			m.log.Warn("D-Bus bond skipped by diagnostic switch", "ble_addr", addr)
+			return nil
+		}
 		if pairErr := m.pairViaDbus(addr); pairErr != nil {
 			m.log.Warn("D-Bus pairing failed", "ble_addr", addr, "err", pairErr)
 		}
@@ -506,7 +513,12 @@ func (m *Manager) ConnectForPairing(macAddress string) (err error) {
 	// completes the exchange; firing it in a goroutine raced the
 	// post-pairing disconnect, the camera never saw pairing finish, and
 	// it dropped the bond at power-off (connects then abort forever).
-	if err := m.SendPairingFinish(macAddress); err != nil {
+	m.mutex.RLock()
+	skipFinish := m.skipPairingFinish
+	m.mutex.RUnlock()
+	if skipFinish {
+		m.log.Warn("Pairing finish skipped by diagnostic switch", "ble_addr", macAddress)
+	} else if err := m.SendPairingFinish(macAddress); err != nil {
 		m.log.Debug("Pairing finish not accepted", "ble_addr", macAddress, "err", err)
 	} else {
 		m.log.Debug("Pairing finish acknowledged", "ble_addr", macAddress)

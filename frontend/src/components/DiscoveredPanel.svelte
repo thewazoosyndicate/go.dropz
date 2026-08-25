@@ -1,14 +1,15 @@
 <script>
   import SearchBar from './SearchBar.svelte';
   import DiscoveredRow from './DiscoveredRow.svelte';
-  import Toggle from './ui/Toggle.svelte';
+  import Button from './ui/Button.svelte';
   import { getDiscoveredDevices, getNearbyCount } from '../lib/stores/devices.svelte.js';
   import { getSearchQuery, getSortBy } from '../lib/stores/ui.svelte.js';
-  import { togglePairAll } from '../lib/grpc/actions.js';
-  import { getAutoPair } from '../lib/stores/config.svelte.js';
+  import { pairAllInPairingMode } from '../lib/grpc/actions.js';
 
-  let autoPairEnabled = $derived(getAutoPair());
   let seenCount = $derived(getNearbyCount());
+  let pairableCount = $derived(
+    Object.values(getDiscoveredDevices()).filter(d => d.inPairingMode && !d.isPaired).length
+  );
 
   let filteredDevices = $derived.by(() => {
     const devices = Object.values(getDiscoveredDevices());
@@ -45,7 +46,11 @@
     <h2><i class="fas fa-search" aria-hidden="true"></i> Nearby</h2>
     <div class="header-controls">
       <span class="badge" title="Cameras in range">{seenCount}</span>
-      <Toggle checked={autoPairEnabled} label="Pair all" onchange={togglePairAll} />
+      <Button size="sm" variant="primary" icon="fa-link" disabled={pairableCount === 0}
+              title={pairableCount > 0 ? `Pair ${pairableCount} camera(s) showing the pairing screen` : 'Put cameras in pairing mode first'}
+              onclick={pairAllInPairingMode}>
+        Pair all{pairableCount > 0 ? ` (${pairableCount})` : ''}
+      </Button>
     </div>
   </div>
   <SearchBar />

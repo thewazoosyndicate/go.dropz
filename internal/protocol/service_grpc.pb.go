@@ -26,6 +26,7 @@ const (
 	DropzService_ManageCamera_FullMethodName           = "/dropz.DropzService/ManageCamera"
 	DropzService_UnmanageCamera_FullMethodName         = "/dropz.DropzService/UnmanageCamera"
 	DropzService_PairCamera_FullMethodName             = "/dropz.DropzService/PairCamera"
+	DropzService_ForgetCamera_FullMethodName           = "/dropz.DropzService/ForgetCamera"
 	DropzService_GetCameraSettings_FullMethodName      = "/dropz.DropzService/GetCameraSettings"
 	DropzService_ApplyCameraSettings_FullMethodName    = "/dropz.DropzService/ApplyCameraSettings"
 	DropzService_GetSyncQueue_FullMethodName           = "/dropz.DropzService/GetSyncQueue"
@@ -73,6 +74,7 @@ type DropzServiceClient interface {
 	UnmanageCamera(ctx context.Context, in *UnmanageCameraRequest, opts ...grpc.CallOption) (*UnmanageCameraResponse, error)
 	// Pairing operations
 	PairCamera(ctx context.Context, in *PairCameraRequest, opts ...grpc.CallOption) (*PairCameraResponse, error)
+	ForgetCamera(ctx context.Context, in *ForgetCameraRequest, opts ...grpc.CallOption) (*ForgetCameraResponse, error)
 	// Camera settings over BLE, per camera or per group
 	GetCameraSettings(ctx context.Context, in *GetCameraSettingsRequest, opts ...grpc.CallOption) (*GetCameraSettingsResponse, error)
 	ApplyCameraSettings(ctx context.Context, in *ApplyCameraSettingsRequest, opts ...grpc.CallOption) (*ApplyCameraSettingsResponse, error)
@@ -201,6 +203,16 @@ func (c *dropzServiceClient) PairCamera(ctx context.Context, in *PairCameraReque
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PairCameraResponse)
 	err := c.cc.Invoke(ctx, DropzService_PairCamera_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dropzServiceClient) ForgetCamera(ctx context.Context, in *ForgetCameraRequest, opts ...grpc.CallOption) (*ForgetCameraResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ForgetCameraResponse)
+	err := c.cc.Invoke(ctx, DropzService_ForgetCamera_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -522,6 +534,7 @@ type DropzServiceServer interface {
 	UnmanageCamera(context.Context, *UnmanageCameraRequest) (*UnmanageCameraResponse, error)
 	// Pairing operations
 	PairCamera(context.Context, *PairCameraRequest) (*PairCameraResponse, error)
+	ForgetCamera(context.Context, *ForgetCameraRequest) (*ForgetCameraResponse, error)
 	// Camera settings over BLE, per camera or per group
 	GetCameraSettings(context.Context, *GetCameraSettingsRequest) (*GetCameraSettingsResponse, error)
 	ApplyCameraSettings(context.Context, *ApplyCameraSettingsRequest) (*ApplyCameraSettingsResponse, error)
@@ -588,6 +601,9 @@ func (UnimplementedDropzServiceServer) UnmanageCamera(context.Context, *Unmanage
 }
 func (UnimplementedDropzServiceServer) PairCamera(context.Context, *PairCameraRequest) (*PairCameraResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PairCamera not implemented")
+}
+func (UnimplementedDropzServiceServer) ForgetCamera(context.Context, *ForgetCameraRequest) (*ForgetCameraResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ForgetCamera not implemented")
 }
 func (UnimplementedDropzServiceServer) GetCameraSettings(context.Context, *GetCameraSettingsRequest) (*GetCameraSettingsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetCameraSettings not implemented")
@@ -805,6 +821,24 @@ func _DropzService_PairCamera_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(DropzServiceServer).PairCamera(ctx, req.(*PairCameraRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DropzService_ForgetCamera_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ForgetCameraRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DropzServiceServer).ForgetCamera(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DropzService_ForgetCamera_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DropzServiceServer).ForgetCamera(ctx, req.(*ForgetCameraRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1350,6 +1384,10 @@ var DropzService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PairCamera",
 			Handler:    _DropzService_PairCamera_Handler,
+		},
+		{
+			MethodName: "ForgetCamera",
+			Handler:    _DropzService_ForgetCamera_Handler,
 		},
 		{
 			MethodName: "GetCameraSettings",

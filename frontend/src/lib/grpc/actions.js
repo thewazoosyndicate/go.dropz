@@ -3,7 +3,7 @@ import { getClient, proto } from './client.js';
 import { processCamera, processSyncQueueEntry } from './streams.js';
 import { updateDevice, setPairingInProgress, getAllDevices, displayName as getDisplayName } from '../stores/devices.svelte.js';
 import { addOrUpdateSyncEntry, removeSyncEntry } from '../stores/sync.svelte.js';
-import { setAppConfig, setAutoPair, setAutoSync, updateConfigField } from '../stores/config.svelte.js';
+import { setAppConfig, setAutoSync, updateConfigField } from '../stores/config.svelte.js';
 import { addToast, addLog } from '../stores/ui.svelte.js';
 import { setVideos, setLoading } from '../stores/videos.svelte.js';
 import { setGroups, addOrUpdateGroup, removeGroup as removeGroupFromStore } from '../stores/groups.svelte.js';
@@ -167,27 +167,44 @@ export function toggleDeviceManaged(macAddress, isManaged) {
   });
 }
 
-export function togglePairAll(enabled) {
-  const previousValue = !enabled;
-  setAutoPair(enabled);
+// One-shot batch pair: every camera currently showing its pairing UI gets
+// managed and paired. Explicit user action replaces the old standing
+// auto-pair toggle; nothing is ever adopted silently.
+export function pairAllInPairingMode() {
+  const devices = getAllDevices();
+  const targets = Object.values(devices).filter(d => d.inPairingMode && !d.isPaired);
+  if (targets.length === 0) {
+    addToast('No cameras in pairing mode', 'info');
+    return 0;
+  }
+  addLog(`Pairing ${targets.length} camera(s) in pairing mode`, 'info');
+  targets.forEach(d => {
+    // ManageCamera pairs unpaired cameras itself; pairDevice would race it
+    if (d.isManaged) pairDevice(d.macAddress);
+    else toggleDeviceManaged(d.macAddress, true);
+  });
+  return targets.length;
+}
+
+export function forgetDevice(macAddress) {
+  const devices = getAllDevices();
+  const device = devices[macAddress];
+  if (!device?.id) return;
 
   const client = getClient();
-  const request = new proto.UpdateSettingRequest();
-  request.setSettingName('pair_mode_enabled');
-  request.setBoolValue(enabled);
+  const request = new proto.ForgetCameraRequest();
+  request.setCameraId(device.id);
 
-  client.updateSetting(request, (error) => {
-    if (error) {
-      setAutoPair(previousValue);
+  client.forgetCamera(request, (error, response) => {
+    if (error || !response.getSuccess()) {
+      addToast(`Failed to forget ${getDisplayName(device)}`, 'error');
       return;
     }
-    addLog(enabled ? 'Auto-pairing enabled' : 'Auto-pairing disabled', 'info');
-    if (enabled) {
-      const devices = getAllDevices();
-      Object.values(devices)
-        .filter(d => !d.isPaired)
-        .forEach(d => pairDevice(d.macAddress));
-    }
+    addToast(response.getMessage(), 'info');
+    addLog(`Forgot pairing for ${getDisplayName(device)}`, 'info');
+    device.isManaged = false;
+    device.isPaired = false;
+    updateDevice({ ...device });
   });
 }
 

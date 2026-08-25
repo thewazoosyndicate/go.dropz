@@ -1,5 +1,5 @@
 <script>
-  import { addToSyncQueue, cancelSync, toggleDeviceManaged, setCameraAlias, moveCamerasToGroup } from '../lib/grpc/actions.js';
+  import { addToSyncQueue, cancelSync, toggleDeviceManaged, forgetDevice, setCameraAlias, moveCamerasToGroup } from '../lib/grpc/actions.js';
   import { getSyncEntryForCamera, getQueuePosition, getActiveSyncEntry } from '../lib/stores/sync.svelte.js';
   import { getGroups } from '../lib/stores/groups.svelte.js';
   import { displayName, factoryName, findDeviceById } from '../lib/stores/devices.svelte.js';
@@ -134,6 +134,8 @@
     { label: 'Show activity', icon: 'fa-wave-square', onclick: () => openActivity(device.id) },
     { label: 'Unmanage', icon: 'fa-link-slash', danger: true, confirm: true,
       onclick: () => toggleDeviceManaged(device.macAddress, false) },
+    { label: 'Forget pairing', icon: 'fa-eraser', danger: true, confirm: true,
+      onclick: () => forgetDevice(device.macAddress) },
   ]);
 
   function handleSettings() {

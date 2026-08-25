@@ -276,6 +276,19 @@ message PairCameraResponse {
   ManagedCamera camera = 3;
 }
 
+// Request to forget a camera's pairing: unmanage, drop the host-side bond,
+// clear stored credentials. The camera keeps its side until the user runs
+// Reset Connections on it.
+message ForgetCameraRequest {
+  string camera_id = 1;
+}
+
+// Response for forget request
+message ForgetCameraResponse {
+  bool success = 1;
+  string message = 2;
+}
+
 // Request to sync a specific camera
 message ForceSyncRequest {
   string camera_id = 1;

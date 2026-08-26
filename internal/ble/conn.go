@@ -64,6 +64,14 @@ type connectResult struct {
 // sync, pairing — gets its session and the scanner's connect gate back, so one
 // wedged camera can no longer stall the whole manager.
 func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(string) error) ([]bluetooth.DeviceService, time.Time, error) {
+	// A parked attempt still owns this address inside the driver: its conn
+	// writes would satisfy a new attempt's already-connected check, and its
+	// late teardown would destroy whatever a new attempt builds. Fail fast
+	// until the reaper sees it return.
+	if m.isParked(macAddress) {
+		return nil, time.Time{}, fmt.Errorf("previous attempt still parked in the driver: %w", ErrConnectStalled)
+	}
+
 	var abandoned atomic.Bool
 	ch := make(chan connectResult, 1)
 
@@ -80,6 +88,11 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 		return r.services, r.start, r.err
 	case <-watchdog.C:
 		abandoned.Store(true)
+		// Parked before the caller learns anything: from here until the
+		// reaper runs, this address belongs to the abandoned goroutine. The
+		// scanner may resume against a driver still busy connecting; that
+		// noise is the accepted price of freeing the fleet.
+		m.setParked(macAddress, true)
 		m.log.Error("Connect watchdog fired, abandoning attempt",
 			"ble_addr", macAddress, "timeout", ConnectWatchdog)
 		go m.reapAbandonedConnect(macAddress, ch)
@@ -94,6 +107,7 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 // price of not being able to cancel a driver call.
 func (m *Manager) reapAbandonedConnect(macAddress string, ch <-chan connectResult) {
 	r := <-ch
+	m.setParked(macAddress, false)
 	if errors.Is(r.err, errConnectAbandoned) {
 		m.log.Warn("Abandoned connect succeeded late and was torn down", "ble_addr", macAddress)
 		return
@@ -141,6 +155,16 @@ func (m *Manager) connectAndDiscoverBlocking(macAddress string, preDiscoveryHook
 	var lastConnErr error
 
 	for retry := 0; retry < ServiceDiscoveryRetries; retry++ {
+		// Checked every iteration, not only after success: an abandoned
+		// attempt must stop fighting over the address (StopScanning, conn
+		// map writes, disconnects) at the first opportunity.
+		if abandoned.Load() {
+			if connected {
+				_ = device.Disconnect()
+			}
+			m.dropConn(macAddress)
+			return nil, time.Time{}, errConnectAbandoned
+		}
 		if retry > 0 {
 			m.log.Debug("Reconnecting for service discovery retry", "ble_addr", macAddress, "attempt", retry+1, "max", ServiceDiscoveryRetries)
 			if connected {

@@ -158,9 +158,11 @@ func (m *Manager) addDiscoveredDevice(result bluetooth.ScanResult, adv AdvInfo) 
 	if adv.Valid {
 		// Processor state flips are the interesting transition: a camera that
 		// stops answering connects while still advertising has almost always
-		// just powered its processor down.
+		// just powered its processor down. Debug, not Info: it flips twice
+		// per routine sleep/wake cycle, and the diagnostic value lives in
+		// connectFailure's processor-down path.
 		if device.AdvParsed && device.ProcessorOn != adv.ProcessorOn {
-			m.log.Info("Camera processor state changed",
+			m.log.Debug("Camera processor state changed",
 				"camera", device.Name, "ble_addr", device.BLEAddress,
 				"processor_on", adv.ProcessorOn)
 		}

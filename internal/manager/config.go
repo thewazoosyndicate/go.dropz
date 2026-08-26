@@ -97,10 +97,10 @@ func validateLogLevel(v string) error {
 }
 
 var settings = map[string]setting{
-	"sync_enabled":      boolSetting(func(c *model.Config) *bool { return &c.SyncEnabled }),
-	"turbo_enabled":     boolSetting(func(c *model.Config) *bool { return &c.TurboEnabled }),
-	"check_on_return":   boolSetting(func(c *model.Config) *bool { return &c.CheckOnReturn }),
-	"set_time_enabled":  boolSetting(func(c *model.Config) *bool { return &c.SetTimeEnabled }),
+	"sync_enabled":     boolSetting(func(c *model.Config) *bool { return &c.SyncEnabled }),
+	"turbo_enabled":    boolSetting(func(c *model.Config) *bool { return &c.TurboEnabled }),
+	"check_on_return":  boolSetting(func(c *model.Config) *bool { return &c.CheckOnReturn }),
+	"set_time_enabled": boolSetting(func(c *model.Config) *bool { return &c.SetTimeEnabled }),
 
 	"scan_interval_seconds":         int32Setting(func(c *model.Config) *int32 { return &c.ScanIntervalSeconds }, 5, -1, "seconds"),
 	"connect_timeout_seconds":       int32Setting(func(c *model.Config) *int32 { return &c.ConnectTimeoutSeconds }, 5, 300, "seconds"),

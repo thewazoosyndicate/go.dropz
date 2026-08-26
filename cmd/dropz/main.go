@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -85,6 +86,22 @@ func main() {
 		"level", logging.LevelName(levelVar.Level()),
 	)
 
+	// Claim the port before touching any hardware: constructing the manager
+	// enables the Bluetooth adapter, and a doomed second instance used to
+	// create and abandon a CoreBluetooth central manager on its way out.
+	// Under the host's old restart loop that ran ~90 times in 100 seconds
+	// and destabilised the backend that did own the port.
+	grpcListener, err := server.Listen(*serverAddr)
+	if err != nil {
+		mainLog.Error("Failed to bind gRPC address", "addr", *serverAddr, "err", err)
+		if errors.Is(err, syscall.EADDRINUSE) {
+			// Distinct code: restarting cannot free a port somebody else
+			// owns, so the host must report it instead of looping.
+			os.Exit(exitAddrInUse)
+		}
+		os.Exit(1)
+	}
+
 	// Initialize GoPro manager
 	goProManager, err := manager.NewGoProManager(dbPath, *videoDir, log, levelVar)
 	if err != nil {
@@ -130,19 +147,7 @@ func main() {
 		mainLog.Warn("Invalid persisted log level, keeping flag level", "value", config.LogLevel, "err", err)
 	}
 
-	// Claim the port before touching any hardware. A second instance used to
-	// start the BLE manager first and only then discover the address was
-	// taken, so every doomed process created and abandoned a CoreBluetooth
-	// central manager on its way out. Under the host's restart loop that ran
-	// ~90 times in 100 seconds and destabilised the backend that did own the
-	// port.
 	dropzServer := server.NewDropzServer(goProManager, log)
-	if err := dropzServer.Listen(*serverAddr); err != nil {
-		mainLog.Error("Failed to bind gRPC address", "addr", *serverAddr, "err", err)
-		// Distinct code: restarting cannot free a port somebody else owns,
-		// so the host must report it instead of looping.
-		os.Exit(exitAddrInUse)
-	}
 
 	// Start GoPro manager
 	if err := goProManager.Start(); err != nil {
@@ -150,7 +155,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	dropzServer.Serve()
+	dropzServer.Serve(grpcListener)
 
 	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)

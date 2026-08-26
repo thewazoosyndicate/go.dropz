@@ -255,7 +255,7 @@ type SyncQueueEntry struct {
 	FileName   string `json:"file_name,omitempty"`
 	FileBytes  int64  `json:"file_bytes,omitempty"`
 	FileTotal  int64  `json:"file_total,omitempty"`
-	BytesDone  int64  `json:"bytes_done,omitempty"`  // whole sync
+	BytesDone  int64  `json:"bytes_done,omitempty"` // whole sync
 	BytesTotal int64  `json:"bytes_total,omitempty"`
 	RateBps    int64  `json:"rate_bps,omitempty"`
 	// Set when the sync leaves the queue's waiting state.

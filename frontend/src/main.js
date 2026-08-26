@@ -43,17 +43,25 @@ let restartAttempts = 0;
 // Restarting cannot help: something else owns the port.
 const EXIT_ADDR_IN_USE = 3;
 const MAX_RESTART_ATTEMPTS = 5;
+// Uptime that proves a backend healthy and refills the crash budget. Keyed
+// on time alive, not on "started serving": a backend that serves for two
+// seconds and dies must burn through the budget, not loop forever at the
+// minimum delay.
+const STABLE_UPTIME_MS = 60000;
+
+// The window may already be destroyed (quit teardown) when a child event
+// fires; sending to a destroyed webContents throws inside the handler.
+function sendToWindow(channel, payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, payload);
+  }
+}
 
 function checkGrpcReady(entry) {
   if (!grpcReady && entry.msg === 'gRPC server started') {
     grpcReady = true;
-    // A backend that got far enough to serve clears the crash budget, so a
-    // crash days later still gets its full allowance of restarts.
-    restartAttempts = 0;
     log.info('gRPC server ready, notifying renderer');
-    if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send('go-binary-status', { running: true });
-    }
+    sendToWindow('go-binary-status', { running: true });
   }
 }
 
@@ -112,6 +120,7 @@ function startGoBinary() {
     });
     
     goChildren.add(childProcess);
+    const startedAt = Date.now();
     log.info(`Go binary process started with PID: ${childProcess.pid}`);
 
     function processGoOutput(data) {
@@ -124,9 +133,7 @@ function startGoBinary() {
         const entry = parseGoLogLine(trimmedLine);
         checkGrpcReady(entry);
 
-        if (mainWindow && mainWindow.webContents) {
-          mainWindow.webContents.send('go-binary-log', entry);
-        }
+        sendToWindow('go-binary-log', entry);
       });
     }
 
@@ -138,9 +145,7 @@ function startGoBinary() {
       goChildren.delete(childProcess);
       grpcReady = false;
       log.info(`Go binary process exited with code ${code}`);
-      if (mainWindow) {
-        mainWindow.webContents.send('go-binary-status', { running: false, exitCode: code });
-      }
+      sendToWindow('go-binary-status', { running: false, exitCode: code });
 
       if (isQuitting) {
         // Last child reaped: stop holding the quit open for the grace period.
@@ -151,20 +156,20 @@ function startGoBinary() {
 
       if (code === EXIT_ADDR_IN_USE) {
         log.error('Backend address already in use; not restarting');
-        if (mainWindow) {
-          mainWindow.webContents.send('go-binary-error',
-            'Another Dropz backend already owns 127.0.0.1:50051. Quit it and relaunch.');
-        }
+        sendToWindow('go-binary-error',
+          'Another Dropz backend already owns 127.0.0.1:50051. Quit it and relaunch.');
         return;
       }
+
+      // A long-lived backend was healthy: refill the crash budget so a
+      // crash days later gets its full allowance of restarts.
+      if (Date.now() - startedAt > STABLE_UPTIME_MS) restartAttempts = 0;
 
       restartAttempts++;
       if (restartAttempts > MAX_RESTART_ATTEMPTS) {
         log.error(`Go binary crashed ${restartAttempts} times, giving up`);
-        if (mainWindow) {
-          mainWindow.webContents.send('go-binary-error',
-            `Backend crashed ${restartAttempts} times in a row. See ~/.dropz/logs/dropz.log.`);
-        }
+        sendToWindow('go-binary-error',
+          `Backend crashed ${restartAttempts} times in a row. See ~/.dropz/logs/dropz.log.`);
         return;
       }
 
@@ -184,9 +189,7 @@ function startGoBinary() {
     
     childProcess.on('error', (err) => {
       log.error(`Failed to start Go binary: ${err.message}`);
-      if (mainWindow) {
-        mainWindow.webContents.send('go-binary-error', err.message);
-      }
+      sendToWindow('go-binary-error', err.message);
     });
     
     return childProcess;
@@ -233,7 +236,7 @@ function createWindow() {
   // Re-send backend status after reload (Ctrl+R)
   mainWindow.webContents.on('did-finish-load', () => {
     if (grpcReady) {
-      mainWindow.webContents.send('go-binary-status', { running: true });
+      sendToWindow('go-binary-status', { running: true });
     }
   });
 

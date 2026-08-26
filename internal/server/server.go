@@ -90,11 +90,9 @@ type streamEntry struct {
 // DropzServer implements the DropzService gRPC service
 type DropzServer struct {
 	protocol.UnimplementedDropzServiceServer
-	manager  Manager
-	log      *slog.Logger
-	server   *grpc.Server
-	listener net.Listener
-	address  string
+	manager Manager
+	log     *slog.Logger
+	server  *grpc.Server
 
 	// All streams tracked uniformly
 	streams     []*streamEntry
@@ -172,31 +170,31 @@ func (s *DropzServer) logRPC(method string, start time.Time, err error) {
 }
 
 // Listen binds the gRPC address without serving anything yet.
-// Split from Serve so the process can claim the port before it touches the
-// Bluetooth adapter: a second instance must be able to fail and exit without
-// having created (and abandoned) a CoreBluetooth central manager.
-func (s *DropzServer) Listen(address string) error {
+// A package-level func with no DropzServer so main can claim the port before
+// constructing anything that touches the Bluetooth adapter: a second instance
+// must fail and exit without having created (and abandoned) a CoreBluetooth
+// central manager.
+func Listen(address string) (net.Listener, error) {
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", address, err)
+		return nil, fmt.Errorf("failed to listen on %s: %w", address, err)
 	}
-	s.listener = listener
-	s.address = address
-	return nil
+	return listener, nil
 }
 
 // Start binds and serves in one call.
 func (s *DropzServer) Start(address string) error {
-	if err := s.Listen(address); err != nil {
+	listener, err := Listen(address)
+	if err != nil {
 		return err
 	}
-	s.Serve()
+	s.Serve(listener)
 	return nil
 }
 
-// Serve starts handling RPCs on the listener opened by Listen.
-func (s *DropzServer) Serve() {
-	listener, address := s.listener, s.address
+// Serve starts handling RPCs on a listener from Listen.
+func (s *DropzServer) Serve(listener net.Listener) {
+	address := listener.Addr().String()
 	s.manager.SetNotifier(s.NotifyUpdate)
 
 	// Log interceptors first so shutdown-refused RPCs are recorded too

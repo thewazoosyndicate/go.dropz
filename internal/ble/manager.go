@@ -95,6 +95,32 @@ type Manager struct {
 	// per run never reached the threshold however long it had been failing.
 	abortsLoad func(macAddress string) int
 	abortsSave func(macAddress string, count int)
+
+	// Addresses whose watchdog-abandoned connect is still parked in the
+	// driver. While an address is parked, new connects to it fail fast:
+	// the parked goroutine still owns the conn-map entry and the eventual
+	// teardown for that camera, and letting a fresh attempt interleave with
+	// it hands callers a connection the late teardown then destroys.
+	parkedConnects map[string]struct{}
+}
+
+// isParked reports whether a watchdog-abandoned connect still owns the address.
+func (m *Manager) isParked(macAddress string) bool {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	_, ok := m.parkedConnects[macAddress]
+	return ok
+}
+
+// setParked claims or releases an address for an abandoned connect attempt.
+func (m *Manager) setParked(macAddress string, parked bool) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	if parked {
+		m.parkedConnects[macAddress] = struct{}{}
+	} else {
+		delete(m.parkedConnects, macAddress)
+	}
 }
 
 // SetSkipBond makes ConnectForPairing skip the explicit D-Bus bond, leaving
@@ -159,6 +185,7 @@ func NewManager(adapter *bluetooth.Adapter, log *slog.Logger) *Manager {
 		conns:             make(map[string]*conn),
 		sessions:          make(map[string]bool),
 		connectAborts:     make(map[string]int),
+		parkedConnects:    make(map[string]struct{}),
 		log:               log.With("component", "ble"),
 	}
 	if adapter != nil {

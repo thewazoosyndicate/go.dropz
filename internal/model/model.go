@@ -58,6 +58,11 @@ type CameraMetadata struct {
 	SyncedNumPhotos int32 `json:"synced_num_photos,omitempty"`
 	SyncedNumVideos int32 `json:"synced_num_videos,omitempty"`
 	SyncedSpaceKB   int64 `json:"synced_space_kb,omitempty"`
+	// ConnectAborts counts consecutive fully-aborted connect calls. Persisted
+	// so the bond-reject threshold survives a backend restart: in memory it
+	// reset on every launch and the threshold was never reached in practice.
+	// Cleared by the first connect that works.
+	ConnectAborts int `json:"connect_aborts,omitempty"`
 	// Settings is the last-known snapshot from the camera. Mutators must
 	// replace the slice, never edit elements in place (copies share it).
 	Settings        []CameraSetting `json:"settings,omitempty"`

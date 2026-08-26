@@ -72,6 +72,19 @@ const (
 	CharDiscoveryTimeout    = 5 * time.Second
 	PairingTimeout          = 15 * time.Second
 	CameraReadyTimeout      = 10 * time.Second
+
+	// ConnectWatchdog bounds one whole connect+discover call.
+	//
+	// The driver's own Connect timeout is not enough: on macOS,
+	// adapter.Connect has been observed parking forever when CoreBluetooth
+	// stops delivering callbacks (no callback thread left in the process, no
+	// timeout, no error). The caller then holds its BLE session and the
+	// scanner's connect gate for the life of the process, which takes the
+	// whole fleet down, not just that camera.
+	//
+	// Sized off the observed worst case: 3 attempts x ~10s driver timeout
+	// plus 1s+2s backoff plus discovery, ~35s, with headroom.
+	ConnectWatchdog = 90 * time.Second
 )
 
 // GetCharacteristicName returns the human-readable name for a characteristic UUID

@@ -39,6 +39,11 @@ var (
 	buildTime  = "unknown"
 )
 
+// exitAddrInUse tells the Electron host that another backend already owns the
+// gRPC address. Kept distinct from 1 so the host reports it instead of
+// restarting into the same collision forever.
+const exitAddrInUse = 3
+
 func main() {
 	flag.Parse()
 
@@ -125,18 +130,27 @@ func main() {
 		mainLog.Warn("Invalid persisted log level, keeping flag level", "value", config.LogLevel, "err", err)
 	}
 
+	// Claim the port before touching any hardware. A second instance used to
+	// start the BLE manager first and only then discover the address was
+	// taken, so every doomed process created and abandoned a CoreBluetooth
+	// central manager on its way out. Under the host's restart loop that ran
+	// ~90 times in 100 seconds and destabilised the backend that did own the
+	// port.
+	dropzServer := server.NewDropzServer(goProManager, log)
+	if err := dropzServer.Listen(*serverAddr); err != nil {
+		mainLog.Error("Failed to bind gRPC address", "addr", *serverAddr, "err", err)
+		// Distinct code: restarting cannot free a port somebody else owns,
+		// so the host must report it instead of looping.
+		os.Exit(exitAddrInUse)
+	}
+
 	// Start GoPro manager
 	if err := goProManager.Start(); err != nil {
 		mainLog.Error("Failed to start GoPro manager", "err", err)
 		os.Exit(1)
 	}
 
-	// Initialize and start gRPC server
-	dropzServer := server.NewDropzServer(goProManager, log)
-	if err := dropzServer.Start(*serverAddr); err != nil {
-		mainLog.Error("Failed to start gRPC server", "err", err)
-		os.Exit(1)
-	}
+	dropzServer.Serve()
 
 	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)

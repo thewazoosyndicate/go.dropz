@@ -27,6 +27,16 @@ var ErrBluetoothUnavailable = model.ErrBluetoothUnavailable
 // grows the camera's bond store until that window swallows every connect.
 var ErrBondRejected = errors.New("camera refused the stored BLE bond")
 
+// ErrConnectStalled marks a connect the driver never returned from within
+// ConnectWatchdog. The attempt is abandoned, not cancelled: the goroutine is
+// left parked in the driver and reaps itself if it ever returns. Callers get
+// their session and the connect gate back, which is the point.
+var ErrConnectStalled = errors.New("BLE connect stalled in the driver")
+
+// errConnectAbandoned is returned by a late connect that completed after its
+// caller gave up; the attempt tears down whatever it built.
+var errConnectAbandoned = errors.New("connect abandoned by watchdog")
+
 const (
 	bondRejectAbortThreshold = 3               // whole connect calls, not attempts
 	bondRejectSeenWindow     = 2 * time.Minute // camera must still be advertising
@@ -78,6 +88,13 @@ type Manager struct {
 	connectAborts     map[string]int                                       // consecutive fully-aborted connect calls per address
 	skipPairingFinish bool                                                 // diagnostic: bond without RequestPairingFinish
 	skipBond          bool                                                 // diagnostic: no explicit D-Bus bond (the macOS path)
+
+	// Persistence for connectAborts. The counter is what makes the
+	// bond-reject heuristic reachable, and it used to live only in memory:
+	// every backend restart reset it, so a camera that aborted once or twice
+	// per run never reached the threshold however long it had been failing.
+	abortsLoad func(macAddress string) int
+	abortsSave func(macAddress string, count int)
 }
 
 // SetSkipBond makes ConnectForPairing skip the explicit D-Bus bond, leaving
@@ -205,6 +222,16 @@ func (m *Manager) getConn(macAddress string) *conn {
 // IsConnected checks if a device has an active BLE connection
 func (m *Manager) IsConnected(macAddress string) bool {
 	return m.getConn(macAddress) != nil
+}
+
+// SetAbortsStore wires the consecutive-abort counter to durable storage so it
+// survives a backend restart. Both funcs are called without the manager lock
+// held; either may be nil, leaving the counter in memory only.
+func (m *Manager) SetAbortsStore(load func(macAddress string) int, save func(macAddress string, count int)) {
+	m.mutex.Lock()
+	m.abortsLoad = load
+	m.abortsSave = save
+	m.mutex.Unlock()
 }
 
 // SetMetadataCallback sets the callback for metadata updates

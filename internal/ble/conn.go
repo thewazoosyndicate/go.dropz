@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dropz/dropz/internal/ble/tlv"
@@ -48,13 +49,65 @@ func (m *Manager) ConnectingDone() <-chan struct{} {
 	return m.connectingDone
 }
 
-// connectAndDiscover handles the shared BLE connect + service discovery retry loop.
+// connectResult carries one connect attempt's outcome back to its caller, or
+// to the reaper when the caller has already given up on it.
+type connectResult struct {
+	services []bluetooth.DeviceService
+	start    time.Time
+	err      error
+}
+
+// connectAndDiscover runs the connect+discover attempt under a watchdog.
+//
+// The driver call underneath can park forever (see ConnectWatchdog). Bounding
+// it here rather than in each caller means every session type — status check,
+// sync, pairing — gets its session and the scanner's connect gate back, so one
+// wedged camera can no longer stall the whole manager.
+func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(string) error) ([]bluetooth.DeviceService, time.Time, error) {
+	var abandoned atomic.Bool
+	ch := make(chan connectResult, 1)
+
+	go func() {
+		services, start, err := m.connectAndDiscoverBlocking(macAddress, preDiscoveryHook, &abandoned)
+		ch <- connectResult{services: services, start: start, err: err}
+	}()
+
+	watchdog := time.NewTimer(ConnectWatchdog)
+	defer watchdog.Stop()
+
+	select {
+	case r := <-ch:
+		return r.services, r.start, r.err
+	case <-watchdog.C:
+		abandoned.Store(true)
+		m.log.Error("Connect watchdog fired, abandoning attempt",
+			"ble_addr", macAddress, "timeout", ConnectWatchdog)
+		go m.reapAbandonedConnect(macAddress, ch)
+		return nil, time.Time{}, fmt.Errorf("%w after %s", ErrConnectStalled, ConnectWatchdog)
+	}
+}
+
+// reapAbandonedConnect waits out an attempt the watchdog gave up on and logs
+// how it ended. The attempt tears down its own connection when it sees the
+// abandoned flag; this only records the outcome. If the driver never returns,
+// this goroutine parks with it — one leaked goroutine per stall, which is the
+// price of not being able to cancel a driver call.
+func (m *Manager) reapAbandonedConnect(macAddress string, ch <-chan connectResult) {
+	r := <-ch
+	if errors.Is(r.err, errConnectAbandoned) {
+		m.log.Warn("Abandoned connect succeeded late and was torn down", "ble_addr", macAddress)
+		return
+	}
+	m.log.Warn("Abandoned connect finished late", "ble_addr", macAddress, "err", r.err)
+}
+
+// connectAndDiscoverBlocking handles the shared BLE connect + service discovery retry loop.
 // preDiscoveryHook runs after adapter.Connect() but before DiscoverServices() on each attempt
 // (used by pairing to insert D-Bus bonding). Returns the discovered services.
 // On success, the connection is stored in conns. On failure, cleanup is done.
 // Returns errAlreadyConnected (a no-op for callers) when a connection exists.
 // The caller owns the connect gate (beginConnecting) around this call.
-func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(string) error) ([]bluetooth.DeviceService, time.Time, error) {
+func (m *Manager) connectAndDiscoverBlocking(macAddress string, preDiscoveryHook func(string) error, abandoned *atomic.Bool) ([]bluetooth.DeviceService, time.Time, error) {
 	if m.adapter == nil {
 		return nil, time.Time{}, ErrBluetoothUnavailable
 	}
@@ -145,6 +198,15 @@ func (m *Manager) connectAndDiscover(macAddress string, preDiscoveryHook func(st
 		return nil, time.Time{}, fmt.Errorf("service discovery failed after %d retries", ServiceDiscoveryRetries)
 	}
 
+	// The caller is long gone and released its session; handing back a live
+	// connection now would leak it, and a later session for this camera would
+	// find a conn it never opened.
+	if abandoned.Load() {
+		m.dropConn(macAddress)
+		_ = device.Disconnect()
+		return nil, time.Time{}, errConnectAbandoned
+	}
+
 	m.resetConnectAborts(macAddress)
 	return services, connectStart, nil
 }
@@ -157,27 +219,89 @@ func (m *Manager) connectFailure(macAddress string, lastErr error) error {
 	if lastErr == nil {
 		return fmt.Errorf("connect failed after %d retries", ServiceDiscoveryRetries)
 	}
-	if isConnectAbort(lastErr) {
-		m.mutex.Lock()
-		m.connectAborts[macAddress]++
-		aborts := m.connectAborts[macAddress]
-		var lastSeen time.Time
-		if dev, ok := m.discoveredDevices[macAddress]; ok {
-			lastSeen = dev.LastSeen
-		}
-		m.mutex.Unlock()
-		if aborts >= bondRejectAbortThreshold && time.Since(lastSeen) < bondRejectSeenWindow {
-			return fmt.Errorf("%d consecutive aborted connects while advertising: %w", aborts, ErrBondRejected)
-		}
+	if !isConnectAbort(lastErr) {
+		return fmt.Errorf("connect failed after %d retries: %w", ServiceDiscoveryRetries, lastErr)
+	}
+
+	m.mutex.RLock()
+	var lastSeen time.Time
+	var processorOn, advParsed bool
+	if dev, ok := m.discoveredDevices[macAddress]; ok {
+		lastSeen = dev.LastSeen
+		processorOn = dev.ProcessorOn
+		advParsed = dev.AdvParsed
+	}
+	m.mutex.RUnlock()
+
+	// A camera advertising with its processor down cannot answer a connect at
+	// all: it is flat or asleep, not refusing our bond. Counting that here is
+	// how a dead battery gets diagnosed as bond loss — and the remedy for bond
+	// loss (forget + re-pair) is exactly what bloats a HERO13's bond store,
+	// which is the real cause of the rejections this heuristic exists to catch.
+	// Only skip when we actually parsed a payload; unknown stays countable.
+	if advParsed && !processorOn {
+		m.log.Debug("Connect failed against a camera with its processor down",
+			"ble_addr", macAddress, "err", lastErr)
+		return fmt.Errorf("connect failed after %d retries (camera processor down): %w",
+			ServiceDiscoveryRetries, lastErr)
+	}
+
+	aborts := m.bumpConnectAborts(macAddress)
+	if aborts >= bondRejectAbortThreshold && time.Since(lastSeen) < bondRejectSeenWindow {
+		return fmt.Errorf("%d consecutive aborted connects while advertising: %w", aborts, ErrBondRejected)
 	}
 	return fmt.Errorf("connect failed after %d retries: %w", ServiceDiscoveryRetries, lastErr)
 }
 
+// currentAborts returns the bond-loss counter for an address, seeding it from
+// the store the first time this process asks, along with the save hook.
+func (m *Manager) currentAborts(macAddress string) (int, func(string, int)) {
+	m.mutex.Lock()
+	count, tracked := m.connectAborts[macAddress]
+	load, save := m.abortsLoad, m.abortsSave
+	m.mutex.Unlock()
+
+	if tracked || load == nil {
+		return count, save
+	}
+
+	// Seeded outside the lock: load reads the store, which takes its own.
+	count = load(macAddress)
+	m.mutex.Lock()
+	m.connectAborts[macAddress] = count
+	m.mutex.Unlock()
+	return count, save
+}
+
+// bumpConnectAborts records one more fully-aborted connect and returns the
+// running total, persisting it so restarts no longer reset the evidence.
+func (m *Manager) bumpConnectAborts(macAddress string) int {
+	count, save := m.currentAborts(macAddress)
+	count++
+
+	m.mutex.Lock()
+	m.connectAborts[macAddress] = count
+	m.mutex.Unlock()
+
+	if save != nil {
+		save(macAddress, count)
+	}
+	return count
+}
+
 // resetConnectAborts clears the bond-loss counter after a working connect.
 func (m *Manager) resetConnectAborts(macAddress string) {
+	count, save := m.currentAborts(macAddress)
+
 	m.mutex.Lock()
 	delete(m.connectAborts, macAddress)
 	m.mutex.Unlock()
+
+	// Only write when there was something to clear: this runs on every
+	// successful connect and the store persists to disk.
+	if count != 0 && save != nil {
+		save(macAddress, 0)
+	}
 }
 
 // discoverCharacteristics enumerates characteristics on the given services,

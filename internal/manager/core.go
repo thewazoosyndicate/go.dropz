@@ -74,6 +74,28 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 
 	bleManager := ble.NewManager(adapter, log)
 
+	// Persist the consecutive-abort counter. Held only in memory it reset on
+	// every backend restart, so the bond-reject threshold was never reached
+	// and the heuristic never once fired in practice.
+	bleManager.SetAbortsStore(
+		func(bleAddress string) int {
+			cam, found := db.FindCameraByBLEAddress(bleAddress)
+			if !found {
+				return 0
+			}
+			return cam.CameraState.Metadata.ConnectAborts
+		},
+		func(bleAddress string, count int) {
+			cam, found := db.FindCameraByBLEAddress(bleAddress)
+			if !found {
+				return
+			}
+			_ = db.UpdateCameraByID(cam.CameraState.Camera.ID, func(cs *model.CameraWithState) {
+				cs.Metadata.ConnectAborts = count
+			})
+		},
+	)
+
 	// Set up metadata update callback to update database whenever camera connects
 	bleManager.SetMetadataCallback(func(metadata ble.CameraMetadata) {
 		cam, found := db.FindCameraByBLEAddress(metadata.BLEAddress)

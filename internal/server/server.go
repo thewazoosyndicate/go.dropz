@@ -90,9 +90,11 @@ type streamEntry struct {
 // DropzServer implements the DropzService gRPC service
 type DropzServer struct {
 	protocol.UnimplementedDropzServiceServer
-	manager Manager
-	log     *slog.Logger
-	server  *grpc.Server
+	manager  Manager
+	log      *slog.Logger
+	server   *grpc.Server
+	listener net.Listener
+	address  string
 
 	// All streams tracked uniformly
 	streams     []*streamEntry
@@ -169,14 +171,33 @@ func (s *DropzServer) logRPC(method string, start time.Time, err error) {
 	}
 }
 
-// Start starts the gRPC server
-func (s *DropzServer) Start(address string) error {
-	s.manager.SetNotifier(s.NotifyUpdate)
-
+// Listen binds the gRPC address without serving anything yet.
+// Split from Serve so the process can claim the port before it touches the
+// Bluetooth adapter: a second instance must be able to fail and exit without
+// having created (and abandoned) a CoreBluetooth central manager.
+func (s *DropzServer) Listen(address string) error {
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", address, err)
 	}
+	s.listener = listener
+	s.address = address
+	return nil
+}
+
+// Start binds and serves in one call.
+func (s *DropzServer) Start(address string) error {
+	if err := s.Listen(address); err != nil {
+		return err
+	}
+	s.Serve()
+	return nil
+}
+
+// Serve starts handling RPCs on the listener opened by Listen.
+func (s *DropzServer) Serve() {
+	listener, address := s.listener, s.address
+	s.manager.SetNotifier(s.NotifyUpdate)
 
 	// Log interceptors first so shutdown-refused RPCs are recorded too
 	s.server = grpc.NewServer(
@@ -199,8 +220,6 @@ func (s *DropzServer) Start(address string) error {
 			s.log.Error("gRPC server error", "err", err)
 		}
 	}()
-
-	return nil
 }
 
 // Stop stops the gRPC server

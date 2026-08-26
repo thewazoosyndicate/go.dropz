@@ -24,12 +24,10 @@ const (
 
 // Configuration settings aligned with OpenAPI spec
 type Config struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Core system settings
-	PairModeEnabled       bool  `protobuf:"varint,1,opt,name=pair_mode_enabled,json=pairModeEnabled,proto3" json:"pair_mode_enabled,omitempty"` // When true, newly discovered cameras will be automatically paired
-	SyncEnabled           bool  `protobuf:"varint,2,opt,name=sync_enabled,json=syncEnabled,proto3" json:"sync_enabled,omitempty"`               // When true, system automatically syncs content from cameras
-	ScanIntervalSeconds   int32 `protobuf:"varint,3,opt,name=scan_interval_seconds,json=scanIntervalSeconds,proto3" json:"scan_interval_seconds,omitempty"`
-	ConnectTimeoutSeconds int32 `protobuf:"varint,4,opt,name=connect_timeout_seconds,json=connectTimeoutSeconds,proto3" json:"connect_timeout_seconds,omitempty"`
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	SyncEnabled           bool                   `protobuf:"varint,2,opt,name=sync_enabled,json=syncEnabled,proto3" json:"sync_enabled,omitempty"` // When true, system automatically syncs content from cameras
+	ScanIntervalSeconds   int32                  `protobuf:"varint,3,opt,name=scan_interval_seconds,json=scanIntervalSeconds,proto3" json:"scan_interval_seconds,omitempty"`
+	ConnectTimeoutSeconds int32                  `protobuf:"varint,4,opt,name=connect_timeout_seconds,json=connectTimeoutSeconds,proto3" json:"connect_timeout_seconds,omitempty"`
 	// Sync behavior settings
 	DaysThreshold              int32  `protobuf:"varint,5,opt,name=days_threshold,json=daysThreshold,proto3" json:"days_threshold,omitempty"` // Only sync content newer than this many days
 	DestinationFolder          string `protobuf:"bytes,6,opt,name=destination_folder,json=destinationFolder,proto3" json:"destination_folder,omitempty"`
@@ -74,13 +72,6 @@ func (x *Config) ProtoReflect() protoreflect.Message {
 // Deprecated: Use Config.ProtoReflect.Descriptor instead.
 func (*Config) Descriptor() ([]byte, []int) {
 	return file_config_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *Config) GetPairModeEnabled() bool {
-	if x != nil {
-		return x.PairModeEnabled
-	}
-	return false
 }
 
 func (x *Config) GetSyncEnabled() bool {
@@ -655,9 +646,8 @@ var File_config_proto protoreflect.FileDescriptor
 
 const file_config_proto_rawDesc = "" +
 	"\n" +
-	"\fconfig.proto\x12\x05dropz\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf3\x04\n" +
-	"\x06Config\x12*\n" +
-	"\x11pair_mode_enabled\x18\x01 \x01(\bR\x0fpairModeEnabled\x12!\n" +
+	"\fconfig.proto\x12\x05dropz\x1a\x1fgoogle/protobuf/timestamp.proto\"\xe0\x04\n" +
+	"\x06Config\x12!\n" +
 	"\fsync_enabled\x18\x02 \x01(\bR\vsyncEnabled\x122\n" +
 	"\x15scan_interval_seconds\x18\x03 \x01(\x05R\x13scanIntervalSeconds\x126\n" +
 	"\x17connect_timeout_seconds\x18\x04 \x01(\x05R\x15connectTimeoutSeconds\x12%\n" +
@@ -670,7 +660,7 @@ const file_config_proto_rawDesc = "" +
 	"\x10set_time_enabled\x18\t \x01(\bR\x0esetTimeEnabled\x12\x1b\n" +
 	"\tlog_level\x18\n" +
 	" \x01(\tR\blogLevel\x12=\n" +
-	"\flast_updated\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\vlastUpdatedJ\x04\b\b\x10\t\"\x12\n" +
+	"\flast_updated\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\vlastUpdatedJ\x04\b\x01\x10\x02J\x04\b\b\x10\tR\x11pair_mode_enabled\"\x12\n" +
 	"\x10GetConfigRequest\":\n" +
 	"\x11GetConfigResponse\x12%\n" +
 	"\x06config\x18\x01 \x01(\v2\r.dropz.ConfigR\x06config\"<\n" +

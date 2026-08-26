@@ -106,6 +106,28 @@ function deserialize_dropz_ForceSyncResponse(buffer_arg) {
   return gopro_pb.ForceSyncResponse.deserializeBinary(new Uint8Array(buffer_arg));
 }
 
+function serialize_dropz_ForgetCameraRequest(arg) {
+  if (!(arg instanceof gopro_pb.ForgetCameraRequest)) {
+    throw new Error('Expected argument of type dropz.ForgetCameraRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_ForgetCameraRequest(buffer_arg) {
+  return gopro_pb.ForgetCameraRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
+function serialize_dropz_ForgetCameraResponse(arg) {
+  if (!(arg instanceof gopro_pb.ForgetCameraResponse)) {
+    throw new Error('Expected argument of type dropz.ForgetCameraResponse');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_dropz_ForgetCameraResponse(buffer_arg) {
+  return gopro_pb.ForgetCameraResponse.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
 function serialize_dropz_GetCameraMediaRequest(arg) {
   if (!(arg instanceof gopro_pb.GetCameraMediaRequest)) {
     throw new Error('Expected argument of type dropz.GetCameraMediaRequest');
@@ -760,6 +782,17 @@ pairCamera: {
     requestDeserialize: deserialize_dropz_PairCameraRequest,
     responseSerialize: serialize_dropz_PairCameraResponse,
     responseDeserialize: deserialize_dropz_PairCameraResponse,
+  },
+  forgetCamera: {
+    path: '/dropz.DropzService/ForgetCamera',
+    requestStream: false,
+    responseStream: false,
+    requestType: gopro_pb.ForgetCameraRequest,
+    responseType: gopro_pb.ForgetCameraResponse,
+    requestSerialize: serialize_dropz_ForgetCameraRequest,
+    requestDeserialize: deserialize_dropz_ForgetCameraRequest,
+    responseSerialize: serialize_dropz_ForgetCameraResponse,
+    responseDeserialize: deserialize_dropz_ForgetCameraResponse,
   },
   // Camera settings over BLE, per camera or per group
 getCameraSettings: {

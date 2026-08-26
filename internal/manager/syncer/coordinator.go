@@ -519,16 +519,13 @@ func (c *Coordinator) PerformCameraSync(task *SyncTask) {
 		if errors.Is(err, context.DeadlineExceeded) {
 			failMsg = "Sync timed out"
 		}
-		if errors.Is(err, ble.ErrBondLost) {
-			// The camera dropped its side of the bond (HERO13 without a
-			// completed pairing finish); connects abort until both sides
-			// forget it and the camera is paired again.
-			failMsg = "Pairing lost, put the camera in pairing mode to pair again"
-			c.log.Warn("BLE bond lost, clearing pairing", camera.LogAttrs()...)
-			if forgetErr := c.ble.ForgetDevice(bleAddress); forgetErr != nil {
-				c.log.Warn("Failed to remove stale bond", append(camera.LogAttrs(), "err", forgetErr)...)
-			}
-			_ = c.db.SetCameraPairedByID(task.CameraID, false)
+		if errors.Is(err, ble.ErrBondRejected) {
+			// HERO13 post-boot window: the bond is healthy, the camera is
+			// not serving it yet. Never forget the bond here: forget plus
+			// re-pair grows the camera's bond store until that window
+			// swallows every connect. The sync retries on a later trigger.
+			failMsg = "Camera not ready, sync will retry"
+			c.log.Warn("Camera refused stored bond, sync deferred", camera.LogAttrs()...)
 		}
 		c.updateProgress(task, failMsg, step.percent)
 		c.log.Error("Sync failed", append(camera.LogAttrs(), "step", step.label, "err", err)...)

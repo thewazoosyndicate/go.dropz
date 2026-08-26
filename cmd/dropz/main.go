@@ -29,7 +29,6 @@ var (
 	logFormat   = flag.String("log-format", "text", "Log format (text, json); json is meant for the Electron host")
 	serverAddr  = flag.String("server-addr", "127.0.0.1:50051", "gRPC server address")
 	showVersion = flag.Bool("version", false, "Show version and exit")
-	pairMode    = flag.Bool("pair-mode", true, "Enable automatic pairing mode")
 	syncEnabled = flag.Bool("sync-enabled", true, "Enable automatic content synchronization")
 )
 
@@ -97,9 +96,6 @@ func main() {
 	// Check which flags were explicitly set by user
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
-		case "pair-mode":
-			config.PairModeEnabled = *pairMode
-			configChanged = true
 		case "sync-enabled":
 			config.SyncEnabled = *syncEnabled
 			configChanged = true

@@ -12,8 +12,8 @@ func TestUpdateSettingValidation(t *testing.T) {
 		value   interface{}
 		wantErr bool
 	}{
-		{"pair_mode_enabled", true, false},
-		{"pair_mode_enabled", "yes", true},
+		{"sync_enabled", true, false},
+		{"sync_enabled", "yes", true},
 		{"scan_interval_seconds", int32(30), false},
 		{"scan_interval_seconds", int32(2), true}, // below min 5
 		{"connect_timeout_seconds", int32(301), true},

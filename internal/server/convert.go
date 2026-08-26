@@ -267,7 +267,6 @@ func toProtoSettingApplyResults(results []model.SettingApplyResult) []*protocol.
 
 func toProtoConfig(c model.Config) *protocol.Config {
 	return &protocol.Config{
-		PairModeEnabled:            c.PairModeEnabled,
 		SyncEnabled:                c.SyncEnabled,
 		ScanIntervalSeconds:        c.ScanIntervalSeconds,
 		ConnectTimeoutSeconds:      c.ConnectTimeoutSeconds,

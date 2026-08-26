@@ -2,29 +2,24 @@ import { setLogLevel } from './ui.svelte.js';
 
 // App configuration store
 let appConfig = $state(null);
-let autoPair = $state(false);
 let autoSync = $state(false);
 
 export function getAppConfig() { return appConfig; }
-export function getAutoPair() { return autoPair; }
 export function getAutoSync() { return autoSync; }
 
 export function setAppConfig(config) {
   appConfig = config;
   if (config) {
-    autoPair = config.pairModeEnabled || false;
     autoSync = config.syncEnabled || false;
     if (config.logLevel) setLogLevel(config.logLevel);
   }
 }
 
-export function setAutoPair(value) { autoPair = value; }
 export function setAutoSync(value) { autoSync = value; }
 
 export function updateConfigField(key, value) {
   if (!appConfig) return;
   const mapping = {
-    'pair_mode_enabled': 'pairModeEnabled',
     'sync_enabled': 'syncEnabled',
     'scan_interval_seconds': 'scanIntervalSeconds',
     'connect_timeout_seconds': 'connectTimeoutSeconds',
@@ -44,7 +39,6 @@ export function updateConfigField(key, value) {
     else if (typeof appConfig[configKey] === 'number') typedValue = Number(value);
     appConfig = { ...appConfig, [configKey]: typedValue };
   }
-  if (key === 'pair_mode_enabled') autoPair = !!value;
   if (key === 'sync_enabled') autoSync = !!value;
   if (key === 'log_level') setLogLevel(value);
 }

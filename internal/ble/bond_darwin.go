@@ -2,10 +2,14 @@
 
 package ble
 
-// No known link-abort signature on CoreBluetooth; bond-loss detection is
-// Linux-only until observed on macOS.
-func isConnectAbort(_ error) bool {
-	return false
+import "strings"
+
+// CoreBluetooth surfaces a bond the camera refuses as a plain connect
+// timeout (tinygo darwin: "timeout on Connect"). Counted the same as the
+// Linux abort: the threshold plus the still-advertising window in
+// connectFailure keeps ordinary out-of-range timeouts from qualifying.
+func isConnectAbort(err error) bool {
+	return strings.Contains(err.Error(), "timeout")
 }
 
 // ForgetDevice is a no-op on macOS: CoreBluetooth owns bonds and offers no

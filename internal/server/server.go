@@ -28,6 +28,7 @@ type Manager interface {
 	ManageCamera(cameraID string) (*model.ManagedCamera, error)
 	UnmanageCamera(cameraID string) error
 	PairCamera(cameraID string) (*model.ManagedCamera, error)
+	ForgetCamera(cameraID string) error
 	// Sync
 	ForceSync(cameraID string) (*model.SyncQueueEntry, error)
 	CancelSync(cameraID string) error
@@ -476,6 +477,20 @@ func (s *DropzServer) UnmanageCamera(ctx context.Context, req *protocol.Unmanage
 	}, nil
 }
 
+// ForgetCamera implements the ForgetCamera RPC method
+func (s *DropzServer) ForgetCamera(ctx context.Context, req *protocol.ForgetCameraRequest) (*protocol.ForgetCameraResponse, error) {
+	if err := s.manager.ForgetCamera(req.CameraId); err != nil {
+		return nil, rpcError(err)
+	}
+
+	s.NotifyUpdate()
+
+	return &protocol.ForgetCameraResponse{
+		Success: true,
+		Message: "Pairing forgotten. Run Reset Connections on the camera before pairing it elsewhere",
+	}, nil
+}
+
 // PairCamera implements the PairCamera RPC method
 func (s *DropzServer) PairCamera(ctx context.Context, req *protocol.PairCameraRequest) (*protocol.PairCameraResponse, error) {
 	managedCamera, err := s.manager.PairCamera(req.CameraId)
@@ -714,7 +729,6 @@ func (s *DropzServer) UpdateConfig(ctx context.Context, req *protocol.UpdateConf
 	}
 
 	dbConfig := model.Config{
-		PairModeEnabled:            req.Config.PairModeEnabled,
 		SyncEnabled:                req.Config.SyncEnabled,
 		ScanIntervalSeconds:        req.Config.ScanIntervalSeconds,
 		ConnectTimeoutSeconds:      req.Config.ConnectTimeoutSeconds,

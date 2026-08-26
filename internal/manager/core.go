@@ -159,13 +159,11 @@ func NewGoProManager(dbPath, destinationDir string, log *slog.Logger, logLevel *
 		}
 	})
 
-	// Auto-pair when a managed, unpaired camera shows its pairing UI.
-	// The camera advertises the pairing flag, so no connection is needed
-	// to detect it, and pairing attempts are no longer fired blind.
+	// Heal a managed, unpaired camera when it shows its pairing UI: the
+	// user putting a camera dropz already manages into pairing mode IS the
+	// consent, no config gate. Unknown cameras never qualify (IsManaged),
+	// so nothing is adopted silently.
 	manager.discoveryProcessor.SetOnPairingModeDetected(func(cameraID string) {
-		if !db.GetConfig().PairModeEnabled {
-			return
-		}
 		cs, ok := db.GetCameraByID(cameraID)
 		if !ok || !cs.Status.IsManaged || cs.Status.IsPaired || cs.Status.IsPairing {
 			return
@@ -271,9 +269,11 @@ func (m *GoProManager) ManageCamera(cameraID string) (*model.ManagedCamera, erro
 	m.log.Info("Camera added to managed pool", cs.LogAttrs()...)
 	m.notify()
 
-	config := m.db.GetConfig()
-	if config.PairModeEnabled && !cs.Status.IsPaired {
-		m.log.Debug("Pair mode enabled, starting pairing", cs.LogAttrs()...)
+	// Managing a camera is explicit user intent: complete it with pairing,
+	// no config gate. PairCamera reuses an existing OS bond without a new
+	// key exchange, so this never grows the camera's bond store.
+	if !cs.Status.IsPaired {
+		m.log.Debug("Starting pairing for newly managed camera", cs.LogAttrs()...)
 		// Async so the gRPC handler doesn't block behind pairingMu for 30s+
 		go func() {
 			if _, err := m.PairCamera(cameraID); err != nil {
@@ -310,6 +310,34 @@ func (m *GoProManager) UnmanageCamera(cameraID string) error {
 	})
 
 	m.log.Info("Camera removed from managed pool", cs.LogAttrs()...)
+	m.notify()
+
+	return nil
+}
+
+// ForgetCamera unmanages a camera and drops the host-side bond and stored
+// credentials. Deliberate user action only: every re-pair appends an entry
+// to the camera's finite bond store, and a bloated store is what makes
+// HERO13 reconnects fail after power-on. The camera keeps its side of the
+// bond until the user runs Reset Connections on it.
+func (m *GoProManager) ForgetCamera(cameraID string) error {
+	cs, found := m.db.GetCameraByID(cameraID)
+	if !found {
+		return fmt.Errorf("%w: %s", model.ErrCameraNotFound, cameraID)
+	}
+
+	if err := m.ble.ForgetDevice(cs.Camera.BLEAddress); err != nil {
+		m.log.Warn("Failed to remove bond", append(cs.LogAttrs(), "err", err)...)
+	}
+	_ = m.db.UpdateCameraByID(cameraID, func(cs *model.CameraWithState) {
+		cs.Status.IsManaged = false
+		cs.Status.IsPaired = false
+		cs.Status.LastSyncError = ""
+		cs.Camera.WiFiSSID = ""
+		cs.Camera.WiFiPassword = ""
+	})
+
+	m.log.Info("Camera pairing forgotten", cs.LogAttrs()...)
 	m.notify()
 
 	return nil

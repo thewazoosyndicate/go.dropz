@@ -18,7 +18,7 @@ func (m *GoProManager) UpdateConfig(config model.Config) error {
 		return err
 	}
 	m.log.Info("Config replaced", "sync_enabled", config.SyncEnabled,
-		"pair_mode_enabled", config.PairModeEnabled, "log_level", config.LogLevel,
+		"log_level", config.LogLevel,
 		"destination_folder", config.DestinationFolder)
 	return nil
 }
@@ -97,7 +97,6 @@ func validateLogLevel(v string) error {
 }
 
 var settings = map[string]setting{
-	"pair_mode_enabled": boolSetting(func(c *model.Config) *bool { return &c.PairModeEnabled }),
 	"sync_enabled":      boolSetting(func(c *model.Config) *bool { return &c.SyncEnabled }),
 	"turbo_enabled":     boolSetting(func(c *model.Config) *bool { return &c.TurboEnabled }),
 	"check_on_return":   boolSetting(func(c *model.Config) *bool { return &c.CheckOnReturn }),

@@ -8,7 +8,9 @@ import "google/protobuf/timestamp.proto";
 // Configuration settings aligned with OpenAPI spec
 message Config {
   // Core system settings
-  bool pair_mode_enabled = 1;  // When true, newly discovered cameras will be automatically paired
+  // Field 1 was pair_mode_enabled: pairing is explicit user action now
+  reserved 1;
+  reserved "pair_mode_enabled";
   bool sync_enabled = 2;       // When true, system automatically syncs content from cameras
   int32 scan_interval_seconds = 3;
   int32 connect_timeout_seconds = 4;

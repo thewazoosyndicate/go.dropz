@@ -18,6 +18,15 @@ type Device struct {
 	// Parsed from advertising data (OpenGoPro manufacturer/service data)
 	PairingMode bool `json:"pairing_mode,omitempty"`
 	NewMedia    bool `json:"new_media,omitempty"`
+	// ProcessorOn is the camera's Processor State bit. A camera whose
+	// processor is down still advertises — the BLE chip runs on almost
+	// nothing — but cannot answer a connect. That is a flat or sleeping
+	// camera, and it is indistinguishable from a refused bond without this
+	// bit: both look like "advertising fine, connect times out".
+	ProcessorOn bool `json:"processor_on,omitempty"`
+	// AdvParsed records that a manufacturer payload was parsed at least once,
+	// so ProcessorOn == false means "processor down" rather than "unknown".
+	AdvParsed bool `json:"-"`
 }
 
 // Response represents a BLE response from the device

@@ -113,7 +113,7 @@ type FileStatus struct {
 // members). Files lists every considered file in card order; FileName is
 // empty for the snapshot sent before the first transfer starts.
 type DownloadProgress struct {
-	FileIndex  int   // 1-based, among the files actually downloading
+	FileIndex  int // 1-based, among the files actually downloading
 	FileCount  int
 	FileName   string
 	FileBytes  int64 // current file bytes on disk, resume offset included

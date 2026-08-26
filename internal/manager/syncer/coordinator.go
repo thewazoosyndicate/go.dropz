@@ -76,10 +76,10 @@ type SyncTask struct {
 
 // Coordinator handles sync orchestration
 type Coordinator struct {
-	db           *store.Store
-	ble          bleClient
-	log          *slog.Logger
-	activeTasks  map[string]*SyncTask
+	db          *store.Store
+	ble         bleClient
+	log         *slog.Logger
+	activeTasks map[string]*SyncTask
 	// Open interactive preview sessions, keyed like activeTasks; a camera
 	// appears in both while its preview link is up.
 	previewSessions map[string]*previewSession
@@ -89,8 +89,8 @@ type Coordinator struct {
 	// Preview transcoder, swappable so tests run without ffmpeg
 	transcode func(ctx context.Context, src, dst string) error
 	// In-flight library preview transcodes, keyed by source path
-	previewGen map[string]*previewGen
-	mutex           sync.RWMutex
+	previewGen   map[string]*previewGen
+	mutex        sync.RWMutex
 	notifier     func()
 	bleOperation ble.Operation
 	ctx          context.Context

@@ -58,6 +58,11 @@ type CameraMetadata struct {
 	SyncedNumPhotos int32 `json:"synced_num_photos,omitempty"`
 	SyncedNumVideos int32 `json:"synced_num_videos,omitempty"`
 	SyncedSpaceKB   int64 `json:"synced_space_kb,omitempty"`
+	// ConnectAborts counts consecutive fully-aborted connect calls. Persisted
+	// so the bond-reject threshold survives a backend restart: in memory it
+	// reset on every launch and the threshold was never reached in practice.
+	// Cleared by the first connect that works.
+	ConnectAborts int `json:"connect_aborts,omitempty"`
 	// Settings is the last-known snapshot from the camera. Mutators must
 	// replace the slice, never edit elements in place (copies share it).
 	Settings        []CameraSetting `json:"settings,omitempty"`
@@ -250,7 +255,7 @@ type SyncQueueEntry struct {
 	FileName   string `json:"file_name,omitempty"`
 	FileBytes  int64  `json:"file_bytes,omitempty"`
 	FileTotal  int64  `json:"file_total,omitempty"`
-	BytesDone  int64  `json:"bytes_done,omitempty"`  // whole sync
+	BytesDone  int64  `json:"bytes_done,omitempty"` // whole sync
 	BytesTotal int64  `json:"bytes_total,omitempty"`
 	RateBps    int64  `json:"rate_bps,omitempty"`
 	// Set when the sync leaves the queue's waiting state.

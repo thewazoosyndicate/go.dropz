@@ -146,10 +146,28 @@ func (m *Manager) addDiscoveredDevice(result bluetooth.ScanResult, adv AdvInfo) 
 			LastSeen:   now,
 		}
 		m.discoveredDevices[macAddress] = device
-		// The user-visible discovery line belongs to the discovery processor
-		m.log.Debug("New GoPro advertisement seen", "camera", device.Name, "ble_addr", device.BLEAddress, "rssi", device.RSSI)
+		// The user-visible discovery line belongs to the discovery processor.
+		// The advertisement flags are logged too: without them a flat camera
+		// and a camera refusing its bond are the same line, and telling them
+		// apart meant reading hours of log by hand.
+		m.log.Debug("New GoPro advertisement seen",
+			"camera", device.Name, "ble_addr", device.BLEAddress, "rssi", device.RSSI,
+			"processor_on", adv.ProcessorOn, "pairing_mode", adv.PairingMode,
+			"wifi_ap_on", adv.WiFiAPOn, "new_media", adv.NewMedia, "adv_valid", adv.Valid)
 	}
 	if adv.Valid {
+		// Processor state flips are the interesting transition: a camera that
+		// stops answering connects while still advertising has almost always
+		// just powered its processor down. Debug, not Info: it flips twice
+		// per routine sleep/wake cycle, and the diagnostic value lives in
+		// connectFailure's processor-down path.
+		if device.AdvParsed && device.ProcessorOn != adv.ProcessorOn {
+			m.log.Debug("Camera processor state changed",
+				"camera", device.Name, "ble_addr", device.BLEAddress,
+				"processor_on", adv.ProcessorOn)
+		}
+		device.ProcessorOn = adv.ProcessorOn
+		device.AdvParsed = true
 		device.PairingMode = adv.PairingMode
 		device.NewMedia = adv.NewMedia
 		if device.ModelID == 0 && adv.ModelID > 0 {

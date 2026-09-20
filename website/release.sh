@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Point the download links at the latest GitHub release.
+# Refresh the baked-in links; latest.js overrides them in the browser.
+# They still serve no-JS visitors and GitHub API rate limits.
 # The DMG name carries the version, so its link cannot use /releases/latest.
 set -euo pipefail
 
